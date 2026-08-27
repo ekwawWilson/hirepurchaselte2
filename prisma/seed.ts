@@ -58,18 +58,20 @@ async function main() {
       name: 'Payment received',
       bodyTemplate:
         'Hi {{customerName}}, we received your payment of {{currency}} {{amountPaid}} for contract {{contractNumber}}. ' +
-        'Outstanding balance: {{currency}} {{outstandingBalance}}. Next due: {{currency}} {{nextDueAmount}} on {{nextDueDate}}.',
+        'Outstanding balance: {{currency}} {{outstandingBalance}}. {{nextDueLine}}',
     },
     {
       key: 'contract.activated',
       name: 'Contract activated / welcome',
       bodyTemplate:
         'Hi {{customerName}}, your contract {{contractNumber}} is now active. ' +
-        'Outstanding balance: {{currency}} {{outstandingBalance}}. Next payment of {{currency}} {{nextDueAmount}} is due {{nextDueDate}}.',
+        'Outstanding balance: {{currency}} {{outstandingBalance}}. {{nextDueLine}}',
     },
   ];
   for (const t of smsTemplates) {
-    await prisma.smsTemplate.upsert({ where: { key: t.key }, update: {}, create: t });
+    // update (not just create-if-missing): template wording is only ever changed here,
+    // there's no admin UI for it yet, so a code fix should actually take effect on reseed.
+    await prisma.smsTemplate.upsert({ where: { key: t.key }, update: { name: t.name, bodyTemplate: t.bodyTemplate }, create: t });
   }
 
   console.log('\nSeeded roles, permissions, branch, demo users, and SMS templates.');

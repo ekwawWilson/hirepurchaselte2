@@ -39,27 +39,27 @@ export function calculateProgress(totalPaidMinor: number, totalPayableMinor: num
 export function getStatusColor(status: string): string {
   const colors: Record<string, string> = {
     // Contract statuses
-    ACTIVE: "bg-blue-100 text-blue-800",
-    PENDING_DEPOSIT: "bg-amber-100 text-amber-800",
-    COMPLETED: "bg-green-100 text-green-800",
-    RELEASED: "bg-gray-100 text-gray-700",
-    CANCELLED: "bg-gray-100 text-gray-800",
-    DEFAULTED: "bg-red-100 text-red-800",
-    WRITTEN_OFF: "bg-zinc-800 text-zinc-100",
+    ACTIVE: "bg-blue-50 text-blue-700 ring-1 ring-blue-200/60",
+    PENDING_DEPOSIT: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/60",
+    COMPLETED: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60",
+    RELEASED: "bg-gray-100 text-gray-600 ring-1 ring-gray-200/60",
+    CANCELLED: "bg-gray-100 text-gray-600 ring-1 ring-gray-200/60",
+    DEFAULTED: "bg-red-50 text-red-700 ring-1 ring-red-200/60",
+    WRITTEN_OFF: "bg-slate-800 text-slate-100 ring-1 ring-slate-700",
     // Instalment / payment statuses
-    PENDING: "bg-yellow-100 text-yellow-800",
-    PARTIAL: "bg-orange-100 text-orange-800",
-    PAID: "bg-green-100 text-green-800",
-    OVERDUE: "bg-red-100 text-red-800",
-    SUCCESS: "bg-green-100 text-green-800",
-    FAILED: "bg-red-100 text-red-800",
+    PENDING: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/60",
+    PARTIAL: "bg-orange-50 text-orange-700 ring-1 ring-orange-200/60",
+    PAID: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60",
+    OVERDUE: "bg-red-50 text-red-700 ring-1 ring-red-200/60",
+    SUCCESS: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60",
+    FAILED: "bg-red-50 text-red-700 ring-1 ring-red-200/60",
     // Inventory statuses
-    AVAILABLE: "bg-blue-100 text-blue-800",
-    RESERVED: "bg-yellow-100 text-yellow-800",
-    ISSUED: "bg-purple-100 text-purple-800",
-    RETURNED: "bg-gray-100 text-gray-700",
+    AVAILABLE: "bg-blue-50 text-blue-700 ring-1 ring-blue-200/60",
+    RESERVED: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/60",
+    ISSUED: "bg-violet-50 text-violet-700 ring-1 ring-violet-200/60",
+    RETURNED: "bg-gray-100 text-gray-600 ring-1 ring-gray-200/60",
   };
-  return colors[status] || "bg-gray-100 text-gray-800";
+  return colors[status] || "bg-gray-100 text-gray-600 ring-1 ring-gray-200/60";
 }
 
 export function contractTypeLabel(type: string): string {

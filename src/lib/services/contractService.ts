@@ -5,6 +5,7 @@ import { getActivePriceChartEntry } from './priceChartService';
 import { applyStockMovement } from './inventoryService';
 import { generateStraightLineSchedule, generateLoanSchedule, derivePrincipalFromTotalPayable } from './scheduleService';
 import { queueSms, deliverQueuedSms } from './smsService';
+import { reverseAllPaymentsForContract } from './paymentService';
 import { CONTRACT_STATUSES_BY_TYPE, type ContractTypeName, type PaymentFrequencyName } from '../constants/contracts';
 
 export class ContractError extends Error {}
@@ -79,13 +80,17 @@ async function runContractTransaction(
     let interestRateBps: number | null = null;
     const totalPayableMinor = chartEntry.totalPayableMinor;
     let scheduleFinanceAmount: number;
-    let scheduleKind: 'STRAIGHT_LINE' | 'LOAN';
+    let scheduleKind: 'STRAIGHT_LINE' | 'LOAN' | 'NONE';
 
     switch (params.contractType) {
       case 'SAVE_TO_OWN':
         status = 'ACTIVE';
         scheduleFinanceAmount = totalPayableMinor; // no deposit — pays from zero
-        scheduleKind = 'STRAIGHT_LINE';
+        // Free-form savings: the customer deposits any amount, any time, toward
+        // totalPayableMinor — no due dates, no fixed instalment amount, no
+        // OVERDUE/arrears/defaulting concept for this type. So unlike the other
+        // two types, no Instalment schedule is generated at all.
+        scheduleKind = 'NONE';
         break;
 
       case 'DEPOSIT_INSTALMENT':
@@ -133,21 +138,23 @@ async function runContractTransaction(
       },
     });
 
-    const scheduleFrequency = chartEntry.paymentFrequency as PaymentFrequencyName;
-    const schedule = scheduleKind === 'LOAN'
-      ? generateLoanSchedule(principalMinor as number, interestRateBps as number, params.termMonths, startDate, scheduleFrequency)
-      : generateStraightLineSchedule(scheduleFinanceAmount, params.termMonths, startDate, scheduleFrequency);
+    if (scheduleKind !== 'NONE') {
+      const scheduleFrequency = chartEntry.paymentFrequency as PaymentFrequencyName;
+      const schedule = scheduleKind === 'LOAN'
+        ? generateLoanSchedule(principalMinor as number, interestRateBps as number, params.termMonths, startDate, scheduleFrequency)
+        : generateStraightLineSchedule(scheduleFinanceAmount, params.termMonths, startDate, scheduleFrequency);
 
-    await tx.instalment.createMany({
-      data: schedule.map((s) => ({
-        contractId: contract.id,
-        instalmentNo: s.instalmentNo,
-        dueDate: s.dueDate,
-        amountDueMinor: s.amountDueMinor,
-        principalPortionMinor: s.principalPortionMinor,
-        interestPortionMinor: s.interestPortionMinor,
-      })),
-    });
+      await tx.instalment.createMany({
+        data: schedule.map((s) => ({
+          contractId: contract.id,
+          instalmentNo: s.instalmentNo,
+          dueDate: s.dueDate,
+          amountDueMinor: s.amountDueMinor,
+          principalPortionMinor: s.principalPortionMinor,
+          interestPortionMinor: s.interestPortionMinor,
+        })),
+      });
+    }
 
     // SAVE_TO_OWN reserves the device until fully paid; DEPOSIT_INSTALMENT reserves it
     // until the deposit clears (see paymentService.advanceContractStatus); DEVICE_LOAN
@@ -197,9 +204,15 @@ export async function cancelContract(params: { contractId: string; reason: strin
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: params.reason, updatedById: params.userId },
     });
 
+    // Whether the device was ever actually handed over is what decides how cancellation
+    // handles the money — not the contract type. SAVE_TO_OWN never issues until COMPLETED,
+    // so it's always still RESERVED here; DEPOSIT_INSTALMENT can be cancelled either before
+    // the deposit clears (RESERVED) or after (ISSUED, device already with the customer).
+    let deviceWasNeverHandedOver = false;
     if (contract.inventoryItemId) {
       const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: contract.inventoryItemId } });
       if (item.status === 'RESERVED') {
+        deviceWasNeverHandedOver = true;
         await applyStockMovement({
           inventoryItemId: item.id,
           type: 'RETURN',
@@ -212,11 +225,20 @@ export async function cancelContract(params: { contractId: string; reason: strin
       }
     }
 
-    // Cancellation doesn't move money by itself (payments are only ever reversed
-    // explicitly, one at a time, with their own reason/user — mission rule: nothing
-    // financial is auto-mutated). What it must do is surface, unambiguously, how
-    // much the customer has paid toward a contract that will now never complete,
-    // so staff know what's owed back to them.
+    if (deviceWasNeverHandedOver && contract.totalPaidMinor > 0) {
+      // The deal fell through before any product changed hands — this is a full
+      // withdrawal, not a partial dispute, so every payment unwinds via its own
+      // reversal row (mission rule: reversed, not deleted, one row per original).
+      // If the device already went out (DEPOSIT_INSTALMENT cancelled from ACTIVE),
+      // this is deliberately skipped — auto-refunding while the customer keeps the
+      // device would be a straight business loss, so that case stays a reported
+      // figure for staff to resolve manually.
+      await reverseAllPaymentsForContract(tx, { contractId: contract.id, reason: params.reason, reversedById: params.userId });
+    }
+
+    // refundDueMinor is what needs to be handed back to the customer, regardless of
+    // whether the ledger has already been reversed to reflect it (deviceWasNeverHandedOver)
+    // or is left as a figure for staff to act on (device already issued).
     return { ...updated, refundDueMinor: contract.totalPaidMinor };
   });
 }

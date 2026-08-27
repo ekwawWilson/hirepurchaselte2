@@ -65,7 +65,7 @@ describe('Contract-type-specific business rules', () => {
       .rejects.toThrow(ContractError);
   });
 
-  it('cancelling a SAVE_TO_OWN contract with prior payments reports the paid amount as refund due', async () => {
+  it('cancelling a SAVE_TO_OWN contract with prior payments is a full withdrawal: reports the refund and actually reverses the ledger to zero', async () => {
     const productId = await makeProduct('SAVE-CANCEL');
     await prisma.priceChartEntry.create({
       data: {
@@ -79,10 +79,21 @@ describe('Contract-type-specific business rules', () => {
     });
 
     await postPayment({ contractId: contract.id, amountMinor: 15000, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH', createdById: adminUserId });
+    await postPayment({ contractId: contract.id, amountMinor: 5000, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH', createdById: adminUserId });
 
     const cancelled = await cancelContract({ contractId: contract.id, reason: 'customer withdrew', userId: adminUserId });
     expect(cancelled.status).toBe('CANCELLED');
-    expect(cancelled.refundDueMinor).toBe(15000);
+    expect(cancelled.refundDueMinor).toBe(20000); // the figure to physically hand back
+
+    // The device was never handed over (SAVE_TO_OWN reserves, never issues, until COMPLETED) —
+    // this is a full withdrawal, so the ledger itself must unwind, not just report a number.
+    const after = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(after.totalPaidMinor).toBe(0);
+
+    const payments = await prisma.payment.findMany({ where: { contractId: contract.id } });
+    expect(payments).toHaveLength(4); // 2 originals + 2 reversals
+    expect(payments.filter((p) => p.reversesPaymentId !== null)).toHaveLength(2);
+    expect(payments.every((p) => p.reversesPaymentId === null || p.reversalReason === 'customer withdrew')).toBe(true);
 
     // The physical item is real stock, not consumed by a cancelled contract — it must be
     // issuable again. Contract.inventoryItemId used to be @unique, so a *second* contract
@@ -98,6 +109,35 @@ describe('Contract-type-specific business rules', () => {
     });
     expect(secondContract.id).not.toBe(contract.id);
     expect(secondContract.inventoryItemId).toBe(inventoryItemId);
+  });
+
+  it('cancelling a DEPOSIT_INSTALMENT contract that already issued the device does NOT auto-reverse payments — the customer keeps the device, so the refund figure needs a human, not an automatic full unwind', async () => {
+    const productId = await makeProduct('DEP-ISSUED-CANCEL');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositPercentage: 50,
+        totalPayableMinor: 100000, instalmentAmountMinor: 8333, createdById: adminUserId,
+      },
+    });
+    const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'ISSUED');
+    const contract = await createContract({
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
+    });
+
+    // Clears the deposit gate: device gets ISSUED, contract goes ACTIVE.
+    await postPayment({ contractId: contract.id, amountMinor: 50000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
+    const item = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: inventoryItemId } });
+    expect(item.status).toBe('ISSUED');
+
+    const cancelled = await cancelContract({ contractId: contract.id, reason: 'customer stopped paying', userId: adminUserId });
+    expect(cancelled.status).toBe('CANCELLED');
+    expect(cancelled.refundDueMinor).toBe(50000); // reported, for a human to decide — not auto-refunded
+
+    const after = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(after.totalPaidMinor).toBe(50000); // ledger untouched — no reversal rows created
+
+    const reversals = await prisma.payment.findMany({ where: { contractId: contract.id, reversesPaymentId: { not: null } } });
+    expect(reversals).toHaveLength(0);
   });
 
   it('a DEPOSIT payment is rejected once the deposit gate has already cleared', async () => {
@@ -201,5 +241,42 @@ describe('Contract-type-specific business rules', () => {
     const completed = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(completed.status).toBe('COMPLETED');
     expect(completed.balanceMinor).toBe(0);
+  });
+
+  it('SAVE_TO_OWN is free-form savings: no instalment schedule is generated, uneven deposits of any size are accepted in any order, and it still completes once the balance clears', async () => {
+    const productId = await makeProduct('FREEFORM');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositPercentage: 0,
+        totalPayableMinor: 100000, instalmentAmountMinor: 16667, createdById: adminUserId,
+      },
+    });
+    const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'FF');
+    const contract = await createContract({
+      contractType: 'SAVE_TO_OWN', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
+    });
+
+    // No schedule at all — not "a schedule that happens to be empty".
+    const instalments = await prisma.instalment.findMany({ where: { contractId: contract.id } });
+    expect(instalments).toHaveLength(0);
+
+    // Deposits of uneven, arbitrary sizes — nothing like a fixed instalment amount.
+    await postPayment({ contractId: contract.id, amountMinor: 12345, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH', createdById: adminUserId });
+    await postPayment({ contractId: contract.id, amountMinor: 500, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH', createdById: adminUserId });
+    let current = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(current.totalPaidMinor).toBe(12845);
+    expect(current.balanceMinor).toBe(100000 - 12845);
+    expect(current.status).toBe('ACTIVE'); // still no OVERDUE/DEFAULTED concept to have drifted into
+
+    // Finish it off in one go — balance-driven completion doesn't care that no schedule ever existed.
+    await postPayment({ contractId: contract.id, amountMinor: 100000 - 12845, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH', createdById: adminUserId });
+    current = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(current.status).toBe('COMPLETED');
+    expect(current.balanceMinor).toBe(0);
+
+    // markOverdueInstalments/markDefaultedContracts must never touch a contract with no
+    // instalments to begin with — this contract has none, so both sweeps are no-ops for it.
+    const stillNoInstalments = await prisma.instalment.count({ where: { contractId: contract.id } });
+    expect(stillNoInstalments).toBe(0);
   });
 });

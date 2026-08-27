@@ -1,8 +1,7 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap");
 @import "tailwindcss";
 
 :root {
-  --background: 210 20% 97%;
+  --background: 210 20% 98%;
   --foreground: 222 47% 11%;
   --card: 0 0% 100%;
   --card-foreground: 222 47% 11%;
@@ -23,15 +22,17 @@
   --border: 214 20% 88%;
   --input: 214 20% 88%;
   --ring: 221 83% 53%;
-  --radius: 0.75rem;
+  /* Squared-off everywhere (design reference: salesinventoryapp/market-inventory,
+     which runs --radius: 0rem app-wide — no rounded cards/buttons/inputs/tables). */
+  --radius: 0rem;
 
-  /* Sidebar palette */
+  /* Sidebar palette — literal slate-900/800 per the reference, not a derived hue. */
   --sidebar-bg: 222 47% 11%;
-  --sidebar-border: 222 40% 18%;
+  --sidebar-border: 215 25% 20%;
   --sidebar-text: 215 20% 65%;
   --sidebar-text-active: 0 0% 100%;
-  --sidebar-active-bg: 222 47% 18%;
-  --sidebar-hover-bg: 222 47% 15%;
+  --sidebar-active-bg: 221 83% 53%;
+  --sidebar-hover-bg: 215 25% 20%;
 
   /* Topbar */
   --topbar-bg: 0 0% 100%;
@@ -59,9 +60,13 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  /* Hardcoded to 0, not calc()'d off --radius, so a zero base can never produce
+     a negative (invalid) radius value. */
+  --radius-lg: 0rem;
+  --radius-md: 0rem;
+  --radius-sm: 0rem;
+  --font-sans: var(--font-geist-sans), "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 * {
@@ -74,8 +79,7 @@ html {
 }
 
 body {
-  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: hsl(var(--background));
@@ -84,7 +88,7 @@ body {
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+  font-family: var(--font-sans);
   letter-spacing: -0.02em;
   font-weight: 700;
 }
@@ -97,14 +101,6 @@ h1, h2, h3, h4, h5, h6 {
 /* Page content fade-in */
 .page-shell {
   animation: rise-in 0.36s cubic-bezier(0.19, 1, 0.22, 1);
-}
-
-/* Subtle dot grid on main area background */
-.surface-grid {
-  background-color: hsl(var(--background));
-  background-image:
-    radial-gradient(circle, rgba(37, 99, 235, 0.055) 1px, transparent 1px);
-  background-size: 28px 28px;
 }
 
 .safe-area-bottom {

@@ -147,7 +147,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     <TableCell><Link href={`/contracts/${c.id}`} className="font-mono text-xs text-blue-700 hover:underline">{c.contractNumber}</Link></TableCell>
                     <TableCell>{c.product.name}</TableCell>
                     <TableCell>{contractTypeLabel(c.contractType)}</TableCell>
-                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-1 ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
+                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
                     <TableCell>{formatCurrency(c.balanceMinor)} / {formatCurrency(c.totalPayableMinor)}</TableCell>
                   </TableRow>
                 ))}

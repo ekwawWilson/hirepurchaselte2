@@ -19,11 +19,11 @@ function UserMenu() {
       <button
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "flex items-center gap-2.5 pl-2 pr-3 py-1.5 rounded-xl border transition-all",
+          "flex items-center gap-2.5 pl-2 pr-3 py-1.5 border transition-all",
           open ? "bg-gray-100 border-gray-300" : "bg-white border-gray-200 hover:bg-gray-50 hover:border-gray-300"
         )}
       >
-        <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white text-[11px] font-bold shrink-0">
+        <div className="w-7 h-7 bg-slate-800 flex items-center justify-center text-white text-[11px] font-bold shrink-0">
           {initials}
         </div>
         <div className="hidden sm:flex flex-col items-start leading-none">
@@ -36,10 +36,10 @@ function UserMenu() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-2 w-56 z-50 bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden animate-slide-down">
-            <div className="px-4 py-3 border-b border-gray-100">
+          <div className="absolute right-0 mt-2 w-56 z-50 bg-white ring-1 ring-black/5 shadow-lg overflow-hidden animate-slide-down">
+            <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
+                <div className="w-9 h-9 bg-slate-800 flex items-center justify-center text-white text-sm font-bold shrink-0">
                   {initials}
                 </div>
                 <div className="min-w-0">
@@ -47,7 +47,7 @@ function UserMenu() {
                   <p className="text-xs text-gray-500 truncate">{user.email}</p>
                 </div>
               </div>
-              <span className="inline-flex mt-2 items-center px-2 py-0.5 rounded-md bg-blue-50 border border-blue-100 text-[11px] font-semibold text-blue-700">
+              <span className="inline-flex mt-2 items-center px-2 py-0.5 bg-blue-50 ring-1 ring-blue-200/60 text-[11px] font-semibold text-blue-700">
                 {user.role}
               </span>
             </div>
@@ -58,7 +58,7 @@ function UserMenu() {
                   clearAuth();
                   router.push("/login");
                 }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-red-600 hover:bg-red-50 transition-colors text-left"
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors text-left"
               >
                 <LogOut className="h-4 w-4" />
                 Sign Out

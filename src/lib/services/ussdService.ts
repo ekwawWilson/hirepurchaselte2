@@ -21,8 +21,12 @@ async function startSession(sessionId: string, msisdn: string): Promise<UssdResu
     return { message: 'No HP-Lite account found for this number.', continueSession: false };
   }
 
+  // DEFAULTED is deliberately included: it isn't a terminal status (see
+  // overdueService.markDefaultedContracts / paymentService.advanceContractStatus) —
+  // a customer catching up their own arrears via USSD is exactly the self-service
+  // path that cures a default, so hiding it here would strand them on cash-only.
   const contracts = await prisma.contract.findMany({
-    where: { customerId: customer.id, balanceMinor: { gt: 0 }, status: { in: ['ACTIVE', 'PENDING_DEPOSIT'] } },
+    where: { customerId: customer.id, balanceMinor: { gt: 0 }, status: { in: ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'] } },
     orderBy: { createdAt: 'asc' },
   });
   if (contracts.length === 0) {

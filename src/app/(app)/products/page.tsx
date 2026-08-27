@@ -153,7 +153,7 @@ export default function ProductsPage() {
                     <TableCell className="font-medium text-gray-900"><Link href={`/products/${p.id}`} className="hover:underline">{p.name}</Link></TableCell>
                     <TableCell>{[p.brand, p.model].filter(Boolean).join(' ') || '—'}</TableCell>
                     <TableCell>{formatCurrency(p.cashPriceMinor)}</TableCell>
-                    <TableCell><Badge variant={p.isActive ? 'default' : 'secondary'}>{p.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
+                    <TableCell><Badge variant={p.isActive ? 'success' : 'secondary'}>{p.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

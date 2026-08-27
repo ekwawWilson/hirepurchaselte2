@@ -134,7 +134,7 @@ export default function BranchesPage() {
                     <TableCell className="font-mono text-xs">{b.code}</TableCell>
                     <TableCell>{b.address ?? '—'}</TableCell>
                     <TableCell>{b.phone ?? '—'}</TableCell>
-                    <TableCell><Badge variant={b.isActive ? 'default' : 'secondary'}>{b.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
+                    <TableCell><Badge variant={b.isActive ? 'success' : 'secondary'}>{b.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

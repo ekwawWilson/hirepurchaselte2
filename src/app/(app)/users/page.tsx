@@ -145,7 +145,7 @@ export default function UsersPage() {
                     <TableCell>{u.email}</TableCell>
                     <TableCell><Badge variant="secondary">{u.role}</Badge></TableCell>
                     <TableCell>{branchName(u.branchId)}</TableCell>
-                    <TableCell><Badge variant={u.isActive ? 'default' : 'secondary'}>{u.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
+                    <TableCell><Badge variant={u.isActive ? 'success' : 'secondary'}>{u.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
                     <TableCell>
                       <button className="text-xs text-blue-700 hover:underline" onClick={() => openEdit(u)}>Edit</button>
                     </TableCell>

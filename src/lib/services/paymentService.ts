@@ -222,7 +222,11 @@ export async function postPayment(params: PostPaymentParams) {
       },
     });
 
-    if (params.entryType === 'INSTALMENT_PAYMENT') {
+    // SAVE_TO_OWN has no instalment schedule to allocate against (free-form savings —
+    // any amount, any time, toward totalPayableMinor) — totalPaidMinor/balanceMinor
+    // below are computed straight from the payments ledger regardless, so skipping
+    // allocation here doesn't affect correctness, just avoids a pointless no-op query.
+    if (params.entryType === 'INSTALMENT_PAYMENT' && contract.contractType !== 'SAVE_TO_OWN') {
       await allocatePayment(tx, payment.id, contract.id, payment.amountMinor);
     }
 
@@ -250,38 +254,64 @@ export async function postPayment(params: PostPaymentParams) {
  * (mission rule: nothing financial is hard-deleted). recomputeContract then
  * naturally excludes the reversed payment's contribution and effect on
  * instalments/penalties, since getEffectivePayments filters it out.
+ *
+ * Split into a tx-scoped core (reusable from inside another already-open
+ * transaction — see reverseAllPaymentsForContract) and the public single-payment
+ * entrypoint below, which opens its own transaction.
  */
+async function reversePaymentInTx(tx: Tx, params: { paymentId: string; reason: string; reversedById: string }) {
+  const original = await tx.payment.findUniqueOrThrow({ where: { id: params.paymentId } });
+  if (original.status !== 'SUCCESS') throw new PaymentError('Only a SUCCESS payment can be reversed');
+  if (original.reversesPaymentId) throw new PaymentError('Cannot reverse a reversal');
+
+  const alreadyReversed = await tx.payment.findUnique({ where: { reversesPaymentId: original.id } });
+  if (alreadyReversed) throw new PaymentError('This payment has already been reversed');
+
+  const reversal = await tx.payment.create({
+    data: {
+      contractId: original.contractId,
+      entryType: original.entryType,
+      amountMinor: original.amountMinor,
+      channel: original.channel,
+      transactionRef: generateTransactionRef(),
+      status: 'SUCCESS',
+      reversesPaymentId: original.id,
+      reversalReason: params.reason,
+      createdById: params.reversedById,
+      receivedAt: new Date(),
+    },
+  });
+
+  await tx.payment.update({
+    where: { id: original.id },
+    data: { reversedById: params.reversedById, reversalReason: params.reason },
+  });
+
+  return reversal;
+}
+
 export async function reversePayment(params: { paymentId: string; reason: string; reversedById: string }) {
   return prisma.$transaction(async (tx) => {
-    const original = await tx.payment.findUniqueOrThrow({ where: { id: params.paymentId } });
-    if (original.status !== 'SUCCESS') throw new PaymentError('Only a SUCCESS payment can be reversed');
-    if (original.reversesPaymentId) throw new PaymentError('Cannot reverse a reversal');
-
-    const alreadyReversed = await tx.payment.findUnique({ where: { reversesPaymentId: original.id } });
-    if (alreadyReversed) throw new PaymentError('This payment has already been reversed');
-
-    const reversal = await tx.payment.create({
-      data: {
-        contractId: original.contractId,
-        entryType: original.entryType,
-        amountMinor: original.amountMinor,
-        channel: original.channel,
-        transactionRef: generateTransactionRef(),
-        status: 'SUCCESS',
-        reversesPaymentId: original.id,
-        reversalReason: params.reason,
-        createdById: params.reversedById,
-        receivedAt: new Date(),
-      },
-    });
-
-    await tx.payment.update({
-      where: { id: original.id },
-      data: { reversedById: params.reversedById, reversalReason: params.reason },
-    });
-
-    await recomputeContract(tx, original.contractId);
-
+    const reversal = await reversePaymentInTx(tx, params);
+    await recomputeContract(tx, reversal.contractId);
     return reversal;
   });
+}
+
+/**
+ * Reverses every effective (non-reversed) payment on a contract in one pass —
+ * used when a customer withdraws from a contract the device was never handed
+ * over on (see contractService.cancelContract): the deal fell through before
+ * any product changed hands, so the whole ledger unwinds, not just a number
+ * reported for staff to act on outside the system. Each payment still gets
+ * its own reversal row with the same reason/user (mission rule: reversed, not
+ * deleted, one row per original) — this just does that for all of them as
+ * part of the same cancellation transaction.
+ */
+export async function reverseAllPaymentsForContract(tx: Tx, params: { contractId: string; reason: string; reversedById: string }) {
+  const effectivePayments = await getEffectivePayments(tx, params.contractId);
+  for (const payment of effectivePayments) {
+    await reversePaymentInTx(tx, { paymentId: payment.id, reason: params.reason, reversedById: params.reversedById });
+  }
+  await recomputeContract(tx, params.contractId);
 }

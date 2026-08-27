@@ -38,13 +38,22 @@ export async function queueSms(params: {
   const payment = params.paymentId ? await db.payment.findUnique({ where: { id: params.paymentId } }) : null;
   const nextInstalment = contract.instalments[0];
 
+  // Rendered as one clause (not separate amount/date fields) so each of the three
+  // cases below reads as a real sentence: a scheduled contract's next due instalment,
+  // SAVE_TO_OWN's free-form savings (no schedule to quote an amount/date from — see
+  // contractService.ts), and a contract that's already fully paid off.
+  const nextDueLine = contract.balanceMinor <= 0
+    ? 'Your contract is fully paid.'
+    : nextInstalment
+      ? `Next due: ${currencyCode()} ${formatMoney(nextInstalment.amountDueMinor - nextInstalment.amountPaidMinor)} on ${nextInstalment.dueDate.toISOString().slice(0, 10)}.`
+      : 'Deposit any amount, any time, to keep saving toward it.';
+
   const vars: Record<string, string> = {
     customerName: `${contract.customer.firstName} ${contract.customer.lastName}`,
     contractNumber: contract.contractNumber,
     amountPaid: payment ? formatMoney(payment.amountMinor) : '',
     outstandingBalance: formatMoney(contract.balanceMinor),
-    nextDueDate: nextInstalment ? nextInstalment.dueDate.toISOString().slice(0, 10) : 'N/A',
-    nextDueAmount: nextInstalment ? formatMoney(nextInstalment.amountDueMinor - nextInstalment.amountPaidMinor) : '0.00',
+    nextDueLine,
     currency: currencyCode(),
   };
 

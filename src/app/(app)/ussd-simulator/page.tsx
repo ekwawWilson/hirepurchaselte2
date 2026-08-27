@@ -69,7 +69,7 @@ export default function UssdSimulatorPage() {
 
       <Card>
         <CardContent className="p-4">
-          <div className="rounded-xl border border-gray-800 bg-black p-4 text-green-400 font-mono text-sm shadow-inner min-h-[280px] flex flex-col">
+          <div className="border border-gray-800 bg-black p-4 text-green-400 font-mono text-sm shadow-inner min-h-[280px] flex flex-col">
             {log.length === 0 && <div className="text-gray-500">Enter a phone number and press Dial to begin.</div>}
             <div className="flex-1 space-y-2 overflow-y-auto">
               {log.map((entry, i) => (

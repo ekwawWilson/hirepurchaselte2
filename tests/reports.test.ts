@@ -51,9 +51,15 @@ describe('Reports', () => {
     await priceChartPOST(makeRequest('POST', '/api/price-chart', {
       token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositPercentage: 0, totalPayableMinor: 240000 },
     }));
+    // SAVE_TO_OWN has no instalment schedule (free-form savings — see contractService.ts) —
+    // the arrears test below needs a real Instalment row to backdate, so it uses this
+    // DEPOSIT_INSTALMENT entry instead (0% deposit keeps its finance amount identical).
+    await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositPercentage: 0, totalPayableMinor: 240000 },
+    }));
   });
 
-  async function setupContract(label: string) {
+  async function setupContract(label: string, contractType: string = 'SAVE_TO_OWN') {
     const phone = uniquePhone();
     const customer = await customersPOST(makeRequest('POST', '/api/customers', {
       token: cashier, body: { firstName: 'Report', lastName: label, phone },
@@ -64,7 +70,7 @@ describe('Reports', () => {
     }));
     const itemId = (await item.json()).item.id;
     const contract = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
+      token: cashier, body: { contractType, customerId: custId, inventoryItemId: itemId, termMonths: 6 },
     }));
     return (await contract.json()).contract;
   }
@@ -105,7 +111,7 @@ describe('Reports', () => {
   });
 
   it('arrears ageing report buckets an overdue instalment correctly', async () => {
-    const contract = await setupContract('Arrears');
+    const contract = await setupContract('Arrears', 'DEPOSIT_INSTALMENT');
     // Force the first instalment's due date into the past and mark it OVERDUE directly (simulating the cron sweep).
     const inst = await prisma.instalment.findFirstOrThrow({ where: { contractId: contract.id, instalmentNo: 1 } });
     await prisma.instalment.update({ where: { id: inst.id }, data: { dueDate: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000), status: 'OVERDUE' } });

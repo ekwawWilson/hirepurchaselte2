@@ -170,7 +170,7 @@ export default function InventoryPage() {
                   <TableRow key={i.id}>
                     <TableCell className="font-mono text-xs">{i.serialNumber}</TableCell>
                     <TableCell className="font-medium text-gray-900">{i.product.name}</TableCell>
-                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-1 ${getStatusColor(i.status)}`}>{i.status}</span></TableCell>
+                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 ${getStatusColor(i.status)}`}>{i.status}</span></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

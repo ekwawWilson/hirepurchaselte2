@@ -138,7 +138,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
             {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone} &middot; {contract.product.name} &middot; {contractTypeLabel(contract.contractType)} &middot; {contract.paymentFrequency.charAt(0) + contract.paymentFrequency.slice(1).toLowerCase()}
           </p>
         </div>
-        <span className={`text-[11px] font-semibold uppercase tracking-wide rounded-full px-3 py-1.5 ${getStatusColor(contract.status)}`}>{contract.status}</span>
+        <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 ${getStatusColor(contract.status)}`}>{contract.status}</span>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -162,7 +162,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                 <div>
                   <Label>Type</Label>
                   <select
-                    className="mt-1.5 flex h-10 rounded-xl border border-input bg-white/90 px-3 py-2 text-sm"
+                    className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
                     value={entryType}
                     onChange={(e) => setEntryType(e.target.value as 'DEPOSIT' | 'INSTALMENT_PAYMENT')}
                   >
@@ -181,6 +181,17 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
+      {contract.contractType === 'SAVE_TO_OWN' ? (
+        <Card>
+          <CardHeader><CardTitle>Savings progress</CardTitle></CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-500">
+              Save to Own has no fixed schedule — the customer deposits any amount, any time, toward the total
+              above. The device is released once the balance reaches zero.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
       <Card>
         <CardHeader><CardTitle>Instalment schedule</CardTitle></CardHeader>
         <CardContent className="p-0">
@@ -206,7 +217,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   )}
                   <TableCell>{formatCurrency(i.amountPaidMinor)}</TableCell>
                   <TableCell>
-                    <span className={`text-[10px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 ${getStatusColor(i.status)}`}>{i.status}</span>
+                    <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 ${getStatusColor(i.status)}`}>{i.status}</span>
                     {i.status === 'OVERDUE' && (
                       <span className="ml-1.5 text-[11px] text-red-600">{i.daysPastDue}d past due</span>
                     )}
@@ -217,6 +228,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           </Table>
         </CardContent>
       </Card>
+      )}
 
       <Card>
         <CardHeader><CardTitle>Payments</CardTitle></CardHeader>

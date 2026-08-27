@@ -53,14 +53,17 @@ describe('USSD + Hubtel payments', () => {
     }));
   });
 
-  async function setupContract(phone: string) {
-    const customer = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Ussd', lastName: 'Tester', phone },
-    }));
-    const custId = (await customer.json()).customer.id;
+  async function setupContract(phone: string, opts: { customerId?: string; serialSuffix?: string } = {}) {
+    let custId = opts.customerId;
+    if (!custId) {
+      const customer = await customersPOST(makeRequest('POST', '/api/customers', {
+        token: cashier, body: { firstName: 'Ussd', lastName: 'Tester', phone },
+      }));
+      custId = (await customer.json()).customer.id;
+    }
 
     const item = await inventoryPOST(makeRequest('POST', '/api/inventory', {
-      token: admin, body: { productId, serialNumber: `IMEI-USSD-${phone}`, branchId },
+      token: admin, body: { productId, serialNumber: `IMEI-USSD-${phone}${opts.serialSuffix ?? ''}`, branchId },
     }));
     const itemId = (await item.json()).item.id;
 
@@ -107,6 +110,59 @@ describe('USSD + Hubtel payments', () => {
 
     const detail = await contractGET(makeRequest('GET', `/api/contracts/${contract.id}`, { token: cashier }), makeParams({ id: contract.id }));
     expect((await detail.json()).contract.totalPaidMinor).toBe(0);
+  });
+
+  it('a customer with multiple contracts is shown a selection menu and pays the one they pick', async () => {
+    const phone = uniquePhone();
+    const contractA = await setupContract(phone);
+    const contractB = await setupContract(phone, { customerId: contractA.customerId, serialSuffix: '-B' });
+    const sessionId = `sess-${runId}-multi`;
+
+    const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+    expect(step1.continueSession).toBe(true);
+    expect(step1.message).toContain('Select a contract');
+    expect(step1.message).toContain(contractA.contractNumber);
+    expect(step1.message).toContain(contractB.contractNumber);
+
+    // Pick the second contract listed (index 2).
+    const step2 = await handleUssdInput({ sessionId, msisdn: phone, input: '2', isNewSession: false });
+    expect(step2.continueSession).toBe(true);
+    expect(step2.message).toContain(contractB.contractNumber);
+    expect(step2.message).not.toContain(contractA.contractNumber);
+
+    const step3 = await handleUssdInput({ sessionId, msisdn: phone, input: '300', isNewSession: false });
+    expect(step3.message).toContain('Confirm payment of GHS300.00');
+    const step4 = await handleUssdInput({ sessionId, msisdn: phone, input: '1', isNewSession: false });
+    expect(step4.message).toMatch(/successful/i);
+
+    const detailB = await contractGET(makeRequest('GET', `/api/contracts/${contractB.id}`, { token: cashier }), makeParams({ id: contractB.id }));
+    expect((await detailB.json()).contract.totalPaidMinor).toBe(30000);
+
+    const detailA = await contractGET(makeRequest('GET', `/api/contracts/${contractA.id}`, { token: cashier }), makeParams({ id: contractA.id }));
+    expect((await detailA.json()).contract.totalPaidMinor).toBe(0); // untouched — the payment went to B, not A
+  });
+
+  it('an invalid selection index ends the session cleanly instead of crashing', async () => {
+    const phone = uniquePhone();
+    const first = await setupContract(phone);
+    await setupContract(phone, { customerId: first.customerId, serialSuffix: '-B' });
+    const sessionId = `sess-${runId}-badselect`;
+
+    await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+    const result = await handleUssdInput({ sessionId, msisdn: phone, input: '99', isNewSession: false });
+    expect(result.continueSession).toBe(false);
+    expect(result.message).toMatch(/invalid selection/i);
+  });
+
+  it('a DEFAULTED contract is still selectable via USSD — self-service payment is how a customer cures their own default', async () => {
+    const phone = uniquePhone();
+    const contract = await setupContract(phone);
+    await prisma.contract.update({ where: { id: contract.id }, data: { status: 'DEFAULTED' } });
+
+    const sessionId = `sess-${runId}-defaulted`;
+    const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+    expect(step1.continueSession).toBe(true);
+    expect(step1.message).toContain(contract.contractNumber);
   });
 
   it('unknown phone number gets a clear rejection, not a crash', async () => {

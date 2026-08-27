@@ -211,7 +211,7 @@ export default function PriceChartPage() {
                     <TableCell>{formatCurrency(e.totalPayableMinor)}</TableCell>
                     <TableCell>{formatCurrency(e.instalmentAmountMinor)}</TableCell>
                     <TableCell>
-                      {e.effectiveTo ? <Badge variant="secondary">Superseded</Badge> : <Badge className="bg-green-600">Active</Badge>}
+                      {e.effectiveTo ? <Badge variant="secondary">Superseded</Badge> : <Badge variant="success">Active</Badge>}
                     </TableCell>
                   </TableRow>
                 ))}

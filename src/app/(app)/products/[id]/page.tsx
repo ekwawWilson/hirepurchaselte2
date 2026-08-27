@@ -118,7 +118,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div><p className="text-xs text-gray-500">Brand/Model</p><p className="text-gray-900">{[product.brand, product.model].filter(Boolean).join(' ') || '—'}</p></div>
               <div><p className="text-xs text-gray-500">Cash price</p><p className="text-gray-900">{formatCurrency(product.cashPriceMinor)}</p></div>
-              <div><p className="text-xs text-gray-500">Status</p><Badge variant={product.isActive ? 'default' : 'secondary'}>{product.isActive ? 'Active' : 'Inactive'}</Badge></div>
+              <div><p className="text-xs text-gray-500">Status</p><Badge variant={product.isActive ? 'success' : 'secondary'}>{product.isActive ? 'Active' : 'Inactive'}</Badge></div>
             </div>
           )}
         </CardContent>
@@ -149,7 +149,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                     <TableCell>{frequencyLabel(e.paymentFrequency)}</TableCell>
                     <TableCell>{e.depositPercentage}%</TableCell>
                     <TableCell>{formatCurrency(e.totalPayableMinor)}</TableCell>
-                    <TableCell>{e.effectiveTo ? <Badge variant="secondary">Superseded</Badge> : <Badge className="bg-green-600">Active</Badge>}</TableCell>
+                    <TableCell>{e.effectiveTo ? <Badge variant="secondary">Superseded</Badge> : <Badge variant="success">Active</Badge>}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

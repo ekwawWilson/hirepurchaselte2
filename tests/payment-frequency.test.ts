@@ -96,20 +96,20 @@ describe('Payment frequency: DAILY/WEEKLY/MONTHLY schedules', () => {
     const productId = await makeProduct('DEP-BOTH');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'SAVE_TO_OWN', termMonths: 2, paymentFrequency: 'DAILY', depositPercentage: 0,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, paymentFrequency: 'DAILY', depositPercentage: 0,
         totalPayableMinor: 40000, instalmentAmountMinor: 700, createdById: adminUserId,
       },
     });
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'SAVE_TO_OWN', termMonths: 2, paymentFrequency: 'MONTHLY', depositPercentage: 0,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, paymentFrequency: 'MONTHLY', depositPercentage: 0,
         totalPayableMinor: 40000, instalmentAmountMinor: 20000, createdById: adminUserId,
       },
     });
 
     const daily = await makeCustomerAndItem(productId, 'B');
     const dailyContract = await createContract({
-      contractType: 'SAVE_TO_OWN', customerId: daily.customerId, inventoryItemId: daily.inventoryItemId,
+      contractType: 'DEPOSIT_INSTALMENT', customerId: daily.customerId, inventoryItemId: daily.inventoryItemId,
       termMonths: 2, paymentFrequency: 'DAILY', branchId, createdById: adminUserId,
     });
     const dailyInstalments = await prisma.instalment.findMany({ where: { contractId: dailyContract.id } });
@@ -117,7 +117,7 @@ describe('Payment frequency: DAILY/WEEKLY/MONTHLY schedules', () => {
 
     const monthly = await makeCustomerAndItem(productId, 'C');
     const monthlyContract = await createContract({
-      contractType: 'SAVE_TO_OWN', customerId: monthly.customerId, inventoryItemId: monthly.inventoryItemId,
+      contractType: 'DEPOSIT_INSTALMENT', customerId: monthly.customerId, inventoryItemId: monthly.inventoryItemId,
       termMonths: 2, paymentFrequency: 'MONTHLY', branchId, createdById: adminUserId,
     });
     const monthlyInstalments = await prisma.instalment.findMany({ where: { contractId: monthlyContract.id } });

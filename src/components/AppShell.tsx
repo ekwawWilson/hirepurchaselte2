@@ -27,21 +27,21 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   if (!checked) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f4f6f9]">
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f4f6f9]">
+    <div className="flex h-screen overflow-hidden bg-gray-50">
       <AppSidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <AppTopBar onMenuToggle={() => setMobileNavOpen((o) => !o)} />
 
-        <main className="flex-1 overflow-y-auto surface-grid">
-          <div className="page-shell p-4 sm:p-6 lg:p-8">{children}</div>
+        <main className="flex-1 overflow-y-auto">
+          <div className="page-shell mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 sm:py-6">{children}</div>
         </main>
       </div>
     </div>

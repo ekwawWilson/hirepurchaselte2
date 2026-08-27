@@ -173,7 +173,7 @@ export default function ContractsPage() {
             <CardTitle className="text-xl">Create Contract</CardTitle>
             <div className="flex gap-2 mt-3">
               {[1, 2, 3].map((s) => (
-                <div key={s} className={`h-2 flex-1 rounded-full ${s <= step ? 'bg-blue-600' : 'bg-gray-200'}`} />
+                <div key={s} className={`h-2 flex-1 ${s <= step ? 'bg-blue-600' : 'bg-gray-200'}`} />
               ))}
             </div>
             <p className="text-xs text-gray-500 mt-1.5">
@@ -188,7 +188,7 @@ export default function ContractsPage() {
                   <input
                     type="text"
                     placeholder="Search by name, phone, or membership ID..."
-                    className="flex h-10 w-full rounded-xl border border-input bg-white/90 pl-9 pr-3 py-2 text-sm"
+                    className="flex h-10 w-full border border-input bg-white/90 pl-9 pr-3 py-2 text-sm"
                     value={customerSearch}
                     onChange={(e) => setCustomerSearch(e.target.value)}
                   />
@@ -197,7 +197,7 @@ export default function ContractsPage() {
                   {filteredCustomers.map((c) => (
                     <div
                       key={c.id}
-                      className={`p-3 border rounded-xl cursor-pointer transition-colors flex gap-3 items-center ${customerId === c.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
+                      className={`p-3 border cursor-pointer transition-colors flex gap-3 items-center ${customerId === c.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
                       onClick={() => setCustomerId(c.id)}
                     >
                       {c.photoUrl ? (
@@ -232,7 +232,7 @@ export default function ContractsPage() {
                   <input
                     type="text"
                     placeholder="Search by product name, category, or serial/IMEI..."
-                    className="flex h-10 w-full rounded-xl border border-input bg-white/90 pl-9 pr-3 py-2 text-sm"
+                    className="flex h-10 w-full border border-input bg-white/90 pl-9 pr-3 py-2 text-sm"
                     value={itemSearch}
                     onChange={(e) => setItemSearch(e.target.value)}
                   />
@@ -241,7 +241,7 @@ export default function ContractsPage() {
                   {filteredItems.map((i) => (
                     <div
                       key={i.id}
-                      className={`p-3 border rounded-xl cursor-pointer transition-colors ${inventoryItemId === i.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
+                      className={`p-3 border cursor-pointer transition-colors ${inventoryItemId === i.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
                       onClick={() => setInventoryItemId(i.id)}
                     >
                       <div className="flex justify-between items-start gap-3">
@@ -269,11 +269,11 @@ export default function ContractsPage() {
 
             {step === 3 && (
               <div className="space-y-4">
-                <div className="bg-blue-50 p-3 rounded-xl">
+                <div className="bg-blue-50 p-3">
                   <p className="text-xs font-medium text-blue-900">Customer</p>
                   <p className="text-sm text-blue-900">{selectedCustomer?.firstName} {selectedCustomer?.lastName} &middot; {selectedCustomer?.membershipId}</p>
                 </div>
-                <div className="bg-green-50 p-3 rounded-xl">
+                <div className="bg-green-50 p-3">
                   <p className="text-xs font-medium text-green-900">Product</p>
                   <p className="text-sm text-green-900">{selectedItem?.product.name} &middot; <span className="font-mono">{selectedItem?.serialNumber}</span></p>
                 </div>
@@ -303,7 +303,7 @@ export default function ContractsPage() {
                 </div>
 
                 {selectedEntry && (
-                  <div className="rounded-xl border border-gray-200 p-3 space-y-1.5 text-sm">
+                  <div className="border border-gray-200 p-3 space-y-1.5 text-sm">
                     <div className="flex justify-between"><span className="text-gray-500">Total payable</span><span className="font-medium text-gray-900">{formatCurrency(selectedEntry.totalPayableMinor)}</span></div>
                     {selectedEntry.contractType === 'DEPOSIT_INSTALMENT' && (
                       <div className="flex justify-between"><span className="text-gray-500">Deposit required</span><span className="font-medium text-gray-900">{selectedEntry.depositPercentage}% ({formatCurrency(Math.round(selectedEntry.totalPayableMinor * selectedEntry.depositPercentage / 100))})</span></div>
@@ -373,7 +373,7 @@ export default function ContractsPage() {
                     <TableCell>{c.customer.firstName} {c.customer.lastName}</TableCell>
                     <TableCell>{c.product.name}</TableCell>
                     <TableCell>{contractTypeLabel(c.contractType)}</TableCell>
-                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-1 ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
+                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
                     <TableCell>{formatCurrency(c.balanceMinor)} / {formatCurrency(c.totalPayableMinor)}</TableCell>
                     <TableCell>
                       <Link href={`/contracts/${c.id}`}><ChevronRight className="h-4 w-4 text-gray-300" /></Link>
