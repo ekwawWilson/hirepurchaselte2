@@ -1,0 +1,132 @@
+/**
+ * Instalment schedule generation for all three contract types.
+ * Amounts are integer minor units throughout — see docs/00-legacy-study.md §5
+ * (Types A/B rounding rule, carried over from the legacy app) and
+ * docs/02-loan-maths.md (Type C flat-rate interest, worked example).
+ */
+import { numberOfInstalmentsForTerm, type PaymentFrequencyName } from '../constants/contracts';
+
+export interface GeneratedInstalment {
+  instalmentNo: number;
+  dueDate: Date;
+  amountDueMinor: number;
+  principalPortionMinor: number;
+  interestPortionMinor: number;
+}
+
+/**
+ * Adds calendar months, clamping to the last day of the target month instead
+ * of overflowing into the month after it. Plain `setMonth()` arithmetic is
+ * broken for any start date on the 29th/30th/31st: e.g. Jan 31 + 1 month
+ * lands on Mar 3 (JS rolls the excess days into the next month) instead of
+ * Feb 28 — which would silently corrupt a large fraction of real instalment
+ * schedules, since most months don't have 31 days.
+ */
+function addMonths(date: Date, months: number): Date {
+  const d = new Date(date);
+  const targetMonth = d.getMonth() + months;
+  d.setMonth(targetMonth, 1); // pin to day 1 first so month-length overflow can't happen
+  const daysInTargetMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(date.getDate(), daysInTargetMonth));
+  return d;
+}
+
+/**
+ * Advances `date` by `n` instalment periods at the given cadence. DAILY/WEEKLY
+ * are plain day arithmetic (no month-length ambiguity to clamp); MONTHLY
+ * reuses addMonths's month-end clamping.
+ */
+function addPeriod(date: Date, paymentFrequency: PaymentFrequencyName, n: number): Date {
+  if (paymentFrequency === 'MONTHLY') return addMonths(date, n);
+  const daysPerPeriod = paymentFrequency === 'WEEKLY' ? 7 : 1;
+  const d = new Date(date);
+  d.setDate(d.getDate() + n * daysPerPeriod);
+  return d;
+}
+
+/**
+ * Straight-line split for Types A (SAVE_TO_OWN) and B (DEPOSIT_INSTALMENT):
+ * each instalment rounds UP to the minor unit, and the final instalment
+ * absorbs the exact remainder so the total reconciles to the pesewa. The
+ * admin-entered `termMonths` is always expressed in months regardless of
+ * cadence — `numberOfInstalmentsForTerm` converts it to an actual instalment
+ * count for DAILY/WEEKLY collection (see constants/contracts.ts).
+ */
+export function generateStraightLineSchedule(
+  financeAmountMinor: number,
+  termMonths: number,
+  startDate: Date,
+  paymentFrequency: PaymentFrequencyName = 'MONTHLY',
+): GeneratedInstalment[] {
+  if (termMonths < 1) throw new Error('termMonths must be at least 1');
+  if (financeAmountMinor < 0) throw new Error('financeAmountMinor cannot be negative');
+
+  const count = numberOfInstalmentsForTerm(termMonths, paymentFrequency);
+  const perInstalment = Math.ceil(financeAmountMinor / count);
+  const schedule: GeneratedInstalment[] = [];
+  let runningTotal = 0;
+
+  for (let i = 1; i <= count; i++) {
+    const amount = i === count ? financeAmountMinor - runningTotal : perInstalment;
+    runningTotal += amount;
+    schedule.push({
+      instalmentNo: i,
+      dueDate: addPeriod(startDate, paymentFrequency, i),
+      amountDueMinor: amount,
+      principalPortionMinor: amount,
+      interestPortionMinor: 0,
+    });
+  }
+  return schedule;
+}
+
+/**
+ * Flat-rate loan schedule for Type C (DEVICE_LOAN): total interest is derived
+ * from the loan's duration in months (unaffected by collection cadence — see
+ * docs/02-loan-maths.md), then both interest and principal are spread evenly
+ * across the actual instalment count for the chosen `paymentFrequency`, each
+ * independently rounded up with the final instalment absorbing both remainders.
+ */
+export function generateLoanSchedule(
+  principalMinor: number,
+  interestRateBps: number,
+  termMonths: number,
+  startDate: Date,
+  paymentFrequency: PaymentFrequencyName = 'MONTHLY',
+): GeneratedInstalment[] {
+  if (termMonths < 1) throw new Error('termMonths must be at least 1');
+  if (principalMinor < 0) throw new Error('principalMinor cannot be negative');
+
+  const totalInterestMinor = Math.round((principalMinor * interestRateBps * termMonths) / (10000 * 12));
+
+  const count = numberOfInstalmentsForTerm(termMonths, paymentFrequency);
+  const perInterest = Math.ceil(totalInterestMinor / count);
+  const perPrincipal = Math.ceil(principalMinor / count);
+
+  const schedule: GeneratedInstalment[] = [];
+  let runningInterest = 0;
+  let runningPrincipal = 0;
+
+  for (let i = 1; i <= count; i++) {
+    const isLast = i === count;
+    const interestPortion = isLast ? totalInterestMinor - runningInterest : perInterest;
+    const principalPortion = isLast ? principalMinor - runningPrincipal : perPrincipal;
+    runningInterest += interestPortion;
+    runningPrincipal += principalPortion;
+
+    schedule.push({
+      instalmentNo: i,
+      dueDate: addPeriod(startDate, paymentFrequency, i),
+      amountDueMinor: interestPortion + principalPortion,
+      principalPortionMinor: principalPortion,
+      interestPortionMinor: interestPortion,
+    });
+  }
+  return schedule;
+}
+
+/** Back-solves principal from a price chart's (totalPayable, rate, term) so admins only ever enter totalPayable. */
+export function derivePrincipalFromTotalPayable(totalPayableMinor: number, interestRateBps: number, termMonths: number): number {
+  const factor = 1 + (interestRateBps * termMonths) / (10000 * 12);
+  return Math.round(totalPayableMinor / factor);
+}

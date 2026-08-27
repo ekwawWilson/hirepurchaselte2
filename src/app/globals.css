@@ -1,0 +1,146 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap");
+@import "tailwindcss";
+
+:root {
+  --background: 210 20% 97%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  /* Matches the literal blue-600 used everywhere else in this design (sidebar,
+     topbar, stat cards) — kept as one token so it's a single source of truth. */
+  --primary: 221 83% 53%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 16% 93%;
+  --secondary-foreground: 222 47% 20%;
+  --muted: 210 16% 93%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 210 16% 93%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214 20% 88%;
+  --input: 214 20% 88%;
+  --ring: 221 83% 53%;
+  --radius: 0.75rem;
+
+  /* Sidebar palette */
+  --sidebar-bg: 222 47% 11%;
+  --sidebar-border: 222 40% 18%;
+  --sidebar-text: 215 20% 65%;
+  --sidebar-text-active: 0 0% 100%;
+  --sidebar-active-bg: 222 47% 18%;
+  --sidebar-hover-bg: 222 47% 15%;
+
+  /* Topbar */
+  --topbar-bg: 0 0% 100%;
+  --topbar-border: 214 20% 88%;
+  --topbar-h: 56px;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+* {
+  border-color: hsl(var(--border));
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  overscroll-behavior: none;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+::selection {
+  background: rgba(37, 99, 235, 0.18);
+  color: hsl(var(--foreground));
+}
+
+/* Page content fade-in */
+.page-shell {
+  animation: rise-in 0.36s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+/* Subtle dot grid on main area background */
+.surface-grid {
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(circle, rgba(37, 99, 235, 0.055) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Sidebar scrollbar — very thin */
+.sidebar-scroll::-webkit-scrollbar {
+  width: 3px;
+}
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 99px;
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-down {
+  animation: slide-down 0.2s ease-out;
+}

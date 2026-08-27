@@ -1,0 +1,277 @@
+import { prisma } from '../db/prisma';
+
+/** Optional branch scoping (server-applied only, per RBAC — never client-trusted beyond what the caller already resolved). */
+type Scope = { branchId?: string };
+
+function dayRange(from?: string, to?: string) {
+  const start = from ? new Date(from) : new Date(new Date().setHours(0, 0, 0, 0));
+  const end = to ? new Date(new Date(to).setHours(23, 59, 59, 999)) : new Date(new Date().setHours(23, 59, 59, 999));
+  return { start, end };
+}
+
+/**
+ * The set of payment rows that actually count toward a period's cash total:
+ * effective (non-reversal) rows contribute positively, reversal rows negate
+ * whatever they reversed — both counted in the period they were CREATED in,
+ * not the period of the original payment. This is what "reconciles against
+ * the payment ledger for that day" (mission §13) means concretely.
+ */
+async function netPaymentsInRange(scope: Scope, start: Date, end: Date, channel?: string) {
+  const where: Record<string, unknown> = {
+    status: 'SUCCESS',
+    createdAt: { gte: start, lte: end },
+    ...(channel && { channel }),
+    ...(scope.branchId && { contract: { branchId: scope.branchId } }),
+  };
+  return prisma.payment.findMany({ where, include: { createdBy: true, contract: true } });
+}
+
+// 1. Daily cash received — by cashier, by branch, cash vs USSD split.
+export async function dailyCashReceivedReport(scope: Scope, from?: string, to?: string) {
+  const { start, end } = dayRange(from, to);
+  const payments = await netPaymentsInRange(scope, start, end);
+
+  let totalMinor = 0;
+  const byChannel: Record<string, number> = { CASH: 0, USSD: 0 };
+  const byCashier = new Map<string, { name: string; amountMinor: number; count: number }>();
+
+  for (const p of payments) {
+    const signed = p.reversesPaymentId ? -p.amountMinor : p.amountMinor;
+    totalMinor += signed;
+    byChannel[p.channel] = (byChannel[p.channel] ?? 0) + signed;
+
+    const key = p.createdById ?? 'system';
+    const name = p.createdBy ? `${p.createdBy.firstName} ${p.createdBy.lastName}` : 'System/USSD';
+    const entry = byCashier.get(key) ?? { name, amountMinor: 0, count: 0 };
+    entry.amountMinor += signed;
+    entry.count += 1;
+    byCashier.set(key, entry);
+  }
+
+  return {
+    range: { start, end },
+    totalMinor,
+    byChannel,
+    byCashier: Array.from(byCashier.entries()).map(([userId, v]) => ({ userId, ...v })),
+    transactionCount: payments.length,
+  };
+}
+
+// 2. Contracts created today — by type, by user, by branch.
+export async function contractsCreatedReport(scope: Scope, from?: string, to?: string) {
+  const { start, end } = dayRange(from, to);
+  const contracts = await prisma.contract.findMany({
+    where: { createdAt: { gte: start, lte: end }, ...(scope.branchId && { branchId: scope.branchId }) },
+    include: { createdBy: true },
+  });
+
+  const byType = new Map<string, { count: number; totalMinor: number }>();
+  const byUser = new Map<string, { name: string; count: number; totalMinor: number }>();
+
+  for (const c of contracts) {
+    const t = byType.get(c.contractType) ?? { count: 0, totalMinor: 0 };
+    t.count += 1;
+    t.totalMinor += c.totalPayableMinor;
+    byType.set(c.contractType, t);
+
+    const u = byUser.get(c.createdById) ?? { name: `${c.createdBy.firstName} ${c.createdBy.lastName}`, count: 0, totalMinor: 0 };
+    u.count += 1;
+    u.totalMinor += c.totalPayableMinor;
+    byUser.set(c.createdById, u);
+  }
+
+  return {
+    range: { start, end },
+    count: contracts.length,
+    totalMinor: contracts.reduce((s, c) => s + c.totalPayableMinor, 0),
+    byType: Array.from(byType.entries()).map(([contractType, v]) => ({ contractType, ...v })),
+    byUser: Array.from(byUser.entries()).map(([userId, v]) => ({ userId, ...v })),
+  };
+}
+
+// 3. Daily collections vs expected.
+export async function collectionsVsExpectedReport(scope: Scope, from?: string, to?: string) {
+  const { start, end } = dayRange(from, to);
+  const [expectedInstalments, collected] = await Promise.all([
+    prisma.instalment.findMany({
+      where: { dueDate: { gte: start, lte: end }, ...(scope.branchId && { contract: { branchId: scope.branchId } }) },
+    }),
+    dailyCashReceivedReport(scope, from, to),
+  ]);
+  const expectedMinor = expectedInstalments.reduce((s, i) => s + i.amountDueMinor, 0);
+  return { range: { start, end }, expectedMinor, collectedMinor: collected.totalMinor, varianceMinor: collected.totalMinor - expectedMinor };
+}
+
+// 4. Payments register.
+export async function paymentsRegisterReport(scope: Scope, from?: string, to?: string) {
+  const { start, end } = dayRange(from, to);
+  const payments = await prisma.payment.findMany({
+    where: { createdAt: { gte: start, lte: end }, ...(scope.branchId && { contract: { branchId: scope.branchId } }) },
+    include: { createdBy: true, contract: { select: { contractNumber: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return { range: { start, end }, payments };
+}
+
+// 5. Outstanding balances / portfolio.
+export async function outstandingBalancesReport(scope: Scope) {
+  const contracts = await prisma.contract.findMany({
+    where: { status: { in: ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'] }, ...(scope.branchId && { branchId: scope.branchId }) },
+    include: { customer: true },
+    orderBy: { balanceMinor: 'desc' },
+  });
+  return {
+    totalOutstandingMinor: contracts.reduce((s, c) => s + c.balanceMinor, 0),
+    contracts: contracts.map((c) => ({
+      contractId: c.id, contractNumber: c.contractNumber, customerName: `${c.customer.firstName} ${c.customer.lastName}`,
+      contractType: c.contractType, balanceMinor: c.balanceMinor, totalPayableMinor: c.totalPayableMinor,
+    })),
+  };
+}
+
+// 6. Arrears ageing — 1-30 / 31-60 / 61-90 / 90+.
+export async function arrearsAgeingReport(scope: Scope) {
+  const overdue = await prisma.instalment.findMany({
+    where: { status: 'OVERDUE', ...(scope.branchId && { contract: { branchId: scope.branchId } }) },
+    include: { contract: { include: { customer: true } } },
+  });
+
+  const buckets = { '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 } as Record<string, number>;
+  const rows = overdue.map((i) => {
+    const daysPastDue = Math.floor((Date.now() - i.dueDate.getTime()) / (1000 * 60 * 60 * 24));
+    const outstanding = i.amountDueMinor - i.amountPaidMinor;
+    const bucket = daysPastDue <= 30 ? '1-30' : daysPastDue <= 60 ? '31-60' : daysPastDue <= 90 ? '61-90' : '90+';
+    buckets[bucket] += outstanding;
+    return {
+      contractNumber: i.contract.contractNumber, customerName: `${i.contract.customer.firstName} ${i.contract.customer.lastName}`,
+      instalmentNo: i.instalmentNo, dueDate: i.dueDate, daysPastDue, outstandingMinor: outstanding, bucket,
+    };
+  });
+
+  return { buckets, rows };
+}
+
+// 7. Contract status summary.
+export async function contractStatusSummaryReport(scope: Scope) {
+  const contracts = await prisma.contract.findMany({ where: scope.branchId ? { branchId: scope.branchId } : {} });
+  const byStatus = new Map<string, { count: number; totalMinor: number }>();
+  for (const c of contracts) {
+    const s = byStatus.get(c.status) ?? { count: 0, totalMinor: 0 };
+    s.count += 1;
+    s.totalMinor += c.totalPayableMinor;
+    byStatus.set(c.status, s);
+  }
+  return Array.from(byStatus.entries()).map(([status, v]) => ({ status, ...v }));
+}
+
+// 8. Inventory position — on hand / reserved / issued, by product and location.
+export async function inventoryPositionReport(scope: Scope) {
+  const items = await prisma.inventoryItem.findMany({
+    where: scope.branchId ? { branchId: scope.branchId } : {},
+    include: { product: true, branch: true },
+  });
+  const key = (productId: string, branchId: string) => `${productId}::${branchId}`;
+  const grouped = new Map<string, { productName: string; branchName: string; AVAILABLE: number; RESERVED: number; ISSUED: number; RETURNED: number; WRITTEN_OFF: number }>();
+  for (const item of items) {
+    const k = key(item.productId, item.branchId);
+    const entry = grouped.get(k) ?? { productName: item.product.name, branchName: item.branch.name, AVAILABLE: 0, RESERVED: 0, ISSUED: 0, RETURNED: 0, WRITTEN_OFF: 0 };
+    entry[item.status as 'AVAILABLE' | 'RESERVED' | 'ISSUED' | 'RETURNED' | 'WRITTEN_OFF'] += 1;
+    grouped.set(k, entry);
+  }
+  return Array.from(grouped.values());
+}
+
+// 9. Devices pending release — completed SAVE_TO_OWN contracts not yet RELEASED.
+export async function devicesPendingReleaseReport(scope: Scope) {
+  return prisma.contract.findMany({
+    where: { contractType: 'SAVE_TO_OWN', status: 'COMPLETED', ...(scope.branchId && { branchId: scope.branchId }) },
+    include: { customer: true, inventoryItem: true },
+    orderBy: { completedAt: 'asc' },
+  });
+}
+
+// 10. Loan book report — Type C only.
+export async function loanBookReport(scope: Scope) {
+  const contracts = await prisma.contract.findMany({
+    where: { contractType: 'DEVICE_LOAN', ...(scope.branchId && { branchId: scope.branchId }) },
+    include: { instalments: true, customer: true },
+  });
+
+  const rows = contracts.map((c) => {
+    let interestEarned = 0;
+    let principalPaid = 0;
+    for (const inst of c.instalments) {
+      const paidInterest = Math.min(inst.amountPaidMinor, inst.interestPortionMinor);
+      interestEarned += paidInterest;
+      principalPaid += inst.amountPaidMinor - paidInterest;
+    }
+    const totalInterest = c.instalments.reduce((s, i) => s + i.interestPortionMinor, 0);
+    return {
+      contractId: c.id, contractNumber: c.contractNumber, customerName: `${c.customer.firstName} ${c.customer.lastName}`,
+      status: c.status, principalMinor: c.principalMinor ?? 0,
+      principalOutstandingMinor: (c.principalMinor ?? 0) - principalPaid,
+      interestEarnedMinor: interestEarned,
+      interestOutstandingMinor: totalInterest - interestEarned,
+    };
+  });
+
+  return {
+    rows,
+    totals: rows.reduce(
+      (acc, r) => ({
+        principalOutstandingMinor: acc.principalOutstandingMinor + r.principalOutstandingMinor,
+        interestEarnedMinor: acc.interestEarnedMinor + r.interestEarnedMinor,
+        interestOutstandingMinor: acc.interestOutstandingMinor + r.interestOutstandingMinor,
+      }),
+      { principalOutstandingMinor: 0, interestEarnedMinor: 0, interestOutstandingMinor: 0 },
+    ),
+  };
+}
+
+// 11. User activity / audit trail.
+export async function auditTrailReport(from?: string, to?: string) {
+  const { start, end } = dayRange(from, to);
+  return prisma.auditLog.findMany({
+    where: { createdAt: { gte: start, lte: end } },
+    include: { user: { select: { firstName: true, lastName: true, email: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+  });
+}
+
+// 12. Customer registrations.
+export async function customerRegistrationsReport(scope: Scope, from?: string, to?: string) {
+  const { start, end } = dayRange(from, to);
+  const customers = await prisma.customer.findMany({
+    where: { createdAt: { gte: start, lte: end }, ...(scope.branchId && { branchId: scope.branchId }) },
+    include: { createdBy: { select: { firstName: true, lastName: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  const byUser = new Map<string, { name: string; count: number }>();
+  for (const c of customers) {
+    const entry = byUser.get(c.createdById) ?? { name: `${c.createdBy.firstName} ${c.createdBy.lastName}`, count: 0 };
+    entry.count += 1;
+    byUser.set(c.createdById, entry);
+  }
+  return { count: customers.length, byUser: Array.from(byUser.entries()).map(([userId, v]) => ({ userId, ...v })), customers };
+}
+
+// Dashboard summary.
+export async function dashboardSummary(scope: Scope) {
+  const [cash, contractsToday, arrears, inventory] = await Promise.all([
+    dailyCashReceivedReport(scope),
+    contractsCreatedReport(scope),
+    arrearsAgeingReport(scope),
+    inventoryPositionReport(scope),
+  ]);
+  const arrearsTotalMinor = Object.values(arrears.buckets).reduce((s, v) => s + v, 0);
+  const stockAvailable = inventory.reduce((s, i) => s + i.AVAILABLE, 0);
+
+  return {
+    todayCashMinor: cash.totalMinor,
+    todayContractsCount: contractsToday.count,
+    todayContractsValueMinor: contractsToday.totalMinor,
+    arrearsTotalMinor,
+    stockAvailable,
+  };
+}

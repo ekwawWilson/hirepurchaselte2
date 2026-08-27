@@ -1,0 +1,498 @@
+// HP-Lite data model.
+// SQLite provider (see docs/00-legacy-study.md §1 for why): no native `enum`
+// support, so status/type fields are plain String columns with app-level
+// constants in src/constants — same pattern the legacy app already used.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Branches / Auth / RBAC
+// ---------------------------------------------------------------------------
+
+model Branch {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  address   String?
+  phone     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  users          User[]
+  customers      Customer[]
+  inventoryItems InventoryItem[]
+  contracts      Contract[]
+
+  @@map("branches")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  permissions Permission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+
+  roles Role[]
+
+  @@map("permissions")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  phone        String?
+  passwordHash String
+  firstName    String
+  lastName     String
+  roleId       String
+  branchId     String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  role   Role    @relation(fields: [roleId], references: [id])
+  branch Branch? @relation(fields: [branchId], references: [id])
+
+  customersCreated  Customer[]        @relation("CustomerCreatedBy")
+  customersUpdated  Customer[]        @relation("CustomerUpdatedBy")
+  contractsCreated  Contract[]        @relation("ContractCreatedBy")
+  contractsUpdated  Contract[]        @relation("ContractUpdatedBy")
+  priceChartEntries PriceChartEntry[]
+  stockMovements    StockMovement[]
+  paymentsRecorded  Payment[]         @relation("PaymentCreatedBy")
+  paymentsReversed  Payment[]         @relation("PaymentReversedBy")
+  auditLogs         AuditLog[]
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Customers
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id             String    @id @default(cuid())
+  membershipId   String    @unique
+  firstName      String
+  lastName       String
+  phone          String    @unique
+  email          String?
+  address        String?
+  nationalId     String?
+  dateOfBirth    DateTime?
+  photoUrl       String?
+  guarantorName  String?
+  guarantorPhone String?
+  branchId       String
+  isActivated    Boolean   @default(false)
+  createdById    String
+  updatedById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  branch    Branch @relation(fields: [branchId], references: [id])
+  createdBy User   @relation("CustomerCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?  @relation("CustomerUpdatedBy", fields: [updatedById], references: [id])
+
+  contracts       Contract[]
+  payments        Payment[]        @relation("PaymentInitiatedByCustomer")
+  smsMessages     SmsMessage[]
+
+  @@index([branchId])
+  @@map("customers")
+}
+
+// ---------------------------------------------------------------------------
+// Products & Inventory
+// ---------------------------------------------------------------------------
+
+model ProductCategory {
+  id   String @id @default(cuid())
+  name String @unique
+
+  products Product[]
+
+  @@map("product_categories")
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  sku           String   @unique
+  name          String
+  description   String?
+  categoryId    String?
+  brand         String?
+  model         String?
+  cashPriceMinor Int
+  imageUrl      String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  category         ProductCategory?   @relation(fields: [categoryId], references: [id])
+  inventoryItems   InventoryItem[]
+  priceChartEntries PriceChartEntry[]
+  contracts        Contract[]
+
+  @@map("products")
+}
+
+// status: AVAILABLE | RESERVED | ISSUED | RETURNED | WRITTEN_OFF
+model InventoryItem {
+  id           String   @id @default(cuid())
+  productId    String
+  branchId     String
+  serialNumber String   @unique
+  status       String   @default("AVAILABLE")
+  createdAt    DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+  branch  Branch  @relation(fields: [branchId], references: [id])
+
+  stockMovements StockMovement[]
+  contracts      Contract[]
+
+  @@index([productId, branchId, status])
+  @@map("inventory_items")
+}
+
+// type: RECEIPT | RESERVE | ISSUE | RETURN | TRANSFER | ADJUSTMENT
+model StockMovement {
+  id              String   @id @default(cuid())
+  inventoryItemId String
+  productId       String
+  branchId        String
+  type            String
+  fromBranchId    String?
+  toBranchId      String?
+  referenceType   String?
+  referenceId     String?
+  reason          String?
+  createdById     String
+  createdAt       DateTime @default(now())
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  createdBy     User          @relation(fields: [createdById], references: [id])
+
+  @@index([inventoryItemId])
+  @@index([branchId, type])
+  @@map("stock_movements")
+}
+
+// ---------------------------------------------------------------------------
+// Price chart
+// ---------------------------------------------------------------------------
+
+// contractType: SAVE_TO_OWN | DEPOSIT_INSTALMENT | DEVICE_LOAN
+model PriceChartEntry {
+  id                   String    @id @default(cuid())
+  productId            String
+  contractType         String
+  termMonths           Int
+  paymentFrequency     String    @default("MONTHLY")
+  depositPercentage    Int       @default(0)
+  totalPayableMinor    Int
+  instalmentAmountMinor Int
+  interestRateBps      Int?
+  effectiveFrom        DateTime  @default(now())
+  effectiveTo          DateTime?
+  createdById          String
+  createdAt            DateTime  @default(now())
+
+  product   Product @relation(fields: [productId], references: [id])
+  createdBy User    @relation(fields: [createdById], references: [id])
+
+  contracts Contract[]
+
+  @@index([productId, contractType, termMonths, paymentFrequency])
+  @@map("price_chart_entries")
+}
+
+// ---------------------------------------------------------------------------
+// Contracts
+// ---------------------------------------------------------------------------
+
+// contractType: SAVE_TO_OWN | DEPOSIT_INSTALMENT | DEVICE_LOAN
+// status (union across types, see docs/01-plan.md §5):
+//   SAVE_TO_OWN:         ACTIVE | COMPLETED | RELEASED | CANCELLED
+//   DEPOSIT_INSTALMENT:  PENDING_DEPOSIT | ACTIVE | COMPLETED | DEFAULTED | CANCELLED
+//   DEVICE_LOAN:         ACTIVE | COMPLETED | DEFAULTED | WRITTEN_OFF
+model Contract {
+  id               String    @id @default(cuid())
+  contractNumber   String    @unique
+  contractType     String
+  customerId       String
+  productId        String
+  inventoryItemId  String?
+  branchId         String
+  priceChartEntryId String?
+
+  // Snapshotted pricing terms — never re-read from priceChartEntries after creation.
+  totalPriceMinor       Int
+  depositAmountMinor    Int      @default(0)
+  depositPercentage     Int      @default(0)
+  termMonths             Int
+  paymentFrequency       String   @default("MONTHLY")
+  instalmentAmountMinor  Int
+
+  // DEVICE_LOAN only
+  principalMinor   Int?
+  interestRateBps  Int?
+  rateBasis        String?  @default("FLAT")
+
+  status String @default("ACTIVE")
+
+  totalPayableMinor Int
+  totalPaidMinor    Int @default(0)
+  balanceMinor      Int
+
+  startDate     DateTime
+  activatedAt   DateTime?
+  completedAt   DateTime?
+  releasedAt    DateTime?
+  cancelledAt   DateTime?
+  defaultedAt   DateTime?
+  writtenOffAt  DateTime?
+  cancelReason  String?
+  writeOffReason String?
+
+  createdById String
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer        Customer         @relation(fields: [customerId], references: [id])
+  product         Product          @relation(fields: [productId], references: [id])
+  inventoryItem   InventoryItem?   @relation(fields: [inventoryItemId], references: [id])
+  branch          Branch           @relation(fields: [branchId], references: [id])
+  priceChartEntry PriceChartEntry? @relation(fields: [priceChartEntryId], references: [id])
+  createdBy       User             @relation("ContractCreatedBy", fields: [createdById], references: [id])
+  updatedBy       User?            @relation("ContractUpdatedBy", fields: [updatedById], references: [id])
+
+  instalments        Instalment[]
+  payments           Payment[]
+  penalties          Penalty[]
+  hubtelTransactions HubtelTransaction[]
+  ussdSessions       UssdSession[]
+  smsMessages        SmsMessage[]
+
+  @@index([status, createdAt])
+  @@index([customerId, status])
+  @@index([branchId, status])
+  @@index([inventoryItemId])
+  @@map("contracts")
+}
+
+// status: PENDING | PARTIAL | PAID | OVERDUE
+model Instalment {
+  id                    String    @id @default(cuid())
+  contractId            String
+  instalmentNo          Int
+  dueDate               DateTime
+  amountDueMinor        Int
+  principalPortionMinor Int       @default(0)
+  interestPortionMinor  Int       @default(0)
+  amountPaidMinor       Int       @default(0)
+  status                String    @default("PENDING")
+  paidAt                DateTime?
+
+  contract    Contract              @relation(fields: [contractId], references: [id])
+  allocations PaymentAllocation[]
+  penalties   Penalty[]
+
+  @@unique([contractId, instalmentNo])
+  @@index([contractId, status])
+  @@map("instalments")
+}
+
+// ---------------------------------------------------------------------------
+// Payments
+// ---------------------------------------------------------------------------
+
+// entryType: DEPOSIT | INSTALMENT_PAYMENT | CREDIT
+// channel: CASH | USSD
+// status: PENDING | SUCCESS | FAILED
+model Payment {
+  id                    String    @id @default(cuid())
+  contractId            String
+  entryType             String
+  amountMinor           Int
+  channel               String
+  mobileMoneyNetwork    String?
+  transactionRef        String    @unique
+  externalRef           String?
+  status                String    @default("PENDING")
+  receiptNumber         String?
+  notes                 String?
+  rawGatewayPayload     String?
+  createdById           String?
+  initiatedByCustomerId String?
+  reversesPaymentId     String?   @unique
+  reversalReason        String?
+  reversedById          String?
+  receivedAt            DateTime?
+  createdAt             DateTime  @default(now())
+
+  contract              Contract  @relation(fields: [contractId], references: [id])
+  createdBy             User?     @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+  reversedBy            User?     @relation("PaymentReversedBy", fields: [reversedById], references: [id])
+  initiatedByCustomer   Customer? @relation("PaymentInitiatedByCustomer", fields: [initiatedByCustomerId], references: [id])
+  reverses              Payment?  @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
+  reversedByPayment     Payment?  @relation("PaymentReversal")
+
+  allocations        PaymentAllocation[]
+  hubtelTransaction  HubtelTransaction?
+  smsMessages        SmsMessage[]
+
+  @@index([contractId, status])
+  @@map("payments")
+}
+
+// targetType: PENALTY | INSTALMENT
+model PaymentAllocation {
+  id           String  @id @default(cuid())
+  paymentId    String
+  targetType   String
+  instalmentId String?
+  penaltyId    String?
+  amountMinor  Int
+
+  payment    Payment     @relation(fields: [paymentId], references: [id])
+  instalment Instalment? @relation(fields: [instalmentId], references: [id])
+  penalty    Penalty?    @relation(fields: [penaltyId], references: [id])
+
+  @@map("payment_allocations")
+}
+
+model Penalty {
+  id           String    @id @default(cuid())
+  contractId   String
+  instalmentId String?
+  amountMinor  Int
+  reason       String
+  appliedDate  DateTime  @default(now())
+  isPaid       Boolean   @default(false)
+  paidAt       DateTime?
+
+  contract    Contract            @relation(fields: [contractId], references: [id])
+  instalment  Instalment?         @relation(fields: [instalmentId], references: [id])
+  allocations PaymentAllocation[]
+
+  @@map("penalties")
+}
+
+// ---------------------------------------------------------------------------
+// Hubtel USSD payments
+// ---------------------------------------------------------------------------
+
+// status: PENDING | SUCCESS | FAILED
+model HubtelTransaction {
+  id                 String   @id @default(cuid())
+  clientReference    String   @unique
+  contractId         String
+  msisdn             String
+  amountMinor        Int
+  status             String   @default("PENDING")
+  rawCallbackPayload String?
+  paymentId          String?  @unique
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  contract Contract @relation(fields: [contractId], references: [id])
+  payment  Payment? @relation(fields: [paymentId], references: [id])
+
+  @@map("hubtel_transactions")
+}
+
+// msisdn is deliberately NOT a foreign key to Customer.phone — a USSD session
+// can start from a number that isn't a registered customer yet (that's what
+// the lookup step in the menu is for).
+model UssdSession {
+  id         String   @id @default(cuid())
+  sessionId  String   @unique
+  msisdn     String
+  state      String
+  contractId String?
+  context    String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  contract Contract? @relation(fields: [contractId], references: [id])
+
+  @@map("ussd_sessions")
+}
+
+// ---------------------------------------------------------------------------
+// SMS
+// ---------------------------------------------------------------------------
+
+model SmsTemplate {
+  id           String  @id @default(cuid())
+  key          String  @unique
+  name         String
+  bodyTemplate String
+  isActive     Boolean @default(true)
+
+  @@map("sms_templates")
+}
+
+// status: QUEUED | SENT | FAILED
+model SmsMessage {
+  id                String    @id @default(cuid())
+  recipient         String
+  templateKey       String
+  body              String
+  relatedPaymentId  String?
+  relatedContractId String?
+  relatedCustomerId String?
+  status            String    @default("QUEUED")
+  providerRef       String?
+  attempts          Int       @default(0)
+  lastAttemptAt     DateTime?
+  createdAt         DateTime  @default(now())
+
+  relatedPayment  Payment?  @relation(fields: [relatedPaymentId], references: [id])
+  relatedContract Contract? @relation(fields: [relatedContractId], references: [id])
+  relatedCustomer Customer? @relation(fields: [relatedCustomerId], references: [id])
+
+  @@map("sms_messages")
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  oldValues  String?
+  newValues  String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
