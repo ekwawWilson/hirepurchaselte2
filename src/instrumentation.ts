@@ -19,6 +19,8 @@ export async function register() {
   const { markOverdueInstalments, markDefaultedContracts } = await import('@/lib/services/overdueService');
   const { reconcilePendingHubtelTransactions } = await import('@/lib/services/hubtelPaymentService');
   const { pruneExpiredUssdSessions } = await import('@/lib/services/ussdService');
+  const { retryFailedDirectDebits } = await import('@/lib/services/hubtelPreapprovalService');
+  const { runDirectDebitCollections } = await import('@/lib/services/collectionsService');
 
   // Daily at 08:00 — matches the legacy app's own schedule.
   cron.schedule('0 8 * * *', async () => {
@@ -34,6 +36,18 @@ export async function register() {
       if (count > 0) console.log(`[cron] marked ${count} contract(s) DEFAULTED`);
     } catch (e) {
       console.error('[cron] markDefaultedContracts failed:', e);
+    }
+    try {
+      const count = await runDirectDebitCollections();
+      if (count > 0) console.log(`[cron] direct debit collections: charged ${count} contract(s)`);
+    } catch (e) {
+      console.error('[cron] runDirectDebitCollections failed:', e);
+    }
+    try {
+      const count = await retryFailedDirectDebits();
+      if (count > 0) console.log(`[cron] retried ${count} failed direct debit charge(s)`);
+    } catch (e) {
+      console.error('[cron] retryFailedDirectDebits failed:', e);
     }
   });
 

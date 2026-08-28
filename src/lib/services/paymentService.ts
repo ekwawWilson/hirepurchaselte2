@@ -131,7 +131,7 @@ export interface PostPaymentParams {
   contractId: string;
   amountMinor: number;
   entryType: 'DEPOSIT' | 'INSTALMENT_PAYMENT';
-  channel: 'CASH' | 'USSD';
+  channel: 'CASH' | 'USSD' | 'DIRECT_DEBIT';
   mobileMoneyNetwork?: string;
   transactionRef?: string;
   externalRef?: string;

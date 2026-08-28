@@ -11,9 +11,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { PhoneVerifyField } from '@/components/PhoneVerifyField';
 
 interface Customer {
-  id: string; membershipId: string; firstName: string; lastName: string; phone: string;
+  id: string; membershipId: string; firstName: string; lastName: string;
+  phone: string | null; phone2: string | null; phone3: string | null;
   email: string | null; address: string | null; nationalId: string | null;
   guarantorName: string | null; guarantorPhone: string | null; createdAt: string;
 }
@@ -29,7 +31,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ email: '', address: '', nationalId: '', guarantorName: '', guarantorPhone: '' });
+  const [form, setForm] = useState({ phone: '', phone2: '', phone3: '', email: '', address: '', nationalId: '', guarantorName: '', guarantorPhone: '' });
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -41,6 +43,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       setCustomer(customer);
       setContracts(contracts);
       setForm({
+        phone: customer.phone ?? '', phone2: customer.phone2 ?? '', phone3: customer.phone3 ?? '',
         email: customer.email ?? '', address: customer.address ?? '', nationalId: customer.nationalId ?? '',
         guarantorName: customer.guarantorName ?? '', guarantorPhone: customer.guarantorPhone ?? '',
       });
@@ -56,6 +59,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
+    if (!form.phone.trim() && !form.phone2.trim() && !form.phone3.trim()) {
+      toast({ title: 'At least one phone number is required', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
       await api.patch(`/customers/${id}`, form);
@@ -78,7 +85,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{customer.firstName} {customer.lastName}</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{customer.membershipId} &middot; {customer.phone} &middot; Registered {formatDate(customer.createdAt)}</p>
+          <p className="text-sm text-gray-500 mt-0.5">{customer.membershipId} &middot; {customer.phone ?? customer.phone2 ?? customer.phone3} &middot; Registered {formatDate(customer.createdAt)}</p>
         </div>
         {canUpdate && !editing && <Button variant="outline" onClick={() => setEditing(true)}>Edit</Button>}
       </div>
@@ -88,6 +95,14 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         <CardContent>
           {editing ? (
             <form className="grid grid-cols-2 gap-4" onSubmit={onSave}>
+              <div className="col-span-2">
+                <p className="text-xs text-gray-500 mb-2">At least one phone number is required.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <PhoneVerifyField label="Phone 1" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
+                  <PhoneVerifyField label="Phone 2 (optional)" value={form.phone2} onChange={(v) => setForm({ ...form, phone2: v })} />
+                  <PhoneVerifyField label="Phone 3 (optional)" value={form.phone3} onChange={(v) => setForm({ ...form, phone3: v })} />
+                </div>
+              </div>
               <div>
                 <Label>Email</Label>
                 <Input type="email" className="mt-1.5" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
@@ -115,6 +130,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             </form>
           ) : (
             <div className="grid grid-cols-2 gap-4 text-sm">
+              <div><p className="text-xs text-gray-500">Phone 1</p><p className="text-gray-900">{customer.phone ?? '—'}</p></div>
+              <div><p className="text-xs text-gray-500">Phone 2</p><p className="text-gray-900">{customer.phone2 ?? '—'}</p></div>
+              <div><p className="text-xs text-gray-500">Phone 3</p><p className="text-gray-900">{customer.phone3 ?? '—'}</p></div>
               <div><p className="text-xs text-gray-500">Email</p><p className="text-gray-900">{customer.email ?? '—'}</p></div>
               <div><p className="text-xs text-gray-500">National ID</p><p className="text-gray-900">{customer.nationalId ?? '—'}</p></div>
               <div className="col-span-2"><p className="text-xs text-gray-500">Address</p><p className="text-gray-900">{customer.address ?? '—'}</p></div>

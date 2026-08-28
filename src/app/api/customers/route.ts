@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
 import { generateMembershipId } from '@/lib/utils/idGenerators';
 import { logAudit } from '@/lib/services/auditService';
+import { validateAtLeastOnePhone, assertPhonesNotTaken } from '@/lib/services/customerService';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -23,6 +24,8 @@ export async function GET(req: NextRequest) {
       { firstName: { contains: q } },
       { lastName: { contains: q } },
       { phone: { contains: q } },
+      { phone2: { contains: q } },
+      { phone3: { contains: q } },
       { membershipId: { contains: q } },
     ];
   }
@@ -39,13 +42,15 @@ export async function POST(req: NextRequest) {
   const user = auth.user;
 
   const {
-    firstName, lastName, phone, email, address, nationalId, dateOfBirth,
+    firstName, lastName, phone, phone2, phone3, email, address, nationalId, dateOfBirth,
     photoUrl, guarantorName, guarantorPhone, branchId: branchIdInput,
   } = (await req.json()) as Record<string, string | undefined>;
 
-  if (!firstName || !lastName || !phone) {
-    return NextResponse.json({ error: 'firstName, lastName, and phone are required' }, { status: 400 });
+  if (!firstName || !lastName) {
+    return NextResponse.json({ error: 'firstName and lastName are required' }, { status: 400 });
   }
+  const phoneError = validateAtLeastOnePhone({ phone, phone2, phone3 });
+  if (phoneError) return NextResponse.json({ error: phoneError }, { status: 400 });
 
   const branchId = user.branchId ?? branchIdInput;
   if (!branchId) return NextResponse.json({ error: 'branchId is required for an all-branch user' }, { status: 400 });
@@ -53,8 +58,8 @@ export async function POST(req: NextRequest) {
   const branch = await prisma.branch.findUnique({ where: { id: branchId } });
   if (!branch) return NextResponse.json({ error: 'Unknown branchId' }, { status: 400 });
 
-  const existingPhone = await prisma.customer.findUnique({ where: { phone } });
-  if (existingPhone) return NextResponse.json({ error: 'A customer with this phone number already exists' }, { status: 409 });
+  const clashError = await assertPhonesNotTaken({ phone, phone2, phone3 });
+  if (clashError) return NextResponse.json({ error: clashError }, { status: 409 });
 
   const membershipId = await generateMembershipId(branch.code);
 
@@ -63,7 +68,9 @@ export async function POST(req: NextRequest) {
       membershipId,
       firstName,
       lastName,
-      phone,
+      phone: phone || null,
+      phone2: phone2 || null,
+      phone3: phone3 || null,
       email: email || null,
       address: address || null,
       nationalId: nationalId || null,

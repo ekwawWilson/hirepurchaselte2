@@ -18,6 +18,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       instalments: { orderBy: { instalmentNo: 'asc' } },
       penalties: true,
       payments: { orderBy: { createdAt: 'desc' }, include: { allocations: true } },
+      hubtelPreapproval: true,
     },
   });
   if (!contract) return NextResponse.json({ error: 'Contract not found' }, { status: 404 });

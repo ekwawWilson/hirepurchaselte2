@@ -27,3 +27,16 @@ export const CONTRACT_STATUSES_BY_TYPE: Record<ContractTypeName, string[]> = {
   DEPOSIT_INSTALMENT: ['PENDING_DEPOSIT', 'ACTIVE', 'COMPLETED', 'DEFAULTED', 'CANCELLED'],
   DEVICE_LOAN: ['ACTIVE', 'COMPLETED', 'DEFAULTED', 'WRITTEN_OFF'],
 };
+
+/**
+ * Direct debit (a Hubtel mandate the customer approves once, then the merchant
+ * auto-charges going forward — see hubtelPreapprovalService.ts) only makes sense
+ * against a contract with an actual due schedule to collect on. SAVE_TO_OWN is
+ * free-form savings with no due dates at all (contractService.ts), so it's the
+ * one type explicitly excluded.
+ */
+export const DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES: ContractTypeName[] = ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
+
+/** AirtelTigo has no Hubtel direct-debit product — regular USSD collection only. */
+export const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'] as const;
+export type DirectDebitNetwork = (typeof DIRECT_DEBIT_NETWORKS)[number];

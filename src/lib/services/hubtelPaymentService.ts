@@ -82,7 +82,9 @@ export async function processHubtelCallback(params: {
       transactionRef: txn.clientReference,
       externalRef: txn.clientReference,
       rawGatewayPayload: params.rawPayload,
-      initiatedByCustomerId: (await prisma.customer.findUnique({ where: { phone: txn.msisdn } }))?.id,
+      initiatedByCustomerId: (await prisma.customer.findFirst({
+        where: { OR: [{ phone: txn.msisdn }, { phone2: txn.msisdn }, { phone3: txn.msisdn }] },
+      }))?.id,
     });
 
     await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { paymentId: result.payment.id } });
@@ -98,16 +100,20 @@ export async function processHubtelCallback(params: {
  * (see src/instrumentation.ts) rather than only on demand.
  */
 export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 15) {
+  // Imported lazily to avoid a module-load cycle (hubtelPreapprovalService doesn't
+  // import this file, but both sit in the same service layer — keeping this one
+  // import deferred is simplest and costs nothing at this call frequency).
+  const { processDirectDebitCallback } = await import('./hubtelPreapprovalService');
+
   const cutoff = new Date(Date.now() - staleAfterMinutes * 60_000);
   const stale = await prisma.hubtelTransaction.findMany({ where: { status: 'PENDING', createdAt: { lt: cutoff } } });
 
   let failed = 0;
   for (const txn of stale) {
-    const result = await processHubtelCallback({
-      clientReference: txn.clientReference,
-      status: 'FAILED',
-      rawPayload: JSON.stringify({ reconciliation: true, reason: 'stale-pending', staleAfterMinutes }),
-    });
+    const rawPayload = JSON.stringify({ reconciliation: true, reason: 'stale-pending', staleAfterMinutes });
+    const result = txn.channel === 'DIRECT_DEBIT'
+      ? await processDirectDebitCallback({ clientReference: txn.clientReference, status: 'FAILED', rawPayload })
+      : await processHubtelCallback({ clientReference: txn.clientReference, status: 'FAILED', rawPayload });
     if (result.status === 'FAILED') failed += 1;
   }
   return { checked: stale.length, failed };

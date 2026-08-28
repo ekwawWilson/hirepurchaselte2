@@ -13,13 +13,16 @@ import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { PhoneVerifyField } from '@/components/PhoneVerifyField';
 
 interface Customer {
   id: string;
   membershipId: string;
   firstName: string;
   lastName: string;
-  phone: string;
+  phone: string | null;
+  phone2: string | null;
+  phone3: string | null;
   nationalId: string | null;
   createdAt: string;
 }
@@ -34,7 +37,7 @@ export default function CustomersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [q, setQ] = useState('');
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', nationalId: '', branchId: '' });
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', phone2: '', phone3: '', nationalId: '', branchId: '' });
   const [branches, setBranches] = useState<Branch[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -63,6 +66,10 @@ export default function CustomersPage() {
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
+    if (!form.phone.trim() && !form.phone2.trim() && !form.phone3.trim()) {
+      toast({ title: 'At least one phone number is required', variant: 'destructive' });
+      return;
+    }
     if (isAllBranch && !form.branchId) {
       toast({ title: 'Select a branch', variant: 'destructive' });
       return;
@@ -71,7 +78,7 @@ export default function CustomersPage() {
     try {
       await api.post('/customers', form);
       toast({ title: 'Customer registered', description: `${form.firstName} ${form.lastName} was added.` });
-      setForm({ firstName: '', lastName: '', phone: '', nationalId: '', branchId: '' });
+      setForm({ firstName: '', lastName: '', phone: '', phone2: '', phone3: '', nationalId: '', branchId: '' });
       setShowForm(false);
       await load(q);
     } catch (e) {
@@ -102,9 +109,13 @@ export default function CustomersPage() {
                 <Label>Last name</Label>
                 <Input required className="mt-1.5" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} />
               </div>
-              <div>
-                <Label>Phone</Label>
-                <Input required className="mt-1.5" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              <div className="col-span-2">
+                <p className="text-xs text-gray-500 mb-2">At least one phone number is required.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <PhoneVerifyField label="Phone 1" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
+                  <PhoneVerifyField label="Phone 2 (optional)" value={form.phone2} onChange={(v) => setForm({ ...form, phone2: v })} />
+                  <PhoneVerifyField label="Phone 3 (optional)" value={form.phone3} onChange={(v) => setForm({ ...form, phone3: v })} />
+                </div>
               </div>
               <div>
                 <Label>National ID (optional)</Label>
@@ -200,7 +211,7 @@ export default function CustomersPage() {
                     <TableCell className="font-medium text-gray-900">
                       <Link href={`/customers/${c.id}`} className="hover:underline">{c.firstName} {c.lastName}</Link>
                     </TableCell>
-                    <TableCell>{c.phone}</TableCell>
+                    <TableCell>{c.phone ?? c.phone2 ?? c.phone3 ?? '—'}</TableCell>
                     <TableCell>{c.nationalId ?? '—'}</TableCell>
                     <TableCell className="text-gray-500">{formatDate(c.createdAt)}</TableCell>
                   </TableRow>

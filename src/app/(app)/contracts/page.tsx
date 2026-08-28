@@ -15,9 +15,10 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 
 interface Customer {
-  id: string; firstName: string; lastName: string; phone: string; email?: string | null;
-  membershipId: string; branchId: string; photoUrl?: string | null;
+  id: string; firstName: string; lastName: string; phone: string | null; phone2?: string | null; phone3?: string | null;
+  email?: string | null; membershipId: string; branchId: string; photoUrl?: string | null;
 }
+const customerPhone = (c: Customer) => c.phone ?? c.phone2 ?? c.phone3 ?? '—';
 interface InventoryItem {
   id: string; serialNumber: string; productId: string;
   product: { id: string; name: string; cashPriceMinor: number; category?: { name: string } | null };
@@ -150,7 +151,7 @@ export default function ContractsPage() {
     const q = customerSearch.toLowerCase();
     return (
       `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) ||
-      c.phone.toLowerCase().includes(q) ||
+      [c.phone, c.phone2, c.phone3].some((p) => p?.toLowerCase().includes(q)) ||
       c.membershipId.toLowerCase().includes(q)
     );
   });
@@ -210,7 +211,7 @@ export default function ContractsPage() {
                       )}
                       <div className="min-w-0">
                         <p className="font-medium text-gray-900 truncate">{c.firstName} {c.lastName}</p>
-                        <p className="text-xs text-gray-500">{c.membershipId} &middot; {c.phone}</p>
+                        <p className="text-xs text-gray-500">{c.membershipId} &middot; {customerPhone(c)}</p>
                       </div>
                     </div>
                   ))}

@@ -8,7 +8,7 @@ Builds on `docs/00-legacy-study.md`. This is the working plan for HP-Lite: schem
 
 **Revised mid-build**: HP-Lite is one fullstack Next.js app — pages and API routes in a single project, no separate Express backend — matching the pattern of this workspace's other apps (e.g. `market-inventory`: `app/<feature>` pages, `app/api/<feature>/route.ts` handlers, `lib/<domain>` business logic, Prisma, Tailwind). The initial build used a separate Express API + Next.js frontend; everything was ported over (business logic is framework-agnostic — schedule generation, payment allocation, and RBAC rules are identical either way) once that direction was set. Route handlers live under `src/app/api/**/route.ts`; business logic lives under `src/lib/{services,auth,constants,utils,db}`; auth is bearer-JWT (not NextAuth) checked per-route via `src/lib/auth/rbac.ts` helpers, kept deliberately simple since this app has one login type (staff) and no OAuth providers.
 
-Stack: Next.js 16 (App Router, Turbopack) + React 19 + TypeScript + Prisma + Tailwind + Radix UI + Zustand + `react-hook-form` + `zod` + `axios`. DB: **SQLite** (file-based, `DATABASE_URL="file:./dev.db"`) instead of legacy's Postgres/Supabase — no server, no Docker, no sudo needed on this machine; see study doc §1 for the full justification. Schema is written to stay Postgres-portable (no native enums, no SQLite-only types) so swapping the `datasource` later is a one-line change plus a fresh migration. Package manager: npm throughout.
+Stack: Next.js 16 (App Router, Turbopack) + React 19 + TypeScript + Prisma + Tailwind + Radix UI + Zustand + `react-hook-form` + `zod` + `axios`. DB: **PostgreSQL** — matches the legacy app's own database (originally SQLite for the first stretch of the build, since this machine had no server/Docker/sudo; reversed once asked to match legacy's DB type — see study doc §1 for the full history). `@id` fields default to `uuid()`, matching legacy's own ID convention. Package manager: npm throughout.
 
 Money: integer **minor units** (pesewas) in every DB column and every internal calculation — `amount_minor: Int`. Formatted to GHS at the edges (API response layer / UI) only. Currency code stored in a single `settings` row / env var (`CURRENCY_CODE=GHS`), not hardcoded into business logic.
 
@@ -212,7 +212,20 @@ Following mission §14, refined:
 
 ---
 
-## 10. Open questions still to resolve during implementation (not blocking)
+## 11. Customer phones, mobile money verification, and Hubtel Direct Debit
+
+- **Three phone slots** (`phone`/`phone2`/`phone3` on `Customer`, all nullable, all independently unique): registration requires at least one, enforced at the API layer (`customerService.ts`'s `validateAtLeastOnePhone`), not by making any single slot mandatory. Cross-slot uniqueness (my `phone2` can't equal someone else's `phone1`) is also app-level (`assertPhonesNotTaken`) since the schema's per-column `@unique` only catches same-slot collisions. `primaryPhone()` (`phone ?? phone2 ?? phone3`) is what anything needing one canonical number uses (SMS recipient, direct-debit default); USSD lookup matches any of the three via `OR`.
+- **Mobile money verification** (`hubtelVerificationService.ts`) is modeled on `salesinventoryapp`'s actual Hubtel Verification API usage — confirms a number is a real, currently-registered wallet and returns the holder's name, purely a typo/sanity check. Rate-limited (30/5min per user) and cached (5min), **fails open** — a verification hiccup never blocks registration or a payment. It is *not* an OTP/SMS-code flow — that pattern doesn't exist anywhere in the reference codebase, so nothing was built to imitate it.
+- **Hubtel Direct Debit** (`hubtelPreapprovalService.ts`, modeled on the legacy `hirepurchase` app's Preapproval API) is a mandate: the customer approves *once* (a USSD prompt or an OTP Hubtel sends directly to their phone — this app never sees or handles that code), then the merchant charges it repeatedly with no further customer action. Mock mode (no live Hubtel account) resolves a mandate to `APPROVED` synchronously, same convention as `initiateHubtelPayment`'s mock charge.
+  - **Eligibility**: only `DEPOSIT_INSTALMENT` and `DEVICE_LOAN`, only once `ACTIVE` — `SAVE_TO_OWN` has no due schedule to auto-collect against (free-form savings, §5 above), and a contract still `PENDING_DEPOSIT` has no instalment schedule yet.
+  - **Network restriction**: MTN, Vodafone/Telecel only — AirtelTigo has no Hubtel direct-debit product (matches the legacy app exactly).
+  - **Reuse**: an existing `APPROVED` mandate for the same customer+number+network is reused rather than re-prompting.
+  - **Collections run** (`collectionsService.ts`, cron in `instrumentation.ts`): proactively charges the oldest due instalment for every `ACTIVE` contract with an attached `APPROVED` mandate. This is the one piece the legacy app never actually wired up in production (its own auto-retry only re-attempts charges that had already failed) — without it, a mandate would just be something nobody ever uses to collect.
+  - **Retry**: a failed charge schedules a retry at a fixed 1/3/7-day offset (capped at 3 attempts) — a hardcoded policy, not a configurable settings model, matching this codebase's existing style (`overdueService`'s fixed `DEFAULT_THRESHOLD_DAYS`).
+
+---
+
+## 12. Open questions still to resolve during implementation (not blocking)
 
 - Exact CSV import column schema for price chart bulk-import (mission §6) — design when building that screen, not upfront.
 - Whether `payment_allocations` needs a `FEE` target distinct from `PENALTY` for Type C (mission says "penalties/fees → interest → principal") — likely yes, decide when implementing Type C allocation.

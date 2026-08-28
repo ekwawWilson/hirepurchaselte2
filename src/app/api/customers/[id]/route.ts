@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
+import { validateAtLeastOnePhone, assertPhonesNotTaken } from '@/lib/services/customerService';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(req);
@@ -28,15 +29,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!assertBranchAccess(auth.user, existing.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const {
-    firstName, lastName, email, address, nationalId, dateOfBirth,
+    firstName, lastName, phone, phone2, phone3, email, address, nationalId, dateOfBirth,
     photoUrl, guarantorName, guarantorPhone,
   } = (await req.json()) as Record<string, string | undefined>;
+
+  // Validate against the EFFECTIVE post-update phone set, not just whatever fields
+  // this particular PATCH happens to touch — a partial update must never leave the
+  // customer with zero phone numbers.
+  const effective = {
+    phone: phone !== undefined ? phone : existing.phone,
+    phone2: phone2 !== undefined ? phone2 : existing.phone2,
+    phone3: phone3 !== undefined ? phone3 : existing.phone3,
+  };
+  const phoneError = validateAtLeastOnePhone(effective);
+  if (phoneError) return NextResponse.json({ error: phoneError }, { status: 400 });
+  const clashError = await assertPhonesNotTaken(effective, existing.id);
+  if (clashError) return NextResponse.json({ error: clashError }, { status: 409 });
 
   const customer = await prisma.customer.update({
     where: { id: existing.id },
     data: {
       ...(firstName !== undefined && { firstName }),
       ...(lastName !== undefined && { lastName }),
+      ...(phone !== undefined && { phone: phone || null }),
+      ...(phone2 !== undefined && { phone2: phone2 || null }),
+      ...(phone3 !== undefined && { phone3: phone3 || null }),
       ...(email !== undefined && { email: email || null }),
       ...(address !== undefined && { address: address || null }),
       ...(nationalId !== undefined && { nationalId: nationalId || null }),

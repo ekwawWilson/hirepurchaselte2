@@ -185,11 +185,11 @@ if [ ! -f "$ROOT_DIR/.env.example" ]; then
 # --- Core -----------------------------------------------------------------
 NODE_ENV=development
 PORT=3000
-# SQLite file DB, path resolved relative to prisma/schema.prisma (i.e. prisma/dev.db).
-# The legacy app this rebuilds used Postgres/Supabase; HP-Lite uses SQLite so bootstrap
-# needs no DB server/Docker/sudo. Swap provider="postgresql" in schema.prisma + this URL
-# to migrate later. See docs/00-legacy-study.md §1.
-DATABASE_URL="file:./dev.db"
+# PostgreSQL — matches the legacy hirepurchase app's own database (docs/00-legacy-study.md
+# §1). DIRECT_URL is a non-pooled connection used only for running migrations (a pooled/
+# pgbouncer DATABASE_URL doesn't support the prepared statements migrations need).
+DATABASE_URL="postgresql://user:password@localhost:5432/hplite?schema=public"
+DIRECT_URL="postgresql://user:password@localhost:5432/hplite?schema=public"
 JWT_SECRET=replace-with-a-generated-secret
 JWT_EXPIRES_IN=7d
 NEXT_PUBLIC_API_URL=http://localhost:3000/api
@@ -236,17 +236,24 @@ if [ ! -f "$ROOT_DIR/prisma/schema.prisma" ]; then
   log "Writing prisma/schema.prisma..."
   cat > "$ROOT_DIR/prisma/schema.prisma" <<'SCHEMA_EOF'
 // HP-Lite data model.
-// SQLite provider (see docs/00-legacy-study.md §1 for why): no native `enum`
-// support, so status/type fields are plain String columns with app-level
-// constants in src/lib/constants — same pattern the legacy app already used.
+// NOTE: this heredoc is a Phase-0 scaffolding snapshot (only ever written when
+// prisma/schema.prisma doesn't exist yet) — it has not tracked every model/field
+// added to the real schema.prisma since. Treat prisma/schema.prisma itself as
+// the source of truth; this is only what a from-scratch bootstrap produces.
+//
+// PostgreSQL provider — matches the legacy hirepurchase app's own database
+// (docs/00-legacy-study.md §1). Status/type fields stay plain String with
+// app-level constants in src/lib/constants and a comment listing valid values
+// (not native Postgres enums) — same convention the legacy app uses throughout.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { formatMoney, currencyCode } from '../utils/money';
 import { getSmsProvider } from './smsProviders';
+import { primaryPhone } from './customerService';
 
 type Tx = Prisma.TransactionClient | typeof prisma;
 
@@ -58,10 +59,12 @@ export async function queueSms(params: {
   };
 
   const body = renderTemplate(template.bodyTemplate, vars);
+  const recipient = primaryPhone(contract.customer);
+  if (!recipient) return null; // no registered number at all — shouldn't happen (validated at registration), but never crash a payment over it
 
   return db.smsMessage.create({
     data: {
-      recipient: contract.customer.phone,
+      recipient,
       templateKey: params.templateKey,
       body,
       relatedPaymentId: params.paymentId,

@@ -1,15 +1,31 @@
 // HP-Lite data model.
-// SQLite provider (see docs/00-legacy-study.md §1 for why): no native `enum`
-// support, so status/type fields are plain String columns with app-level
-// constants in src/constants — same pattern the legacy app already used.
+// PostgreSQL provider — matches the legacy hirepurchase app's own database
+// (docs/00-legacy-study.md §1 / docs/01-plan.md §1). IDs use @default(uuid()),
+// matching legacy's convention (it does not use Postgres-native `@db.Uuid`
+// columns for primary keys either, just a plain String holding a UUID string —
+// so that's what this schema does too). Status/type fields stay plain String
+// with app-level constants (src/lib/constants) and a comment listing valid
+// values, not native Postgres enums — legacy itself uses this same convention
+// throughout (every `status` field there is `String` + a listing comment, not
+// `enum`), so there was nothing to change here.
+//
+// Money is deliberately NOT copied from legacy: it stores every amount as
+// `Float` (basePrice, totalPrice, installmentAmount, outstandingBalance, …).
+// HP-Lite keeps integer minor units (`Int`, e.g. `totalPayableMinor`) — this
+// is a non-negotiable mission rule ("money as integer minor units, never
+// floats"), and floating-point money is exactly the kind of bug the real
+// production incident in docs/00-legacy-study.md §4/§6 was about. Matching
+// the database *type* (Postgres) does not mean matching every column's data
+// type when one of them is a known, documented footgun.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------
@@ -17,7 +33,7 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model Branch {
-  id        String   @id @default(cuid())
+  id        String   @id @default(uuid())
   name      String
   code      String   @unique
   address   String?
@@ -34,7 +50,7 @@ model Branch {
 }
 
 model Role {
-  id          String   @id @default(cuid())
+  id          String   @id @default(uuid())
   name        String   @unique
   description String?
   createdAt   DateTime @default(now())
@@ -46,7 +62,7 @@ model Role {
 }
 
 model Permission {
-  id          String  @id @default(cuid())
+  id          String  @id @default(uuid())
   name        String  @unique
   description String?
 
@@ -56,7 +72,7 @@ model Permission {
 }
 
 model User {
-  id           String   @id @default(cuid())
+  id           String   @id @default(uuid())
   email        String   @unique
   phone        String?
   passwordHash String
@@ -71,15 +87,16 @@ model User {
   role   Role    @relation(fields: [roleId], references: [id])
   branch Branch? @relation(fields: [branchId], references: [id])
 
-  customersCreated  Customer[]        @relation("CustomerCreatedBy")
-  customersUpdated  Customer[]        @relation("CustomerUpdatedBy")
-  contractsCreated  Contract[]        @relation("ContractCreatedBy")
-  contractsUpdated  Contract[]        @relation("ContractUpdatedBy")
-  priceChartEntries PriceChartEntry[]
-  stockMovements    StockMovement[]
-  paymentsRecorded  Payment[]         @relation("PaymentCreatedBy")
-  paymentsReversed  Payment[]         @relation("PaymentReversedBy")
-  auditLogs         AuditLog[]
+  customersCreated          Customer[]          @relation("CustomerCreatedBy")
+  customersUpdated          Customer[]          @relation("CustomerUpdatedBy")
+  contractsCreated          Contract[]          @relation("ContractCreatedBy")
+  contractsUpdated          Contract[]          @relation("ContractUpdatedBy")
+  priceChartEntries         PriceChartEntry[]
+  stockMovements            StockMovement[]
+  paymentsRecorded          Payment[]           @relation("PaymentCreatedBy")
+  paymentsReversed          Payment[]           @relation("PaymentReversedBy")
+  auditLogs                 AuditLog[]
+  hubtelPreapprovalsCreated HubtelPreapproval[] @relation("HubtelPreapprovalCreatedBy")
 
   @@map("users")
 }
@@ -88,12 +105,18 @@ model User {
 // Customers
 // ---------------------------------------------------------------------------
 
+// Three phone slots, at least one required (app-level check — see customerService.ts).
+// `phone` is the "main" number: whichever number the customer registered first is
+// stored here and is what USSD/SMS/direct-debit treat as canonical; phone2/phone3
+// are supplementary alternates. All three are independently unique across customers.
 model Customer {
-  id             String    @id @default(cuid())
+  id             String    @id @default(uuid())
   membershipId   String    @unique
   firstName      String
   lastName       String
-  phone          String    @unique
+  phone          String?   @unique
+  phone2         String?   @unique
+  phone3         String?   @unique
   email          String?
   address        String?
   nationalId     String?
@@ -112,9 +135,10 @@ model Customer {
   createdBy User   @relation("CustomerCreatedBy", fields: [createdById], references: [id])
   updatedBy User?  @relation("CustomerUpdatedBy", fields: [updatedById], references: [id])
 
-  contracts       Contract[]
-  payments        Payment[]        @relation("PaymentInitiatedByCustomer")
-  smsMessages     SmsMessage[]
+  contracts          Contract[]
+  payments           Payment[]           @relation("PaymentInitiatedByCustomer")
+  smsMessages        SmsMessage[]
+  hubtelPreapprovals HubtelPreapproval[]
 
   @@index([branchId])
   @@map("customers")
@@ -125,7 +149,7 @@ model Customer {
 // ---------------------------------------------------------------------------
 
 model ProductCategory {
-  id   String @id @default(cuid())
+  id   String @id @default(uuid())
   name String @unique
 
   products Product[]
@@ -134,29 +158,29 @@ model ProductCategory {
 }
 
 model Product {
-  id            String   @id @default(cuid())
-  sku           String   @unique
-  name          String
-  description   String?
-  categoryId    String?
-  brand         String?
-  model         String?
+  id             String   @id @default(uuid())
+  sku            String   @unique
+  name           String
+  description    String?
+  categoryId     String?
+  brand          String?
+  model          String?
   cashPriceMinor Int
-  imageUrl      String?
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
+  imageUrl       String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
 
-  category         ProductCategory?   @relation(fields: [categoryId], references: [id])
-  inventoryItems   InventoryItem[]
+  category          ProductCategory?  @relation(fields: [categoryId], references: [id])
+  inventoryItems    InventoryItem[]
   priceChartEntries PriceChartEntry[]
-  contracts        Contract[]
+  contracts         Contract[]
 
   @@map("products")
 }
 
 // status: AVAILABLE | RESERVED | ISSUED | RETURNED | WRITTEN_OFF
 model InventoryItem {
-  id           String   @id @default(cuid())
+  id           String   @id @default(uuid())
   productId    String
   branchId     String
   serialNumber String   @unique
@@ -175,7 +199,7 @@ model InventoryItem {
 
 // type: RECEIPT | RESERVE | ISSUE | RETURN | TRANSFER | ADJUSTMENT
 model StockMovement {
-  id              String   @id @default(cuid())
+  id              String   @id @default(uuid())
   inventoryItemId String
   productId       String
   branchId        String
@@ -202,19 +226,19 @@ model StockMovement {
 
 // contractType: SAVE_TO_OWN | DEPOSIT_INSTALMENT | DEVICE_LOAN
 model PriceChartEntry {
-  id                   String    @id @default(cuid())
-  productId            String
-  contractType         String
-  termMonths           Int
-  paymentFrequency     String    @default("MONTHLY")
-  depositPercentage    Int       @default(0)
-  totalPayableMinor    Int
+  id                    String    @id @default(uuid())
+  productId             String
+  contractType          String
+  termMonths            Int
+  paymentFrequency      String    @default("MONTHLY")
+  depositPercentage     Int       @default(0)
+  totalPayableMinor     Int
   instalmentAmountMinor Int
-  interestRateBps      Int?
-  effectiveFrom        DateTime  @default(now())
-  effectiveTo          DateTime?
-  createdById          String
-  createdAt            DateTime  @default(now())
+  interestRateBps       Int?
+  effectiveFrom         DateTime  @default(now())
+  effectiveTo           DateTime?
+  createdById           String
+  createdAt             DateTime  @default(now())
 
   product   Product @relation(fields: [productId], references: [id])
   createdBy User    @relation(fields: [createdById], references: [id])
@@ -235,27 +259,32 @@ model PriceChartEntry {
 //   DEPOSIT_INSTALMENT:  PENDING_DEPOSIT | ACTIVE | COMPLETED | DEFAULTED | CANCELLED
 //   DEVICE_LOAN:         ACTIVE | COMPLETED | DEFAULTED | WRITTEN_OFF
 model Contract {
-  id               String    @id @default(cuid())
-  contractNumber   String    @unique
-  contractType     String
-  customerId       String
-  productId        String
-  inventoryItemId  String?
-  branchId         String
-  priceChartEntryId String?
+  id                  String  @id @default(uuid())
+  contractNumber      String  @unique
+  contractType        String
+  customerId          String
+  productId           String
+  inventoryItemId     String?
+  branchId            String
+  priceChartEntryId   String?
+  // Direct debit is opt-in per contract, and only for SAVE_TO_OWN's two siblings —
+  // see docs/01-plan.md: a free-form-savings contract has no due date to auto-collect
+  // against. Presence + status of the linked mandate (not a separate boolean) is what
+  // "enabled" means, so this can never drift out of sync with the mandate itself.
+  hubtelPreapprovalId String?
 
   // Snapshotted pricing terms — never re-read from priceChartEntries after creation.
   totalPriceMinor       Int
-  depositAmountMinor    Int      @default(0)
-  depositPercentage     Int      @default(0)
-  termMonths             Int
-  paymentFrequency       String   @default("MONTHLY")
-  instalmentAmountMinor  Int
+  depositAmountMinor    Int    @default(0)
+  depositPercentage     Int    @default(0)
+  termMonths            Int
+  paymentFrequency      String @default("MONTHLY")
+  instalmentAmountMinor Int
 
   // DEVICE_LOAN only
-  principalMinor   Int?
-  interestRateBps  Int?
-  rateBasis        String?  @default("FLAT")
+  principalMinor  Int?
+  interestRateBps Int?
+  rateBasis       String? @default("FLAT")
 
   status String @default("ACTIVE")
 
@@ -263,14 +292,14 @@ model Contract {
   totalPaidMinor    Int @default(0)
   balanceMinor      Int
 
-  startDate     DateTime
-  activatedAt   DateTime?
-  completedAt   DateTime?
-  releasedAt    DateTime?
-  cancelledAt   DateTime?
-  defaultedAt   DateTime?
-  writtenOffAt  DateTime?
-  cancelReason  String?
+  startDate      DateTime
+  activatedAt    DateTime?
+  completedAt    DateTime?
+  releasedAt     DateTime?
+  cancelledAt    DateTime?
+  defaultedAt    DateTime?
+  writtenOffAt   DateTime?
+  cancelReason   String?
   writeOffReason String?
 
   createdById String
@@ -278,13 +307,14 @@ model Contract {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  customer        Customer         @relation(fields: [customerId], references: [id])
-  product         Product          @relation(fields: [productId], references: [id])
-  inventoryItem   InventoryItem?   @relation(fields: [inventoryItemId], references: [id])
-  branch          Branch           @relation(fields: [branchId], references: [id])
-  priceChartEntry PriceChartEntry? @relation(fields: [priceChartEntryId], references: [id])
-  createdBy       User             @relation("ContractCreatedBy", fields: [createdById], references: [id])
-  updatedBy       User?            @relation("ContractUpdatedBy", fields: [updatedById], references: [id])
+  customer          Customer           @relation(fields: [customerId], references: [id])
+  product           Product            @relation(fields: [productId], references: [id])
+  inventoryItem     InventoryItem?     @relation(fields: [inventoryItemId], references: [id])
+  branch            Branch             @relation(fields: [branchId], references: [id])
+  priceChartEntry   PriceChartEntry?   @relation(fields: [priceChartEntryId], references: [id])
+  hubtelPreapproval HubtelPreapproval? @relation(fields: [hubtelPreapprovalId], references: [id])
+  createdBy         User               @relation("ContractCreatedBy", fields: [createdById], references: [id])
+  updatedBy         User?              @relation("ContractUpdatedBy", fields: [updatedById], references: [id])
 
   instalments        Instalment[]
   payments           Payment[]
@@ -297,12 +327,13 @@ model Contract {
   @@index([customerId, status])
   @@index([branchId, status])
   @@index([inventoryItemId])
+  @@index([hubtelPreapprovalId])
   @@map("contracts")
 }
 
 // status: PENDING | PARTIAL | PAID | OVERDUE
 model Instalment {
-  id                    String    @id @default(cuid())
+  id                    String    @id @default(uuid())
   contractId            String
   instalmentNo          Int
   dueDate               DateTime
@@ -313,7 +344,7 @@ model Instalment {
   status                String    @default("PENDING")
   paidAt                DateTime?
 
-  contract    Contract              @relation(fields: [contractId], references: [id])
+  contract    Contract            @relation(fields: [contractId], references: [id])
   allocations PaymentAllocation[]
   penalties   Penalty[]
 
@@ -330,7 +361,7 @@ model Instalment {
 // channel: CASH | USSD
 // status: PENDING | SUCCESS | FAILED
 model Payment {
-  id                    String    @id @default(cuid())
+  id                    String    @id @default(uuid())
   contractId            String
   entryType             String
   amountMinor           Int
@@ -350,16 +381,16 @@ model Payment {
   receivedAt            DateTime?
   createdAt             DateTime  @default(now())
 
-  contract              Contract  @relation(fields: [contractId], references: [id])
-  createdBy             User?     @relation("PaymentCreatedBy", fields: [createdById], references: [id])
-  reversedBy            User?     @relation("PaymentReversedBy", fields: [reversedById], references: [id])
-  initiatedByCustomer   Customer? @relation("PaymentInitiatedByCustomer", fields: [initiatedByCustomerId], references: [id])
-  reverses              Payment?  @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
-  reversedByPayment     Payment?  @relation("PaymentReversal")
+  contract            Contract  @relation(fields: [contractId], references: [id])
+  createdBy           User?     @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+  reversedBy          User?     @relation("PaymentReversedBy", fields: [reversedById], references: [id])
+  initiatedByCustomer Customer? @relation("PaymentInitiatedByCustomer", fields: [initiatedByCustomerId], references: [id])
+  reverses            Payment?  @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
+  reversedByPayment   Payment?  @relation("PaymentReversal")
 
-  allocations        PaymentAllocation[]
-  hubtelTransaction  HubtelTransaction?
-  smsMessages        SmsMessage[]
+  allocations       PaymentAllocation[]
+  hubtelTransaction HubtelTransaction?
+  smsMessages       SmsMessage[]
 
   @@index([contractId, status])
   @@map("payments")
@@ -367,7 +398,7 @@ model Payment {
 
 // targetType: PENALTY | INSTALMENT
 model PaymentAllocation {
-  id           String  @id @default(cuid())
+  id           String  @id @default(uuid())
   paymentId    String
   targetType   String
   instalmentId String?
@@ -382,7 +413,7 @@ model PaymentAllocation {
 }
 
 model Penalty {
-  id           String    @id @default(cuid())
+  id           String    @id @default(uuid())
   contractId   String
   instalmentId String?
   amountMinor  Int
@@ -403,29 +434,68 @@ model Penalty {
 // ---------------------------------------------------------------------------
 
 // status: PENDING | SUCCESS | FAILED
+// channel: USSD (customer-initiated, one-off) | DIRECT_DEBIT (merchant-initiated
+// against an APPROVED mandate — see HubtelPreapproval). Retry fields are only ever
+// populated for DIRECT_DEBIT: a USSD charge failing just ends the customer's session,
+// there's no "merchant retries it later" concept for a channel the customer drove.
 model HubtelTransaction {
-  id                 String   @id @default(cuid())
-  clientReference    String   @unique
+  id                 String    @id @default(uuid())
+  clientReference    String    @unique
   contractId         String
   msisdn             String
   amountMinor        Int
-  status             String   @default("PENDING")
+  status             String    @default("PENDING")
+  channel            String    @default("USSD")
+  preapprovalId      String?
+  retryCount         Int       @default(0)
+  nextRetryAt        DateTime?
   rawCallbackPayload String?
-  paymentId          String?  @unique
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  paymentId          String?   @unique
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  contract Contract @relation(fields: [contractId], references: [id])
-  payment  Payment? @relation(fields: [paymentId], references: [id])
+  contract    Contract           @relation(fields: [contractId], references: [id])
+  payment     Payment?           @relation(fields: [paymentId], references: [id])
+  preapproval HubtelPreapproval? @relation(fields: [preapprovalId], references: [id])
 
+  @@index([status, nextRetryAt])
   @@map("hubtel_transactions")
+}
+
+// status: PENDING | APPROVED | FAILED | EXPIRED | CANCELLED
+// A mandate the customer approves once (via a USSD prompt or an OTP sent by Hubtel —
+// out of band, this app never sees the code) authorizing the merchant to pull future
+// payments from their mobile money wallet without asking again each time.
+model HubtelPreapproval {
+  id                  String    @id @default(uuid())
+  customerId          String
+  customerMsisdn      String
+  network             String // MTN | VODAFONE | TELECEL — AirtelTigo has no direct-debit product
+  clientReferenceId   String    @unique
+  hubtelPreapprovalId String?
+  status              String    @default("PENDING")
+  approvedAt          DateTime?
+  cancelledAt         DateTime?
+  createdById         String
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  customer  Customer @relation(fields: [customerId], references: [id])
+  createdBy User     @relation("HubtelPreapprovalCreatedBy", fields: [createdById], references: [id])
+
+  contracts          Contract[]
+  hubtelTransactions HubtelTransaction[]
+
+  @@index([customerId, customerMsisdn, network])
+  @@index([status])
+  @@map("hubtel_preapprovals")
 }
 
 // msisdn is deliberately NOT a foreign key to Customer.phone — a USSD session
 // can start from a number that isn't a registered customer yet (that's what
 // the lookup step in the menu is for).
 model UssdSession {
-  id         String   @id @default(cuid())
+  id         String   @id @default(uuid())
   sessionId  String   @unique
   msisdn     String
   state      String
@@ -445,7 +515,7 @@ model UssdSession {
 // ---------------------------------------------------------------------------
 
 model SmsTemplate {
-  id           String  @id @default(cuid())
+  id           String  @id @default(uuid())
   key          String  @unique
   name         String
   bodyTemplate String
@@ -456,7 +526,7 @@ model SmsTemplate {
 
 // status: QUEUED | SENT | FAILED
 model SmsMessage {
-  id                String    @id @default(cuid())
+  id                String    @id @default(uuid())
   recipient         String
   templateKey       String
   body              String
@@ -481,7 +551,7 @@ model SmsMessage {
 // ---------------------------------------------------------------------------
 
 model AuditLog {
-  id         String   @id @default(cuid())
+  id         String   @id @default(uuid())
   userId     String?
   action     String
   entityType String

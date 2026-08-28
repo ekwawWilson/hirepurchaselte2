@@ -16,8 +16,9 @@ as the API is built).
 
 ## Stack
 
-Next.js 16 (App Router, Turbopack), React 19, TypeScript, Prisma, SQLite
-(file DB — no server/Docker/sudo needed), Tailwind CSS, Radix UI, Zustand.
+Next.js 16 (App Router, Turbopack), React 19, TypeScript, Prisma, PostgreSQL
+(matches the legacy hirepurchase app — see `DATABASE_URL`/`DIRECT_URL` in
+`.env.example`), Tailwind CSS, Radix UI, Zustand.
 
 - Pages: `src/app/<feature>`
 - API routes: `src/app/api/<feature>/route.ts`

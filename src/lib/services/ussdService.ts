@@ -16,7 +16,11 @@ export interface UssdResult {
 }
 
 async function startSession(sessionId: string, msisdn: string): Promise<UssdResult> {
-  const customer = await prisma.customer.findUnique({ where: { phone: msisdn } });
+  // A customer can dial in from any of their three registered numbers, not just
+  // whichever one happens to be stored in the "main" slot (customerService.ts).
+  const customer = await prisma.customer.findFirst({
+    where: { OR: [{ phone: msisdn }, { phone2: msisdn }, { phone3: msisdn }] },
+  });
   if (!customer) {
     return { message: 'No HP-Lite account found for this number.', continueSession: false };
   }

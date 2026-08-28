@@ -19,15 +19,21 @@ import {
 
 interface Instalment { id: string; instalmentNo: number; dueDate: string; amountDueMinor: number; principalPortionMinor: number; interestPortionMinor: number; amountPaidMinor: number; status: string; daysPastDue?: number }
 interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
+interface Preapproval { id: string; status: string; network: string; customerMsisdn: string }
 interface ContractDetail {
   id: string; contractNumber: string; contractType: string; status: string; paymentFrequency: string;
   totalPayableMinor: number; totalPaidMinor: number; balanceMinor: number; creditMinor: number;
   depositAmountMinor: number; principalMinor: number | null; interestRateBps: number | null;
-  customer: { firstName: string; lastName: string; phone: string };
+  customer: { firstName: string; lastName: string; phone: string | null; phone2: string | null; phone3: string | null };
   product: { name: string };
   instalments: Instalment[];
   payments: Payment[];
+  hubtelPreapprovalId: string | null;
+  hubtelPreapproval: Preapproval | null;
 }
+
+const DIRECT_DEBIT_ELIGIBLE_TYPES = ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
+const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'];
 
 export default function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -43,6 +49,12 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [confirmAction, setConfirmAction] = useState<'cancel' | 'writeoff' | 'release' | null>(null);
   const [actionReason, setActionReason] = useState('');
 
+  const [ddMsisdn, setDdMsisdn] = useState('');
+  const [ddNetwork, setDdNetwork] = useState('MTN');
+  const [ddSaving, setDdSaving] = useState(false);
+  const [chargeAmount, setChargeAmount] = useState('');
+  const [charging, setCharging] = useState(false);
+
   async function load() {
     try {
       const { contract } = await api.get<{ contract: ContractDetail }>(`/contracts/${id}`);
@@ -55,6 +67,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       }));
       setContract(contract);
       if (contract.status === 'PENDING_DEPOSIT') setEntryType('DEPOSIT');
+      setDdMsisdn((prev) => prev || contract.customer.phone || contract.customer.phone2 || contract.customer.phone3 || '');
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load contract', variant: 'destructive' });
     }
@@ -118,6 +131,49 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     }
   }
 
+  async function setupDirectDebit(e: React.FormEvent) {
+    e.preventDefault();
+    setDdSaving(true);
+    try {
+      const res = await api.post<{ reused: boolean }>(`/contracts/${id}/direct-debit`, { msisdn: ddMsisdn, network: ddNetwork });
+      toast({
+        title: res.reused ? 'Existing mandate reused' : 'Direct debit mandate approved',
+        description: 'Mock mode approves instantly — a live account would prompt the customer via USSD or OTP.',
+      });
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to set up direct debit', variant: 'destructive' });
+    } finally {
+      setDdSaving(false);
+    }
+  }
+
+  async function disableDirectDebit() {
+    try {
+      await api.delete(`/contracts/${id}/direct-debit`);
+      toast({ title: 'Direct debit disabled' });
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to disable direct debit', variant: 'destructive' });
+    }
+  }
+
+  async function chargeNow(e: React.FormEvent) {
+    e.preventDefault();
+    setCharging(true);
+    try {
+      const amountMinor = Math.round(parseFloat(chargeAmount) * 100);
+      await api.post(`/contracts/${id}/direct-debit/charge`, { amountMinor });
+      toast({ title: 'Charged', description: formatCurrency(amountMinor) });
+      setChargeAmount('');
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Charge failed', variant: 'destructive' });
+    } finally {
+      setCharging(false);
+    }
+  }
+
   if (!contract) {
     return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
   }
@@ -135,7 +191,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{contract.contractNumber}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone} &middot; {contract.product.name} &middot; {contractTypeLabel(contract.contractType)} &middot; {contract.paymentFrequency.charAt(0) + contract.paymentFrequency.slice(1).toLowerCase()}
+            {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone ?? contract.customer.phone2 ?? contract.customer.phone3} &middot; {contract.product.name} &middot; {contractTypeLabel(contract.contractType)} &middot; {contract.paymentFrequency.charAt(0) + contract.paymentFrequency.slice(1).toLowerCase()}
           </p>
         </div>
         <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 ${getStatusColor(contract.status)}`}>{contract.status}</span>
@@ -177,6 +233,57 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               </div>
               <Button type="submit" disabled={saving}>{saving ? 'Recording...' : 'Record payment'}</Button>
             </form>
+          </CardContent>
+        </Card>
+      )}
+
+      {DIRECT_DEBIT_ELIGIBLE_TYPES.includes(contract.contractType) && !terminal && (
+        <Card>
+          <CardHeader><CardTitle>Direct debit</CardTitle></CardHeader>
+          <CardContent>
+            {contract.hubtelPreapproval ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 ${getStatusColor(contract.hubtelPreapproval.status)}`}>
+                    {contract.hubtelPreapproval.status}
+                  </span>
+                  <span className="text-sm text-gray-600">{contract.hubtelPreapproval.customerMsisdn} &middot; {contract.hubtelPreapproval.network}</span>
+                </div>
+                {contract.hubtelPreapproval.status === 'APPROVED' && canPay && (
+                  <form className="flex items-end gap-3" onSubmit={chargeNow}>
+                    <div>
+                      <Label>Charge amount (GHS)</Label>
+                      <Input required type="number" step="0.01" className="mt-1.5 w-40" value={chargeAmount} onChange={(e) => setChargeAmount(e.target.value)} />
+                    </div>
+                    <Button type="submit" disabled={charging}>{charging ? 'Charging...' : 'Charge now'}</Button>
+                    <Button type="button" variant="outline" onClick={disableDirectDebit}>Disable</Button>
+                  </form>
+                )}
+                <p className="text-xs text-gray-400">
+                  The mandate is charged automatically each day against whatever instalment is due — &quot;Charge now&quot; is only for an out-of-cycle collection.
+                </p>
+              </div>
+            ) : contract.status === 'ACTIVE' ? (
+              <form className="flex items-end gap-3" onSubmit={setupDirectDebit}>
+                <div>
+                  <Label>Mobile money number</Label>
+                  <Input required className="mt-1.5 w-44" value={ddMsisdn} onChange={(e) => setDdMsisdn(e.target.value)} />
+                </div>
+                <div>
+                  <Label>Network</Label>
+                  <select
+                    className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                    value={ddNetwork}
+                    onChange={(e) => setDdNetwork(e.target.value)}
+                  >
+                    {DIRECT_DEBIT_NETWORKS.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                <Button type="submit" disabled={ddSaving}>{ddSaving ? 'Setting up...' : 'Set up direct debit'}</Button>
+              </form>
+            ) : (
+              <p className="text-sm text-gray-500">Direct debit becomes available once the contract is ACTIVE.</p>
+            )}
           </CardContent>
         </Card>
       )}
