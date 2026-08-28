@@ -223,9 +223,28 @@ Following mission §14, refined:
   - **Collections run** (`collectionsService.ts`, cron in `instrumentation.ts`): proactively charges the oldest due instalment for every `ACTIVE` contract with an attached `APPROVED` mandate. This is the one piece the legacy app never actually wired up in production (its own auto-retry only re-attempts charges that had already failed) — without it, a mandate would just be something nobody ever uses to collect.
   - **Retry**: a failed charge schedules a retry at a fixed 1/3/7-day offset (capped at 3 attempts) — a hardcoded policy, not a configurable settings model, matching this codebase's existing style (`overdueService`'s fixed `DEFAULT_THRESHOLD_DAYS`).
 
+## 12. Price chart pricing model matches the legacy hirepurchase app
+
+Studied the legacy app's actual `Product`/`ProductPricing` schema and its admin product-pricing UI (not `salesinventoryapp` — that's a different reference project) and matched two concrete structural traits HP-Lite previously diverged on:
+
+- **Fixed 3/4/6-month terms** (`PRICE_CHART_TERM_MONTHS` in `constants/contracts.ts`), not the free-form 1–60 months HP-Lite allowed before — legacy's `ProductPricing.installmentMonths` only ever takes 3, 4, or 6. Enforced in `priceChartService.validateEntryBody` (the admin-entry point), **not** a DB constraint — existing rows and test fixtures at other terms (e.g. `docs/02-loan-maths.md`'s 12-month DEVICE_LOAN worked example) stay valid since DEVICE_LOAN has no legacy precedent to match at all (mission ambiguity resolution #2: legacy has no loan/interest concept whatsoever).
+- **Absolute deposit amount, not a percentage** — `PriceChartEntry.depositAmountMinor` replaces `depositPercentage`. Legacy's `ProductPricing.depositAmount` is a currency figure the admin types directly per term, not a percent of the total; HP-Lite now matches that exactly, and `contractService.ts` just copies it onto the contract rather than computing `totalPayable × percentage ÷ 100`. `Contract.depositPercentage` (a pure snapshot, never read for any logic or by any UI) was dropped rather than kept as dead weight.
+- Payment frequency (DAILY/WEEKLY/MONTHLY) stays exactly as already built (§11-adjacent, an explicit HP-Lite requirement with no legacy precedent either way) — legacy's own contract wizard turned out to already have an equivalent `paymentFrequency` concept that only affects instalment *count*, never the priced total, which is exactly how HP-Lite already worked; confirms no change was needed there.
+
 ---
 
-## 12. Open questions still to resolve during implementation (not blocking)
+## 14. Every product's price chart must cover all three contract types
+
+Requirement: a product's pricing must satisfy SAVE_TO_OWN, DEPOSIT_INSTALMENT, and DEVICE_LOAN, not just whichever type an admin happened to price first — a customer choosing any of the three for a given product must find a price.
+
+- `priceChartService.createPriceChartEntriesForTerm` — the single-entry creator (`createPriceChartEntryInTx`) is now a tx-scoped helper reused by both the original one-at-a-time `createPriceChartEntry` and this new bundle path, which takes a product + term + frequency + a map of per-type pricing and creates only the types not already actively priced for that exact combo, atomically (`POST /api/price-chart/bundle`). Submitting a bundle where every listed type is already priced, or where any one entry fails `validateEntryBody`, creates nothing — no partial bundles.
+- `priceChartService.missingContractTypesForProduct` / the `missingContractTypes` field now returned on every product from `GET /api/products` — "has at least one active entry, any term/frequency" per type, used to render a "X/3 types priced" badge on the Products list and a "Missing: ..." / "All 3 contract types priced" badge on the product detail page.
+- The Price Chart admin page's entry form was redesigned around this: pick Product + Term + Frequency first, then three cards (one per contract type) — types already priced for that combo show "Already priced" and are skipped; only checked, unpriced types are submitted.
+- Re-pricing a type that's already active for a combo is still a single-entry edit via the original `createPriceChartEntry`/`POST /api/price-chart` — the bundle path only fills gaps, it never supersedes existing pricing.
+
+---
+
+## 15. Open questions still to resolve during implementation (not blocking)
 
 - Exact CSV import column schema for price chart bulk-import (mission §6) — design when building that screen, not upfront.
 - Whether `payment_allocations` needs a `FEE` target distinct from `PENALTY` for Type C (mission says "penalties/fees → interest → principal") — likely yes, decide when implementing Type C allocation.

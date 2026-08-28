@@ -97,7 +97,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             <form className="grid grid-cols-2 gap-4" onSubmit={onSave}>
               <div className="col-span-2">
                 <p className="text-xs text-gray-500 mb-2">At least one phone number is required.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3">
                   <PhoneVerifyField label="Phone 1" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
                   <PhoneVerifyField label="Phone 2 (optional)" value={form.phone2} onChange={(v) => setForm({ ...form, phone2: v })} />
                   <PhoneVerifyField label="Phone 3 (optional)" value={form.phone3} onChange={(v) => setForm({ ...form, phone3: v })} />

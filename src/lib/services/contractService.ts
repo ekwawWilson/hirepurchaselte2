@@ -95,7 +95,7 @@ async function runContractTransaction(
 
       case 'DEPOSIT_INSTALMENT':
         status = 'PENDING_DEPOSIT';
-        depositAmountMinor = Math.round((totalPayableMinor * chartEntry.depositPercentage) / 100);
+        depositAmountMinor = chartEntry.depositAmountMinor; // absolute amount set by admin, not derived
         scheduleFinanceAmount = totalPayableMinor - depositAmountMinor;
         scheduleKind = 'STRAIGHT_LINE';
         break;
@@ -121,7 +121,6 @@ async function runContractTransaction(
         priceChartEntryId: chartEntry.id,
         totalPriceMinor: totalPayableMinor,
         depositAmountMinor,
-        depositPercentage: chartEntry.depositPercentage,
         termMonths: params.termMonths,
         paymentFrequency: chartEntry.paymentFrequency,
         instalmentAmountMinor: chartEntry.instalmentAmountMinor,

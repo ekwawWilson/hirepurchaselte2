@@ -18,6 +18,14 @@ export function numberOfInstalmentsForTerm(termMonths: number, paymentFrequency:
   return termMonths * PERIODS_PER_MONTH[paymentFrequency];
 }
 
+/**
+ * The only term lengths an admin can price a product at — matches the legacy
+ * hirepurchase app's ProductPricing model exactly (it only ever offers 3, 4, or
+ * 6 month tiers). Enforced in priceChartService.validateEntryBody, i.e. at the
+ * admin-entry point, not as a DB constraint.
+ */
+export const PRICE_CHART_TERM_MONTHS = [3, 4, 6] as const;
+
 /** No further payments/status changes accepted once a contract reaches one of these. */
 export const TERMINAL_CONTRACT_STATUSES = ['COMPLETED', 'RELEASED', 'CANCELLED', 'WRITTEN_OFF'];
 

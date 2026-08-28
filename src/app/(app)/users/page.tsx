@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Plus, UserCog } from 'lucide-react';
+import { Plus, UserCog, ShieldAlert } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
+import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,6 +25,7 @@ interface Branch { id: string; name: string; code: string }
 const ALL_BRANCHES = '__all__';
 
 export default function UsersPage() {
+  const canManage = useAuthStore((s) => s.hasPermission('user.manage'));
   const { toast } = useToast();
   const [users, setUsers] = useState<User[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -56,9 +58,28 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
+    if (!canManage) { setIsLoading(false); return; }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canManage]);
+
+  if (!canManage) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Users</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Staff accounts, roles, and branch assignment</p>
+        </div>
+        <Card>
+          <CardContent className="text-center py-12 px-4">
+            <ShieldAlert className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+            <p className="text-gray-500">You don&apos;t have permission to manage users.</p>
+            <p className="text-xs text-gray-400 mt-1">Only Super Admins can view and manage staff accounts.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();

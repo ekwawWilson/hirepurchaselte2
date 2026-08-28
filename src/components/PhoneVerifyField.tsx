@@ -48,12 +48,12 @@ export function PhoneVerifyField({
   return (
     <div>
       <Label>{label}</Label>
-      <div className="mt-1.5 flex gap-1.5">
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
         <Input
           required={required}
           value={value}
           onChange={(e) => { onChange(e.target.value); setResult(null); }}
-          className="flex-1"
+          className="flex-1 min-w-[160px]"
         />
         <select
           className="h-10 border border-input bg-white px-2 text-xs text-gray-600"

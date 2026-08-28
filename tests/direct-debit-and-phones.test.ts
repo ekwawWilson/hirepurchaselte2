@@ -156,7 +156,7 @@ describe('Hubtel Direct Debit', () => {
   it('SAVE_TO_OWN contracts are never eligible for direct debit', async () => {
     await prisma.priceChartEntry.create({
       data: {
-        productId: await makeProduct('STO'), contractType: 'SAVE_TO_OWN', termMonths: 6, depositPercentage: 0,
+        productId: await makeProduct('STO'), contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0,
         totalPayableMinor: 60000, instalmentAmountMinor: 10000, createdById: adminUserId,
       },
     });
@@ -173,7 +173,7 @@ describe('Hubtel Direct Debit', () => {
     const productId = await makeProduct('PD');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositPercentage: 50,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 50000,
         totalPayableMinor: 100000, instalmentAmountMinor: 8333, createdById: adminUserId,
       },
     });
@@ -190,7 +190,7 @@ describe('Hubtel Direct Debit', () => {
     const productId = await makeProduct('CHARGE');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositPercentage: 0,
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
         totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
       },
     });
@@ -223,7 +223,7 @@ describe('Hubtel Direct Debit', () => {
     const productId = await makeProduct('RETRY');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositPercentage: 0,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 0,
         totalPayableMinor: 60000, instalmentAmountMinor: 10000, createdById: adminUserId,
       },
     });
@@ -259,7 +259,7 @@ describe('Hubtel Direct Debit', () => {
     const productId = await makeProduct('COLLECT');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositPercentage: 0,
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
         totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
       },
     });

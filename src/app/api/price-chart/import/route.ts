@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
         contractType: r.contractType,
         termMonths: Number(r.termMonths),
         paymentFrequency: r.paymentFrequency || 'MONTHLY',
-        depositPercentage: Number(r.depositPercentage),
+        depositAmountMinor: Number(r.depositAmountMinor),
         totalPayableMinor: Number(r.totalPayableMinor),
         interestRateBps: r.interestRateBps ? Number(r.interestRateBps) : undefined,
       };

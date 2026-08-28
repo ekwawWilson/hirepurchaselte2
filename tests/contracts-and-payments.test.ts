@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { makeRequest, makeParams } from './helpers';
+import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { GET as branchesGET } from '@/app/api/branches/route';
@@ -87,7 +88,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
   it('SAVE_TO_OWN: pays from zero, device withheld until fully paid, then explicitly released', async () => {
     const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositPercentage: 0, totalPayableMinor: 240000 },
+      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
     }));
     expect(entry.status).toBe(201);
 
@@ -127,7 +128,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
   it('DEPOSIT_INSTALMENT: device withheld until deposit threshold is met (partial deposits accumulate)', async () => {
     const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositPercentage: 20, totalPayableMinor: 300000 },
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
     }));
     expect(entry.status).toBe(201);
 
@@ -160,7 +161,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
   it('Payment idempotency + reversal: replay does not double-post, original row survives reversal', async () => {
     const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositPercentage: 20, totalPayableMinor: 300000 },
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
     }));
     expect(entry.status).toBe(201);
     const custId = await makeCustomer('Idempotency');
@@ -209,10 +210,19 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
   });
 
   it('DEVICE_LOAN: flat interest matches the docs/02-loan-maths.md worked example exactly', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEVICE_LOAN', termMonths: 12, depositPercentage: 0, totalPayableMinor: 248000, interestRateBps: 2400 },
-    }));
-    expect(entry.status).toBe(201);
+    // Created directly (not via the validated POST /api/price-chart route) since this
+    // worked example is deliberately a 12-month term, outside the {3,4,6}-month admin
+    // pricing tiers (priceChartService.validateEntryBody, matching the legacy hirepurchase
+    // app's fixed ProductPricing tiers) — the test's real purpose is verifying flat-interest
+    // schedule math against a documented example, not re-testing that validation.
+    const adminUser = await prisma.user.findFirstOrThrow({ where: { email: 'admin@hplite.test' } });
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEVICE_LOAN', termMonths: 12, depositAmountMinor: 0,
+        totalPayableMinor: 248000, instalmentAmountMinor: Math.ceil(248000 / 12), interestRateBps: 2400,
+        createdById: adminUser.id,
+      },
+    });
 
     const custId = await makeCustomer('DeviceLoan');
     const itemId = await receiveItem('C');

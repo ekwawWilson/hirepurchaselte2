@@ -6,7 +6,7 @@ import { Plus, Package as PackageIcon } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, contractTypeLabel } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,6 +22,7 @@ interface Product {
   model: string | null;
   cashPriceMinor: number;
   isActive: boolean;
+  missingContractTypes: string[];
 }
 
 export default function ProductsPage() {
@@ -143,6 +144,7 @@ export default function ProductsPage() {
                   <TableHead>Name</TableHead>
                   <TableHead>Brand/Model</TableHead>
                   <TableHead>Cash Price</TableHead>
+                  <TableHead>Pricing</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -153,6 +155,15 @@ export default function ProductsPage() {
                     <TableCell className="font-medium text-gray-900"><Link href={`/products/${p.id}`} className="hover:underline">{p.name}</Link></TableCell>
                     <TableCell>{[p.brand, p.model].filter(Boolean).join(' ') || '—'}</TableCell>
                     <TableCell>{formatCurrency(p.cashPriceMinor)}</TableCell>
+                    <TableCell>
+                      {p.missingContractTypes.length === 0 ? (
+                        <Badge variant="success">3/3 types priced</Badge>
+                      ) : (
+                        <Badge variant="destructive" title={`Missing: ${p.missingContractTypes.map(contractTypeLabel).join(', ')}`}>
+                          {3 - p.missingContractTypes.length}/3 types priced
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell><Badge variant={p.isActive ? 'success' : 'secondary'}>{p.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
                   </TableRow>
                 ))}

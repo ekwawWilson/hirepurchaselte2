@@ -14,7 +14,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 
 interface PriceChartEntry {
   id: string; contractType: string; termMonths: number; paymentFrequency: string;
-  totalPayableMinor: number; depositPercentage: number; effectiveTo: string | null;
+  totalPayableMinor: number; depositAmountMinor: number; effectiveTo: string | null;
 }
 interface Product {
   id: string; sku: string; name: string; brand: string | null; model: string | null;
@@ -22,6 +22,7 @@ interface Product {
 }
 
 const frequencyLabel = (f: string) => f.charAt(0) + f.slice(1).toLowerCase();
+const ALL_CONTRACT_TYPES = ['SAVE_TO_OWN', 'DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
 
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -125,7 +126,18 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Price chart entries</CardTitle></CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+          <CardTitle>Price chart entries</CardTitle>
+          {(() => {
+            const priced = new Set(product.priceChartEntries.filter((e) => !e.effectiveTo).map((e) => e.contractType));
+            const missing = ALL_CONTRACT_TYPES.filter((t) => !priced.has(t));
+            return missing.length === 0 ? (
+              <Badge variant="success">All 3 contract types priced</Badge>
+            ) : (
+              <Badge variant="destructive">Missing: {missing.map(contractTypeLabel).join(', ')}</Badge>
+            );
+          })()}
+        </CardHeader>
         <CardContent className="p-0">
           {product.priceChartEntries.length === 0 ? (
             <p className="text-center text-sm text-gray-400 py-8">No price chart entries yet — add one from the Price Chart page</p>
@@ -147,7 +159,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                     <TableCell>{contractTypeLabel(e.contractType)}</TableCell>
                     <TableCell>{e.termMonths}mo</TableCell>
                     <TableCell>{frequencyLabel(e.paymentFrequency)}</TableCell>
-                    <TableCell>{e.depositPercentage}%</TableCell>
+                    <TableCell>{formatCurrency(e.depositAmountMinor)}</TableCell>
                     <TableCell>{formatCurrency(e.totalPayableMinor)}</TableCell>
                     <TableCell>{e.effectiveTo ? <Badge variant="secondary">Superseded</Badge> : <Badge variant="success">Active</Badge>}</TableCell>
                   </TableRow>

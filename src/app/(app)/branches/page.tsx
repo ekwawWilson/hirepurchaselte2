@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Building2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
+import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +15,10 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 interface Branch { id: string; name: string; code: string; address: string | null; phone: string | null; isActive: boolean }
 
 export default function BranchesPage() {
+  // Branch creation is restricted to SUPER_ADMIN server-side (see requireSuperAdmin
+  // in /api/branches) — hide the affordance for everyone else rather than letting
+  // them fill out the form and hit a 403 on submit.
+  const canCreate = useAuthStore((s) => s.user?.role === 'SUPER_ADMIN');
   const { toast } = useToast();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,7 +59,7 @@ export default function BranchesPage() {
     }
   }
 
-  if (showForm) {
+  if (showForm && canCreate) {
     return (
       <div className="space-y-5 max-w-2xl">
         <div>
@@ -99,11 +104,13 @@ export default function BranchesPage() {
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Branches</h1>
           <p className="text-sm text-gray-500 mt-0.5">Physical locations staff and stock are scoped to</p>
         </div>
-        <Button onClick={() => setShowForm(true)} size="sm" className="shrink-0">
-          <Plus className="mr-1.5 h-4 w-4" />
-          <span className="hidden sm:inline">New Branch</span>
-          <span className="sm:hidden">New</span>
-        </Button>
+        {canCreate && (
+          <Button onClick={() => setShowForm(true)} size="sm" className="shrink-0">
+            <Plus className="mr-1.5 h-4 w-4" />
+            <span className="hidden sm:inline">New Branch</span>
+            <span className="sm:hidden">New</span>
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -114,7 +121,7 @@ export default function BranchesPage() {
             <div className="text-center py-12 px-4">
               <Building2 className="h-8 w-8 text-gray-300 mx-auto mb-2" />
               <p className="text-gray-500 mb-4">No branches yet</p>
-              <Button onClick={() => setShowForm(true)}><Plus className="mr-2 h-4 w-4" />Add First Branch</Button>
+              {canCreate && <Button onClick={() => setShowForm(true)}><Plus className="mr-2 h-4 w-4" />Add First Branch</Button>}
             </div>
           ) : (
             <Table>

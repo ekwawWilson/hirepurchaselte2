@@ -51,7 +51,7 @@ describe('Contract creation: number-collision retry', () => {
 
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositPercentage: 0,
+        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0,
         totalPayableMinor: 180000, instalmentAmountMinor: 30000, createdById: adminUserId,
       },
     });

@@ -49,7 +49,7 @@ describe('USSD + Hubtel payments', () => {
     productId = (await productRes.json()).product.id;
 
     await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositPercentage: 0, totalPayableMinor: 240000 },
+      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
     }));
   });
 

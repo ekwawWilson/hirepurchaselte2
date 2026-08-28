@@ -25,7 +25,7 @@ interface InventoryItem {
 }
 interface PriceChartEntry {
   id: string; termMonths: number; paymentFrequency: string; contractType: string;
-  totalPayableMinor: number; depositPercentage: number;
+  totalPayableMinor: number; depositAmountMinor: number;
 }
 const frequencyLabel = (f: string) => f.charAt(0) + f.slice(1).toLowerCase();
 const initials = (first: string, last: string) => `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
@@ -296,7 +296,7 @@ export default function ContractsPage() {
                     <SelectContent>
                       {chartEntries.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
-                          {c.termMonths}mo · {frequencyLabel(c.paymentFrequency)} — {formatCurrency(c.totalPayableMinor)}{c.contractType === 'DEPOSIT_INSTALMENT' ? ` (${c.depositPercentage}% deposit)` : ''}
+                          {c.termMonths}mo · {frequencyLabel(c.paymentFrequency)} — {formatCurrency(c.totalPayableMinor)}{c.contractType === 'DEPOSIT_INSTALMENT' ? ` (${formatCurrency(c.depositAmountMinor)} deposit)` : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -307,7 +307,7 @@ export default function ContractsPage() {
                   <div className="border border-gray-200 p-3 space-y-1.5 text-sm">
                     <div className="flex justify-between"><span className="text-gray-500">Total payable</span><span className="font-medium text-gray-900">{formatCurrency(selectedEntry.totalPayableMinor)}</span></div>
                     {selectedEntry.contractType === 'DEPOSIT_INSTALMENT' && (
-                      <div className="flex justify-between"><span className="text-gray-500">Deposit required</span><span className="font-medium text-gray-900">{selectedEntry.depositPercentage}% ({formatCurrency(Math.round(selectedEntry.totalPayableMinor * selectedEntry.depositPercentage / 100))})</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Deposit required</span><span className="font-medium text-gray-900">{formatCurrency(selectedEntry.depositAmountMinor)}</span></div>
                     )}
                     <div className="flex justify-between"><span className="text-gray-500">Payment frequency</span><Badge variant="secondary">{frequencyLabel(selectedEntry.paymentFrequency)}</Badge></div>
                     <div className="flex justify-between"><span className="text-gray-500">Term</span><span className="font-medium text-gray-900">{selectedEntry.termMonths} months</span></div>

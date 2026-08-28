@@ -225,13 +225,19 @@ model StockMovement {
 // ---------------------------------------------------------------------------
 
 // contractType: SAVE_TO_OWN | DEPOSIT_INSTALMENT | DEVICE_LOAN
+// termMonths is admin-facing "number of months" but only ever 3, 4, or 6 — matching
+// the legacy hirepurchase app's fixed pricing tiers exactly (its ProductPricing model);
+// enforced in priceChartService.validateEntryBody, not a DB constraint (existing/test
+// data at other terms stays valid, only new admin-entered rows are constrained).
 model PriceChartEntry {
   id                    String    @id @default(uuid())
   productId             String
   contractType          String
   termMonths            Int
   paymentFrequency      String    @default("MONTHLY")
-  depositPercentage     Int       @default(0)
+  // Absolute currency amount (like legacy's ProductPricing.depositAmount), not a
+  // percentage — admin types in exactly how much deposit this term requires.
+  depositAmountMinor    Int       @default(0)
   totalPayableMinor     Int
   instalmentAmountMinor Int
   interestRateBps       Int?
@@ -276,7 +282,6 @@ model Contract {
   // Snapshotted pricing terms — never re-read from priceChartEntries after creation.
   totalPriceMinor       Int
   depositAmountMinor    Int    @default(0)
-  depositPercentage     Int    @default(0)
   termMonths            Int
   paymentFrequency      String @default("MONTHLY")
   instalmentAmountMinor Int

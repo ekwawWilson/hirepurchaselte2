@@ -77,7 +77,7 @@ describe('Payment frequency: DAILY/WEEKLY/MONTHLY schedules', () => {
     const productId = await makeProduct('DEP-WEEKLY');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 3, paymentFrequency: 'WEEKLY', depositPercentage: 50,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 3, paymentFrequency: 'WEEKLY', depositAmountMinor: 30000,
         totalPayableMinor: 60000, instalmentAmountMinor: 2500, createdById: adminUserId,
       },
     });
@@ -96,13 +96,13 @@ describe('Payment frequency: DAILY/WEEKLY/MONTHLY schedules', () => {
     const productId = await makeProduct('DEP-BOTH');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, paymentFrequency: 'DAILY', depositPercentage: 0,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, paymentFrequency: 'DAILY', depositAmountMinor: 0,
         totalPayableMinor: 40000, instalmentAmountMinor: 700, createdById: adminUserId,
       },
     });
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, paymentFrequency: 'MONTHLY', depositPercentage: 0,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, paymentFrequency: 'MONTHLY', depositAmountMinor: 0,
         totalPayableMinor: 40000, instalmentAmountMinor: 20000, createdById: adminUserId,
       },
     });
@@ -128,7 +128,7 @@ describe('Payment frequency: DAILY/WEEKLY/MONTHLY schedules', () => {
     const productId = await makeProduct('NO-ENTRY');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'SAVE_TO_OWN', termMonths: 4, paymentFrequency: 'MONTHLY', depositPercentage: 0,
+        productId, contractType: 'SAVE_TO_OWN', termMonths: 4, paymentFrequency: 'MONTHLY', depositAmountMinor: 0,
         totalPayableMinor: 80000, instalmentAmountMinor: 20000, createdById: adminUserId,
       },
     });

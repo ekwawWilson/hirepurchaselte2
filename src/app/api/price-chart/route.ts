@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     contractType: body.contractType as ContractTypeName,
     termMonths: body.termMonths as number,
     paymentFrequency: ((body.paymentFrequency as string) ?? 'MONTHLY') as PaymentFrequencyName,
-    depositPercentage: body.depositPercentage as number,
+    depositAmountMinor: body.depositAmountMinor as number,
     totalPayableMinor: body.totalPayableMinor as number,
     instalmentAmountMinor: body.instalmentAmountMinor as number | undefined,
     interestRateBps: (body.interestRateBps as number | undefined) ?? null,

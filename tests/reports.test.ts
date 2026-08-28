@@ -49,13 +49,13 @@ describe('Reports', () => {
     productId = (await product.json()).product.id;
 
     await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositPercentage: 0, totalPayableMinor: 240000 },
+      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
     }));
     // SAVE_TO_OWN has no instalment schedule (free-form savings — see contractService.ts) —
     // the arrears test below needs a real Instalment row to backdate, so it uses this
     // DEPOSIT_INSTALMENT entry instead (0% deposit keeps its finance amount identical).
     await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositPercentage: 0, totalPayableMinor: 240000 },
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
     }));
   });
 

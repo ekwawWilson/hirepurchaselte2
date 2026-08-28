@@ -52,7 +52,7 @@ describe('Contract-type-specific business rules', () => {
     const productId = await makeProduct('LOAN-CANCEL');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositPercentage: 0,
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
         totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
       },
     });
@@ -69,7 +69,7 @@ describe('Contract-type-specific business rules', () => {
     const productId = await makeProduct('SAVE-CANCEL');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositPercentage: 0,
+        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0,
         totalPayableMinor: 60000, instalmentAmountMinor: 10000, createdById: adminUserId,
       },
     });
@@ -115,7 +115,7 @@ describe('Contract-type-specific business rules', () => {
     const productId = await makeProduct('DEP-ISSUED-CANCEL');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositPercentage: 50,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 50000,
         totalPayableMinor: 100000, instalmentAmountMinor: 8333, createdById: adminUserId,
       },
     });
@@ -144,7 +144,7 @@ describe('Contract-type-specific business rules', () => {
     const productId = await makeProduct('DEP-GATE');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, depositPercentage: 50,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, depositAmountMinor: 50000,
         totalPayableMinor: 100000, instalmentAmountMinor: 25000, createdById: adminUserId,
       },
     });
@@ -169,7 +169,7 @@ describe('Contract-type-specific business rules', () => {
     const depositProductId = await makeProduct('DEFAULT-DEP');
     await prisma.priceChartEntry.create({
       data: {
-        productId: depositProductId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, depositPercentage: 50,
+        productId: depositProductId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, depositAmountMinor: 50000,
         totalPayableMinor: 100000, instalmentAmountMinor: 25000, createdById: adminUserId,
       },
     });
@@ -183,7 +183,7 @@ describe('Contract-type-specific business rules', () => {
     const saveProductId = await makeProduct('DEFAULT-SAVE');
     await prisma.priceChartEntry.create({
       data: {
-        productId: saveProductId, contractType: 'SAVE_TO_OWN', termMonths: 2, depositPercentage: 0,
+        productId: saveProductId, contractType: 'SAVE_TO_OWN', termMonths: 2, depositAmountMinor: 0,
         totalPayableMinor: 60000, instalmentAmountMinor: 30000, createdById: adminUserId,
       },
     });
@@ -217,7 +217,7 @@ describe('Contract-type-specific business rules', () => {
     const productId = await makeProduct('CURE');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, depositPercentage: 50,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, depositAmountMinor: 50000,
         totalPayableMinor: 100000, instalmentAmountMinor: 25000, createdById: adminUserId,
       },
     });
@@ -247,7 +247,7 @@ describe('Contract-type-specific business rules', () => {
     const productId = await makeProduct('FREEFORM');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositPercentage: 0,
+        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0,
         totalPayableMinor: 100000, instalmentAmountMinor: 16667, createdById: adminUserId,
       },
     });
