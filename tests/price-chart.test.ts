@@ -164,3 +164,75 @@ describe('Price chart: bundle creation across all contract types', () => {
     expect(fourMonthEntries).toEqual([]);
   });
 });
+
+describe('Product creation: SKU auto-generation and the term-pricing shortcut', () => {
+  let admin: string;
+
+  beforeAll(async () => {
+    admin = await login('admin@zple.test');
+  });
+
+  it('auto-generates a SKU when none is supplied', async () => {
+    const res = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin, body: { name: `Auto SKU Phone ${runId}`, cashPriceMinor: 150000 },
+    }));
+    expect(res.status).toBe(201);
+    const { product } = await res.json();
+    expect(product.sku).toMatch(/^PRD-\d{4}-\d{6}$/);
+  });
+
+  it('still honours an explicitly supplied SKU, and rejects a duplicate', async () => {
+    const sku = `EXPLICIT-SKU-${runId}`;
+    const first = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin, body: { sku, name: 'Explicit SKU Phone', cashPriceMinor: 150000 },
+    }));
+    expect(first.status).toBe(201);
+
+    const dupe = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin, body: { sku, name: 'Explicit SKU Phone Again', cashPriceMinor: 150000 },
+    }));
+    expect(dupe.status).toBe(409);
+  });
+
+  it('creates the product plus DEPOSIT_INSTALMENT pricing for whichever terms were filled in, skipping blank ones', async () => {
+    const res = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin,
+      body: {
+        name: `Bundled Pricing Phone ${runId}`, cashPriceMinor: 250000,
+        termPricing: {
+          3: { totalPayableMinor: 280000, depositAmountMinor: 50000 },
+          // 4 deliberately left out — should be skipped, not defaulted
+          6: { totalPayableMinor: 320000, depositAmountMinor: 40000 },
+        },
+      },
+    }));
+    expect(res.status).toBe(201);
+    const { product } = await res.json();
+
+    const entries = await prisma.priceChartEntry.findMany({ where: { productId: product.id }, orderBy: { termMonths: 'asc' } });
+    expect(entries.map((e) => e.termMonths)).toEqual([3, 6]);
+    expect(entries.every((e) => e.contractType === 'DEPOSIT_INSTALMENT')).toBe(true);
+    expect(entries.find((e) => e.termMonths === 3)?.depositAmountMinor).toBe(50000);
+
+    // Save-to-Own / Device Loan are untouched by this shortcut — still missing.
+    const productsRes = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
+    const { products } = await productsRes.json();
+    const listed = products.find((p: { id: string }) => p.id === product.id);
+    expect(listed.missingContractTypes.sort()).toEqual(['DEVICE_LOAN', 'SAVE_TO_OWN']);
+  });
+
+  it('rejects the whole creation if any filled-in period is invalid, without creating the product at all', async () => {
+    const name = `Should Not Exist Phone ${runId}`;
+    const res = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin,
+      body: {
+        name, cashPriceMinor: 250000,
+        termPricing: { 3: { totalPayableMinor: 100000, depositAmountMinor: 100000 } }, // deposit == total, invalid
+      },
+    }));
+    expect(res.status).toBe(400);
+
+    const existing = await prisma.product.findFirst({ where: { name } });
+    expect(existing).toBeNull();
+  });
+});

@@ -11,14 +11,16 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 
 interface PriceChartEntry {
   id: string; contractType: string; termMonths: number; paymentFrequency: string;
   totalPayableMinor: number; depositAmountMinor: number; effectiveTo: string | null;
 }
+interface Category { id: string; name: string }
 interface Product {
-  id: string; sku: string; name: string; brand: string | null; model: string | null;
-  cashPriceMinor: number; isActive: boolean; priceChartEntries: PriceChartEntry[];
+  id: string; sku: string; name: string; description: string | null; brand: string | null; model: string | null;
+  cashPriceMinor: number; isActive: boolean; category: Category | null; priceChartEntries: PriceChartEntry[];
 }
 
 const frequencyLabel = (f: string) => f.charAt(0) + f.slice(1).toLowerCase();
@@ -29,8 +31,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const canUpdate = useAuthStore((s) => s.hasPermission('inventory.receive'));
   const { toast } = useToast();
   const [product, setProduct] = useState<Product | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ name: '', brand: '', model: '', cashPrice: '', isActive: true });
+  const [form, setForm] = useState({ name: '', description: '', categoryId: '', brand: '', model: '', cashPrice: '', isActive: true });
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -38,7 +41,8 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       const { product } = await api.get<{ product: Product }>(`/products/${id}`);
       setProduct(product);
       setForm({
-        name: product.name, brand: product.brand ?? '', model: product.model ?? '',
+        name: product.name, description: product.description ?? '', categoryId: product.category?.id ?? '',
+        brand: product.brand ?? '', model: product.model ?? '',
         cashPrice: (product.cashPriceMinor / 100).toFixed(2), isActive: product.isActive,
       });
     } catch (e) {
@@ -51,12 +55,17 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  useEffect(() => {
+    if (!editing) return;
+    api.get<{ categories: Category[] }>('/products/categories').then((r) => setCategories(r.categories)).catch(() => undefined);
+  }, [editing]);
+
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     try {
       await api.patch(`/products/${id}`, {
-        name: form.name, brand: form.brand, model: form.model,
+        name: form.name, description: form.description, categoryId: form.categoryId || null, brand: form.brand, model: form.model,
         cashPriceMinor: Math.round(parseFloat(form.cashPrice) * 100), isActive: form.isActive,
       });
       toast({ title: 'Product updated' });
@@ -92,6 +101,19 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                 <Label>Name</Label>
                 <Input required className="mt-1.5" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
+              <div className="col-span-2">
+                <Label>Description</Label>
+                <Input className="mt-1.5" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              </div>
+              <div className="col-span-2">
+                <Label>Category</Label>
+                <Select value={form.categoryId} onValueChange={(v) => setForm({ ...form, categoryId: v })}>
+                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Select category" /></SelectTrigger>
+                  <SelectContent>
+                    {categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <Label>Brand</Label>
                 <Input className="mt-1.5" value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} />
@@ -117,9 +139,11 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             </form>
           ) : (
             <div className="grid grid-cols-2 gap-4 text-sm">
+              <div><p className="text-xs text-gray-500">Category</p><p className="text-gray-900">{product.category?.name ?? '—'}</p></div>
               <div><p className="text-xs text-gray-500">Brand/Model</p><p className="text-gray-900">{[product.brand, product.model].filter(Boolean).join(' ') || '—'}</p></div>
               <div><p className="text-xs text-gray-500">Cash price</p><p className="text-gray-900">{formatCurrency(product.cashPriceMinor)}</p></div>
               <div><p className="text-xs text-gray-500">Status</p><Badge variant={product.isActive ? 'success' : 'secondary'}>{product.isActive ? 'Active' : 'Inactive'}</Badge></div>
+              <div className="col-span-2"><p className="text-xs text-gray-500">Description</p><p className="text-gray-900">{product.description ?? '—'}</p></div>
             </div>
           )}
         </CardContent>

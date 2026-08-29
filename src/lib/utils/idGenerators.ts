@@ -34,6 +34,20 @@ export async function generateContractNumber(): Promise<string> {
   throw new Error('Could not generate a unique contract number, please retry');
 }
 
+/** Format: PRD-<year>-<seq>, e.g. PRD-2026-000001. Used when an admin doesn't type their own SKU. Same retry-on-collision approach as membership IDs. */
+export async function generateProductSku(): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `PRD-${year}-`;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const count = await prisma.product.count({ where: { sku: { startsWith: prefix } } });
+    const candidate = `${prefix}${String(count + 1 + attempt).padStart(6, '0')}`;
+    const existing = await prisma.product.findUnique({ where: { sku: candidate } });
+    if (!existing) return candidate;
+  }
+  throw new Error('Could not generate a unique SKU, please retry');
+}
+
 /** Idempotency key for payments — random, not sequential, so it never leaks volume information. */
 export function generateTransactionRef(): string {
   return `TXN-${crypto.randomUUID()}`;

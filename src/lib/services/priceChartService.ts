@@ -7,7 +7,7 @@ export type ContractTypeName = (typeof CONTRACT_TYPES)[number];
 
 export class PriceChartError extends Error {}
 
-type Tx = Prisma.TransactionClient;
+export type Tx = Prisma.TransactionClient;
 
 /** The entry currently in force for a product/type/term/frequency combo (effectiveTo null or in the future), as of `at`. */
 export async function getActivePriceChartEntry(
@@ -30,7 +30,7 @@ export async function getActivePriceChartEntry(
   });
 }
 
-interface EntryInput {
+export interface EntryInput {
   productId: string;
   contractType: ContractTypeName;
   termMonths: number;
@@ -51,7 +51,7 @@ interface EntryInput {
  * unaffected. See docs/01-plan.md §6. tx-scoped core, reused by both the
  * single-entry and all-types-at-once creation paths below.
  */
-async function createPriceChartEntryInTx(tx: Tx, params: EntryInput) {
+export async function createPriceChartEntryInTx(tx: Tx, params: EntryInput) {
   const effectiveFrom = params.effectiveFrom ?? new Date();
   const instalmentCount = numberOfInstalmentsForTerm(params.termMonths, params.paymentFrequency);
   // The financed amount (what's actually amortized across instalments) excludes

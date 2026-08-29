@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 
 interface Product {
   id: string;
@@ -24,14 +25,24 @@ interface Product {
   isActive: boolean;
   missingContractTypes: string[];
 }
+interface Category { id: string; name: string }
+
+// Matches the legacy hirepurchase app's fixed pricing tiers exactly — see constants/contracts.ts.
+const TERM_MONTHS = [3, 4, 6] as const;
+const NEW_CATEGORY = '__new__';
+type TermPricingForm = { totalPayable: string; deposit: string };
+const emptyTermPricing: Record<number, TermPricingForm> = { 3: { totalPayable: '', deposit: '' }, 4: { totalPayable: '', deposit: '' }, 6: { totalPayable: '', deposit: '' } };
 
 export default function ProductsPage() {
   const canCreate = useAuthStore((s) => s.hasPermission('inventory.receive'));
   const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ sku: '', name: '', brand: '', model: '', cashPrice: '' });
+  const [form, setForm] = useState({ name: '', description: '', categoryId: '', cashPrice: '' });
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [termPricing, setTermPricing] = useState(emptyTermPricing);
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -51,14 +62,53 @@ export default function ProductsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!showForm) return;
+    api.get<{ categories: Category[] }>('/products/categories').then((r) => setCategories(r.categories)).catch(() => undefined);
+  }, [showForm]);
+
+  function resetForm() {
+    setForm({ name: '', description: '', categoryId: '', cashPrice: '' });
+    setNewCategoryName('');
+    setTermPricing(emptyTermPricing);
+  }
+
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
+    if (!form.categoryId) {
+      toast({ title: 'Select a category', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
+      let categoryId = form.categoryId;
+      if (categoryId === NEW_CATEGORY) {
+        if (!newCategoryName.trim()) {
+          toast({ title: 'Enter a name for the new category', variant: 'destructive' });
+          setSaving(false);
+          return;
+        }
+        const { category } = await api.post<{ category: Category }>('/products/categories', { name: newCategoryName.trim() });
+        categoryId = category.id;
+      }
+
+      const termPricingPayload: Record<number, { totalPayableMinor: number; depositAmountMinor: number }> = {};
+      for (const term of TERM_MONTHS) {
+        const t = termPricing[term];
+        if (!t.totalPayable.trim()) continue; // blank = skip this period
+        termPricingPayload[term] = {
+          totalPayableMinor: Math.round(parseFloat(t.totalPayable) * 100),
+          depositAmountMinor: Math.round(parseFloat(t.deposit || '0') * 100),
+        };
+      }
+
       const cashPriceMinor = Math.round(parseFloat(form.cashPrice) * 100);
-      await api.post('/products', { sku: form.sku, name: form.name, brand: form.brand, model: form.model, cashPriceMinor });
+      await api.post('/products', {
+        name: form.name, description: form.description, categoryId, cashPriceMinor,
+        ...(Object.keys(termPricingPayload).length > 0 && { termPricing: termPricingPayload }),
+      });
       toast({ title: 'Product created', description: `${form.name} was added to the catalogue.` });
-      setForm({ sku: '', name: '', brand: '', model: '', cashPrice: '' });
+      resetForm();
       setShowForm(false);
       await load();
     } catch (e) {
@@ -72,36 +122,83 @@ export default function ProductsPage() {
     return (
       <div className="space-y-5 max-w-2xl">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Add Product</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Add New Product</h1>
           <p className="text-sm text-gray-500 mt-0.5">Add a device model to the catalogue</p>
         </div>
         <Card>
           <CardHeader><CardTitle>Product details</CardTitle></CardHeader>
           <CardContent>
-            <form className="grid grid-cols-2 gap-4" onSubmit={onCreate}>
+            <form className="space-y-4" onSubmit={onCreate}>
               <div>
-                <Label>SKU</Label>
-                <Input required className="mt-1.5" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
+                <Label>Product Name *</Label>
+                <Input required placeholder="e.g., iPhone 15 Pro" className="mt-1.5" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
               <div>
-                <Label>Name</Label>
-                <Input required className="mt-1.5" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                <Label>Description</Label>
+                <Input placeholder="Product details" className="mt-1.5" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               </div>
-              <div>
-                <Label>Brand</Label>
-                <Input className="mt-1.5" value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Category *</Label>
+                  <Select required value={form.categoryId} onValueChange={(v) => setForm({ ...form, categoryId: v })}>
+                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="Select category" /></SelectTrigger>
+                    <SelectContent>
+                      {categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                      <SelectItem value={NEW_CATEGORY}>+ Add new category…</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {form.categoryId === NEW_CATEGORY && (
+                    <Input
+                      required
+                      autoFocus
+                      placeholder="New category name"
+                      className="mt-2"
+                      value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)}
+                    />
+                  )}
+                </div>
+                <div>
+                  <Label>Base Price (GHS) *</Label>
+                  <Input required type="number" step="0.01" min={0} placeholder="0.00" className="mt-1.5" value={form.cashPrice} onChange={(e) => setForm({ ...form, cashPrice: e.target.value })} />
+                </div>
               </div>
-              <div>
-                <Label>Model</Label>
-                <Input className="mt-1.5" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />
+
+              <div className="pt-2">
+                <p className="text-sm font-semibold text-gray-900">Pricing by Installment Period</p>
+                <div className="mt-3 space-y-3">
+                  {TERM_MONTHS.map((term) => (
+                    <div key={term} className="ring-1 ring-black/5 p-3">
+                      <p className="text-xs font-semibold text-gray-700 mb-2">{term} months</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs font-normal text-gray-500">Base Price (GHS)</Label>
+                          <Input
+                            type="number" step="0.01" min={0} placeholder="0.00" className="mt-1"
+                            value={termPricing[term].totalPayable}
+                            onChange={(e) => setTermPricing({ ...termPricing, [term]: { ...termPricing[term], totalPayable: e.target.value } })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs font-normal text-gray-500">Deposit (GHS)</Label>
+                          <Input
+                            type="number" step="0.01" min={0} placeholder="0.00" className="mt-1"
+                            value={termPricing[term].deposit}
+                            onChange={(e) => setTermPricing({ ...termPricing, [term]: { ...termPricing[term], deposit: e.target.value } })}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  Leave blank to skip a period. These prices are auto-filled during contract creation.
+                </p>
               </div>
-              <div>
-                <Label>Cash price (GHS)</Label>
-                <Input required type="number" step="0.01" className="mt-1.5" value={form.cashPrice} onChange={(e) => setForm({ ...form, cashPrice: e.target.value })} />
-              </div>
-              <div className="col-span-2 flex gap-2">
+
+              <div className="flex gap-2 pt-2">
                 <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Create product'}</Button>
-                <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+                <Button type="button" variant="outline" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</Button>
               </div>
             </form>
           </CardContent>
