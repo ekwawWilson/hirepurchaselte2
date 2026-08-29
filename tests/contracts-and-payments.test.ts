@@ -215,7 +215,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     // pricing tiers (priceChartService.validateEntryBody, matching the legacy hirepurchase
     // app's fixed ProductPricing tiers) — the test's real purpose is verifying flat-interest
     // schedule math against a documented example, not re-testing that validation.
-    const adminUser = await prisma.user.findFirstOrThrow({ where: { email: 'admin@hplite.test' } });
+    const adminUser = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
     await prisma.priceChartEntry.create({
       data: {
         productId, contractType: 'DEVICE_LOAN', termMonths: 12, depositAmountMinor: 0,
