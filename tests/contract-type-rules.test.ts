@@ -24,7 +24,7 @@ describe('Contract-type-specific business rules', () => {
   beforeAll(async () => {
     const branch = await prisma.branch.findFirstOrThrow();
     branchId = branch.id;
-    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@hplite.test' } });
+    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
     adminUserId = admin.id;
   });
 

@@ -41,13 +41,13 @@ npm run dev                    # http://localhost:3000 — pages and API routes,
 
 | Role | Email |
 |---|---|
-| SUPER_ADMIN | superadmin@hplite.test |
-| ADMIN | admin@hplite.test |
-| BRANCH_MANAGER | branchmanager@hplite.test |
-| CASHIER | cashier@hplite.test |
-| SALES | sales@hplite.test |
-| STORE_KEEPER | storekeeper@hplite.test |
-| AUDITOR | auditor@hplite.test |
+| SUPER_ADMIN | superadmin@zple.test |
+| ADMIN | admin@zple.test |
+| BRANCH_MANAGER | branchmanager@zple.test |
+| CASHIER | cashier@zple.test |
+| SALES | sales@zple.test |
+| STORE_KEEPER | storekeeper@zple.test |
+| AUDITOR | auditor@zple.test |
 
 ## Environment variables
 

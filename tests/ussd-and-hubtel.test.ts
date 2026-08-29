@@ -37,8 +37,8 @@ describe('USSD + Hubtel payments', () => {
   let productId: string;
 
   beforeAll(async () => {
-    admin = await login('admin@hplite.test');
-    cashier = await login('cashier@hplite.test');
+    admin = await login('admin@zple.test');
+    cashier = await login('cashier@zple.test');
 
     const branchesRes = await branchesGET(makeRequest('GET', '/api/branches', { token: admin }));
     branchId = (await branchesRes.json()).branches[0].id;

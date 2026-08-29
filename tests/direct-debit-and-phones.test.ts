@@ -39,7 +39,7 @@ describe('Customer registration: three phone slots', () => {
   let cashier: string;
 
   beforeAll(async () => {
-    cashier = await login('cashier@hplite.test');
+    cashier = await login('cashier@zple.test');
   });
 
   it('rejects a customer with all three phone slots empty', async () => {
@@ -81,7 +81,7 @@ describe('Hubtel mobile money verification (mock mode)', () => {
   let cashier: string;
 
   beforeAll(async () => {
-    cashier = await login('cashier@hplite.test');
+    cashier = await login('cashier@zple.test');
   });
 
   it('confirms a registered number and surfaces the account holder\'s name', async () => {
@@ -109,7 +109,7 @@ describe('Hubtel Direct Debit', () => {
   beforeAll(async () => {
     const branch = await prisma.branch.findFirstOrThrow();
     branchId = branch.id;
-    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@hplite.test' } });
+    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
     adminUserId = admin.id;
   });
 
