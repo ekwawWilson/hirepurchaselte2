@@ -1,14 +1,18 @@
 /**
- * Seeds the baseline reference data HP-Lite needs to log in and enforce RBAC:
- * one branch, the full permission catalog, the seven roles from docs/01-plan.md §7,
- * and one demo user per role. Idempotent — safe to re-run (upserts throughout).
+ * Seeds a dev/CI environment: a demo branch, the RBAC permission catalog +
+ * role mappings (via syncRbac.ts), and one demo user per role with a known,
+ * publicly-documented password. Idempotent — safe to re-run (upserts
+ * throughout) in dev/CI, but the demo-user step means this must NEVER be run
+ * against production — use `runSyncRbac.ts` there instead, which does only
+ * the RBAC part.
  *
  * Business demo data (products, price chart, customers, contracts) lives in
  * demoSeed.ts instead, since it depends on modules built after this one.
  */
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { PERMISSIONS, ROLE_PERMISSIONS, DEMO_USERS, SEED_PASSWORD, BRANCH_SCOPED_ROLES } from '../src/lib/constants/rbac';
+import { DEMO_USERS, SEED_PASSWORD, BRANCH_SCOPED_ROLES } from '../src/lib/constants/rbac';
+import { syncRbac } from './syncRbac';
 
 const prisma = new PrismaClient();
 
@@ -19,20 +23,7 @@ async function main() {
     create: { name: 'Main Branch', code: 'MAIN', address: 'Head Office' },
   });
 
-  for (const name of PERMISSIONS) {
-    await prisma.permission.upsert({ where: { name }, update: {}, create: { name } });
-  }
-
-  for (const [roleName, perms] of Object.entries(ROLE_PERMISSIONS)) {
-    await prisma.role.upsert({
-      where: { name: roleName },
-      update: { permissions: { set: perms.map((name) => ({ name })) } },
-      create: {
-        name: roleName,
-        permissions: { connect: perms.map((name) => ({ name })) },
-      },
-    });
-  }
+  await syncRbac(prisma);
 
   const passwordHash = await bcrypt.hash(SEED_PASSWORD, 10);
 

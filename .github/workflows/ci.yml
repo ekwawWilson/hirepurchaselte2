@@ -99,6 +99,18 @@ jobs:
         # place a run says which database was really migrated — a secret cannot
         # be read back to check.
         run: npx prisma migrate deploy
+      - name: Sync RBAC (permissions + role mappings only — no demo users)
+        env:
+          DATABASE_URL: ${{ secrets.HPLITE_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.HPLITE_DIRECT_URL }}
+        # A schema migration can add a column, but a new *permission* (e.g.
+        # settings.manage) is application data, not schema — prisma/seed.ts
+        # covers it in dev/CI, but seed.ts also creates demo users with a
+        # publicly-documented password and must never run against prod.
+        # runSyncRbac.ts is the safe subset: just the permission catalog and
+        # each role's permission set, kept in sync with
+        # src/lib/constants/rbac.ts on every deploy.
+        run: npx tsx prisma/runSyncRbac.ts
 
   publish:
     name: Build and publish image
