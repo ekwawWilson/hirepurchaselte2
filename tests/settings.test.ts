@@ -23,8 +23,8 @@ describe('Org settings', () => {
   let cashier: string;
 
   beforeAll(async () => {
-    admin = await login('admin@hplite.test');
-    cashier = await login('cashier@hplite.test');
+    admin = await login('admin@zple.test');
+    cashier = await login('cashier@zple.test');
   });
 
   it('GET requires no auth at all — needed for pre-login branding', async () => {
