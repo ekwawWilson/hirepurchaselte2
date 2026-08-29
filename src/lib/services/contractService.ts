@@ -6,19 +6,54 @@ import { applyStockMovement } from './inventoryService';
 import { generateStraightLineSchedule, generateLoanSchedule, derivePrincipalFromTotalPayable } from './scheduleService';
 import { queueSms, deliverQueuedSms } from './smsService';
 import { reverseAllPaymentsForContract } from './paymentService';
-import { CONTRACT_STATUSES_BY_TYPE, type ContractTypeName, type PaymentFrequencyName } from '../constants/contracts';
+import { initiatePreapproval, enableDirectDebit } from './hubtelPreapprovalService';
+import { CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName, type PaymentFrequencyName } from '../constants/contracts';
 
 export class ContractError extends Error {}
 
 export interface CreateContractParams {
   contractType: ContractTypeName;
   customerId: string;
-  inventoryItemId: string;
+  // Required for SAVE_TO_OWN/DEPOSIT_INSTALMENT — a specific serialized unit is
+  // reserved/issued from this branch's stock. DEVICE_LOAN disburses cash for the
+  // customer to buy a device outside the store, so it has no unit to reserve —
+  // pass productId instead (docs/01-plan.md).
+  inventoryItemId?: string;
+  productId?: string;
   termMonths: number;
   paymentFrequency?: PaymentFrequencyName;
   startDate?: Date;
+  gracePeriodDays?: number;
+  penaltyRateBps?: number;
+  directDebitNetwork?: string;
+  directDebitMsisdn?: string;
   branchId: string;
   createdById: string;
+}
+
+/**
+ * Awaited (not fire-and-forget like SMS): unlike an SMS send, this sets real
+ * contract state (hubtelPreapprovalId) that the caller reasonably expects the
+ * just-created/just-activated contract to already reflect, and mock mode
+ * resolves instantly anyway — there's no real network latency to shield
+ * against yet. Still fully error-contained: a failure here must never undo a
+ * contract creation or a posted payment. Returns the updated contract row
+ * when initiation actually ran, so the caller can return the current state
+ * instead of a stale pre-initiation snapshot.
+ */
+async function initiateDirectDebitIfRequested(params: {
+  contractId: string; customerId: string; network: string | null; msisdn: string | null; createdById: string;
+}) {
+  if (!params.network || !params.msisdn) return null;
+  try {
+    const { preapproval } = await initiatePreapproval({
+      customerId: params.customerId, msisdn: params.msisdn, network: params.network, createdById: params.createdById,
+    });
+    return await enableDirectDebit({ contractId: params.contractId, preapprovalId: preapproval.id, userId: params.createdById });
+  } catch (e) {
+    console.error('Auto direct-debit initiation failed (non-blocking):', e);
+    return null;
+  }
 }
 
 export async function createContract(params: CreateContractParams) {
@@ -26,13 +61,28 @@ export async function createContract(params: CreateContractParams) {
   if (!customer) throw new ContractError('Customer not found');
   if (customer.branchId !== params.branchId) throw new ContractError('Customer does not belong to this branch');
 
-  const item = await prisma.inventoryItem.findUnique({ where: { id: params.inventoryItemId } });
-  if (!item) throw new ContractError('Inventory item not found');
-  if (item.status !== 'AVAILABLE') throw new ContractError(`Inventory item is not available (status: ${item.status})`);
-  if (item.branchId !== params.branchId) throw new ContractError('Inventory item does not belong to this branch');
+  let item: { id: string; productId: string } | null = null;
+  let productId: string;
+
+  if (params.contractType === 'DEVICE_LOAN') {
+    if (!params.productId) {
+      throw new ContractError('productId is required for a DEVICE_LOAN contract — cash is disbursed against a priced product, not a specific stock unit');
+    }
+    const product = await prisma.product.findUnique({ where: { id: params.productId } });
+    if (!product) throw new ContractError('Product not found');
+    productId = product.id;
+  } else {
+    if (!params.inventoryItemId) throw new ContractError('inventoryItemId is required for this contract type');
+    const found = await prisma.inventoryItem.findUnique({ where: { id: params.inventoryItemId } });
+    if (!found) throw new ContractError('Inventory item not found');
+    if (found.status !== 'AVAILABLE') throw new ContractError(`Inventory item is not available (status: ${found.status})`);
+    if (found.branchId !== params.branchId) throw new ContractError('Inventory item does not belong to this branch');
+    item = found;
+    productId = found.productId;
+  }
 
   const paymentFrequency = params.paymentFrequency ?? 'MONTHLY';
-  const chartEntry = await getActivePriceChartEntry(item.productId, params.contractType, params.termMonths, paymentFrequency);
+  const chartEntry = await getActivePriceChartEntry(productId, params.contractType, params.termMonths, paymentFrequency);
   if (!chartEntry) {
     throw new ContractError(
       `No active price chart entry for this product, ${params.contractType}, ${params.termMonths} months, ${paymentFrequency} — configure one first`,
@@ -51,7 +101,7 @@ export async function createContract(params: CreateContractParams) {
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      return await runContractTransaction(params, item, chartEntry, startDate);
+      return await runContractTransaction(params, item, productId, chartEntry, startDate);
     } catch (e) {
       const isContractNumberCollision =
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -67,7 +117,8 @@ export async function createContract(params: CreateContractParams) {
 
 async function runContractTransaction(
   params: CreateContractParams,
-  item: { id: string; productId: string },
+  item: { id: string; productId: string } | null,
+  productId: string,
   chartEntry: NonNullable<Awaited<ReturnType<typeof getActivePriceChartEntry>>>,
   startDate: Date,
 ) {
@@ -101,7 +152,7 @@ async function runContractTransaction(
         break;
 
       case 'DEVICE_LOAN':
-        status = 'ACTIVE'; // released unconditionally at disbursement, no down-payment gate (docs/01-plan.md §5)
+        status = 'ACTIVE'; // cash disbursed unconditionally, no down-payment gate (docs/01-plan.md §5) — no device/unit involved at all (§20)
         interestRateBps = chartEntry.interestRateBps;
         if (interestRateBps === null) throw new ContractError('Price chart entry is missing interestRateBps for a DEVICE_LOAN');
         principalMinor = derivePrincipalFromTotalPayable(totalPayableMinor, interestRateBps, params.termMonths);
@@ -110,13 +161,15 @@ async function runContractTransaction(
         break;
     }
 
+    const directDebitEligible = DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.includes(params.contractType);
+
     const contract = await tx.contract.create({
       data: {
         contractNumber,
         contractType: params.contractType,
         customerId: params.customerId,
-        productId: item.productId,
-        inventoryItemId: item.id,
+        productId,
+        inventoryItemId: item?.id ?? null,
         branchId: params.branchId,
         priceChartEntryId: chartEntry.id,
         totalPriceMinor: totalPayableMinor,
@@ -127,6 +180,10 @@ async function runContractTransaction(
         principalMinor,
         interestRateBps,
         rateBasis: params.contractType === 'DEVICE_LOAN' ? 'FLAT' : null,
+        gracePeriodDays: params.gracePeriodDays ?? 7,
+        penaltyRateBps: params.penaltyRateBps ?? 0,
+        pendingDirectDebitNetwork: directDebitEligible ? (params.directDebitNetwork ?? null) : null,
+        pendingDirectDebitMsisdn: directDebitEligible ? (params.directDebitMsisdn ?? null) : null,
         status,
         totalPayableMinor,
         totalPaidMinor: 0,
@@ -156,17 +213,20 @@ async function runContractTransaction(
     }
 
     // SAVE_TO_OWN reserves the device until fully paid; DEPOSIT_INSTALMENT reserves it
-    // until the deposit clears (see paymentService.advanceContractStatus); DEVICE_LOAN
-    // issues it immediately since there's no gate to wait on.
-    await applyStockMovement({
-      inventoryItemId: item.id,
-      type: params.contractType === 'DEVICE_LOAN' ? 'ISSUE' : 'RESERVE',
-      referenceType: 'CONTRACT',
-      referenceId: contract.id,
-      reason: `Contract ${contractNumber} created`,
-      createdById: params.createdById,
-      tx,
-    });
+    // until the deposit clears (see paymentService.advanceContractStatus). DEVICE_LOAN
+    // has no `item` at all — it disburses cash for the customer to buy a device outside
+    // the store, so there's no stock unit to touch (§20).
+    if (item) {
+      await applyStockMovement({
+        inventoryItemId: item.id,
+        type: 'RESERVE',
+        referenceType: 'CONTRACT',
+        referenceId: contract.id,
+        reason: `Contract ${contractNumber} created`,
+        createdById: params.createdById,
+        tx,
+      });
+    }
 
     let queuedSmsId: string | null = null;
     if (status === 'ACTIVE') {
@@ -177,6 +237,17 @@ async function runContractTransaction(
     return { contract, queuedSmsId };
   }).then(async ({ contract, queuedSmsId }) => {
     if (queuedSmsId) void deliverQueuedSms(queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
+    // DEVICE_LOAN is ACTIVE immediately (no deposit gate) — a DEPOSIT_INSTALMENT contract
+    // is still PENDING_DEPOSIT here, so its pending direct debit is initiated later, from
+    // paymentService.advanceContractStatus, the moment the deposit clears.
+    if (contract.status === 'ACTIVE') {
+      const updated = await initiateDirectDebitIfRequested({
+        contractId: contract.id, customerId: contract.customerId,
+        network: contract.pendingDirectDebitNetwork, msisdn: contract.pendingDirectDebitMsisdn,
+        createdById: contract.createdById,
+      });
+      if (updated) return updated;
+    }
     return contract;
   });
 }

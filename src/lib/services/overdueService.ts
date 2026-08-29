@@ -49,3 +49,37 @@ export async function markDefaultedContracts() {
   });
   return result.count;
 }
+
+/**
+ * Charges a one-time late fee — `contract.penaltyRateBps` percent of the
+ * instalment's own amount — the first time an OVERDUE instalment passes that
+ * contract's `gracePeriodDays`. penaltyRateBps of 0 (the default) means this
+ * is a no-op for that contract, matching the "opt-in per contract" convention
+ * penaltyRateBps/gracePeriodDays were added under. Idempotent per instalment:
+ * checks for an existing 'LATE_PENALTY' row before creating another, so a
+ * daily cron re-run never double-charges. Must run after markOverdueInstalments
+ * in the same sweep so it sees today's OVERDUE flips.
+ */
+export async function applyLatePenalties() {
+  const now = new Date();
+  const overdue = await prisma.instalment.findMany({
+    where: { status: 'OVERDUE', contract: { contractType: { in: ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] }, penaltyRateBps: { gt: 0 } } },
+    include: { contract: true, penalties: true },
+  });
+
+  let count = 0;
+  for (const instalment of overdue) {
+    const daysPastDue = Math.floor((now.getTime() - instalment.dueDate.getTime()) / (24 * 60 * 60 * 1000));
+    if (daysPastDue <= instalment.contract.gracePeriodDays) continue;
+    if (instalment.penalties.some((p) => p.reason === 'LATE_PENALTY')) continue;
+
+    const amountMinor = Math.round((instalment.amountDueMinor * instalment.contract.penaltyRateBps) / 10000);
+    if (amountMinor <= 0) continue;
+
+    await prisma.penalty.create({
+      data: { contractId: instalment.contractId, instalmentId: instalment.id, amountMinor, reason: 'LATE_PENALTY' },
+    });
+    count++;
+  }
+  return count;
+}

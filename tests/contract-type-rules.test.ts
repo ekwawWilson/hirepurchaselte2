@@ -56,9 +56,9 @@ describe('Contract-type-specific business rules', () => {
         totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
       },
     });
-    const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'A');
+    const { customerId } = await makeCustomerAndItem(productId, 'A');
     const contract = await createContract({
-      contractType: 'DEVICE_LOAN', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
+      contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId,
     });
 
     await expect(cancelContract({ contractId: contract.id, reason: 'changed mind', userId: adminUserId }))

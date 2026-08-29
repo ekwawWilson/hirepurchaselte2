@@ -225,17 +225,18 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     });
 
     const custId = await makeCustomer('DeviceLoan');
-    const itemId = await receiveItem('C');
 
+    // No inventoryItemId — DEVICE_LOAN disburses cash for the customer to buy a
+    // device outside the store, so no stock unit is ever reserved/issued for it.
     const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, inventoryItemId: itemId, termMonths: 12 },
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, productId, termMonths: 12 },
     }));
     expect(created.status).toBe(201);
     const contract = (await created.json()).contract;
     expect(contract.status).toBe('ACTIVE'); // no down-payment gate
     expect(Math.abs(contract.principalMinor - 200000)).toBeLessThanOrEqual(1);
     expect(contract.totalPayableMinor).toBe(248000);
-    expect(await getItemStatus(itemId)).toBe('ISSUED'); // released immediately
+    expect(contract.inventoryItemId).toBeNull();
 
     const detail = await getContract(contract.id, cashier);
     const insts = detail.instalments;
@@ -253,6 +254,26 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     const afterSettle = await getContract(contract.id, cashier);
     expect(afterSettle.status).toBe('COMPLETED');
     expect(afterSettle.balanceMinor).toBe(0);
+  });
+
+  it('rejects a DEVICE_LOAN contract with no productId — cash is disbursed against a priced product, not a stock unit', async () => {
+    const custId = await makeCustomer('NoProductLoan');
+    const res = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, termMonths: 6 },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/productId is required/i);
+  });
+
+  it('rejects a DEPOSIT_INSTALMENT contract with no inventoryItemId', async () => {
+    const custId = await makeCustomer('NoItemDeposit');
+    const res = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId: custId, termMonths: 6 },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/inventoryItemId is required/i);
   });
 
   it('Overpayment is accepted and flagged as credit, not rejected', async () => {

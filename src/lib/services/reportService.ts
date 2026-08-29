@@ -209,6 +209,10 @@ export async function loanBookReport(scope: Scope) {
     return {
       contractId: c.id, contractNumber: c.contractNumber, customerName: `${c.customer.firstName} ${c.customer.lastName}`,
       status: c.status, principalMinor: c.principalMinor ?? 0,
+      // DEVICE_LOAN is ACTIVE (and cash disbursed) immediately at creation — activatedAt
+      // is the disbursement timestamp, the one point this report tracks money leaving
+      // the till rather than coming in (docs/01-plan.md §20).
+      disbursedAt: c.activatedAt,
       principalOutstandingMinor: (c.principalMinor ?? 0) - principalPaid,
       interestEarnedMinor: interestEarned,
       interestOutstandingMinor: totalInterest - interestEarned,

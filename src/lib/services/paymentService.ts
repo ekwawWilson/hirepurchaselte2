@@ -78,12 +78,20 @@ async function recomputeContract(tx: Tx, contractId: string) {
   }
 }
 
+export interface PendingDirectDebitInit {
+  contractId: string; customerId: string; network: string; msisdn: string; createdById: string;
+}
+interface AdvanceContractStatusResult {
+  queuedSmsIds: string[];
+  pendingDirectDebit?: PendingDirectDebitInit;
+}
+
 /**
  * Domain-specific status transitions that follow a recompute. Kept separate
  * from recomputeContract (pure math) so the state machine per contract type
  * (docs/01-plan.md §5) lives in one obvious place.
  */
-async function advanceContractStatus(tx: Tx, contractId: string): Promise<string[]> {
+async function advanceContractStatus(tx: Tx, contractId: string): Promise<AdvanceContractStatusResult> {
   const contract = await tx.contract.findUniqueOrThrow({ where: { id: contractId } });
   const now = new Date();
   const queuedSmsIds: string[] = [];
@@ -104,8 +112,19 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<string
       }
       const sms = await queueSms({ contractId, templateKey: 'contract.activated', tx });
       if (sms) queuedSmsIds.push(sms.id);
+      // Captured in the wizard before the contract was eligible for a mandate
+      // (mandates require ACTIVE) — now that it just activated, hand it back to
+      // postPayment to initiate outside this transaction (see that function).
+      const pendingDirectDebit = (contract.pendingDirectDebitNetwork && contract.pendingDirectDebitMsisdn)
+        ? {
+            contractId, customerId: contract.customerId,
+            network: contract.pendingDirectDebitNetwork, msisdn: contract.pendingDirectDebitMsisdn,
+            createdById: contract.createdById,
+          }
+        : undefined;
+      return { queuedSmsIds, pendingDirectDebit };
     }
-    return queuedSmsIds; // don't also fall through to completion check below in the same pass
+    return { queuedSmsIds }; // don't also fall through to completion check below in the same pass
   }
 
   // A DEFAULTED contract (see overdueService.markDefaultedContracts) is cured the
@@ -124,7 +143,7 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<string
   if (effectiveStatus === 'ACTIVE' && contract.balanceMinor <= 0) {
     await tx.contract.update({ where: { id: contractId }, data: { status: 'COMPLETED', completedAt: now } });
   }
-  return queuedSmsIds;
+  return { queuedSmsIds };
 }
 
 export interface PostPaymentParams {
@@ -231,18 +250,38 @@ export async function postPayment(params: PostPaymentParams) {
     }
 
     await recomputeContract(tx, contract.id);
-    const statusSmsIds = await advanceContractStatus(tx, contract.id);
+    const { queuedSmsIds: statusSmsIds, pendingDirectDebit } = await advanceContractStatus(tx, contract.id);
 
     const paymentSms = await queueSms({ contractId: contract.id, templateKey: 'payment.success', paymentId: payment.id, tx });
     const queuedSmsIds = paymentSms ? [...statusSmsIds, paymentSms.id] : statusSmsIds;
 
-    return { payment, idempotentReplay: false as const, queuedSmsIds };
+    return { payment, idempotentReplay: false as const, queuedSmsIds, pendingDirectDebit };
   });
 
   // Deliver every SMS queued during this payment only after the transaction has
   // committed — an SMS provider failure must never roll back a posted payment.
   for (const smsId of result.queuedSmsIds) {
     void deliverQueuedSms(smsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
+  }
+
+  // Awaited (not fire-and-forget) — same reasoning as contractService's equivalent
+  // hook: this sets real contract state (hubtelPreapprovalId) a caller checking the
+  // contract right after this payment would expect to already be settled, and mock
+  // mode resolves instantly. Still fully error-contained: never throws out of here,
+  // so a Hubtel failure can't undo the payment that was just posted. The deposit that
+  // just cleared may have activated a contract that had a direct-debit mandate
+  // requested at creation (mandates require ACTIVE, which this contract wasn't until
+  // this payment). Dynamic import avoids a circular static import —
+  // hubtelPreapprovalService.ts imports postPayment from this file.
+  if (result.pendingDirectDebit) {
+    try {
+      const { initiatePreapproval, enableDirectDebit } = await import('./hubtelPreapprovalService');
+      const { contractId, customerId, network, msisdn, createdById } = result.pendingDirectDebit;
+      const { preapproval } = await initiatePreapproval({ customerId, msisdn, network, createdById });
+      await enableDirectDebit({ contractId, preapprovalId: preapproval.id, userId: createdById });
+    } catch (e) {
+      console.error('Auto direct-debit initiation failed (non-blocking):', e);
+    }
   }
 
   return result;

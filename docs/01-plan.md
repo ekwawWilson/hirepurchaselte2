@@ -256,7 +256,30 @@ The client running this HP-Lite instance needs to brand it as their own business
 
 ---
 
-## 17. Open questions still to resolve during implementation (not blocking)
+## 18. Contract wizard's payment-terms step matches the legacy admin UI, plus grace period + late penalties
+
+The mission's own glossary named "Grace Period" and "Penalty" from the start (docs/00-legacy-study.md §mission glossary), but neither existed anywhere in the code — no field, no automated penalty creation — until this pass, prompted by redesigning step 3 ("Configure Payment Terms") of the contract wizard to match the legacy admin app's actual layout: term selectable as priced cards (conforming to whatever the product's price chart says, never free-typed), then frequency/start date/grace/penalty/payment-method, a live summary, and a client-side schedule preview.
+
+- `Contract.gracePeriodDays` (default 7) and `Contract.penaltyRateBps` (default 0, bps like `interestRateBps`) — set per contract in the wizard. `penaltyRateBps` of 0 is a deliberate no-op, not a special case to check for.
+- `overdueService.applyLatePenalties()` — once an OVERDUE instalment passes its own contract's `gracePeriodDays`, creates a one-time `Penalty` row for `penaltyRateBps`% of that instalment's amount. Idempotent per instalment (checks for an existing `reason: 'LATE_PENALTY'` row first), wired into the daily cron right after `markDefaultedContracts` (same "must run after markOverdueInstalments" ordering).
+- **Direct debit at contract-creation time**: the wizard captures network+msisdn immediately if the customer's chosen payment method is Hubtel, but mandates require the contract to already be ACTIVE (see §11) — for DEVICE_LOAN (ACTIVE immediately) it's initiated right there in `createContract`; for DEPOSIT_INSTALMENT (starts PENDING_DEPOSIT) the network/msisdn are stashed on `Contract.pendingDirectDebitNetwork/Msisdn` and consumed automatically the moment `paymentService.advanceContractStatus` flips it to ACTIVE — no re-asking the customer once the deposit clears.
+- That initiation is **awaited**, not fire-and-forget like SMS: unlike an SMS send, it sets real contract state (`hubtelPreapprovalId`) a caller checking the contract right after creation/payment would expect to already be reflected, and mock mode resolves with no real network latency to shield against. Still fully error-contained (try/catch, never throws out) so a Hubtel failure can't undo a contract or a payment. `paymentService.ts`'s side of this uses a dynamic `import('./hubtelPreapprovalService')` — a static one would be circular, since that module imports `postPayment` from `paymentService.ts` for `chargeDirectDebit`.
+- The wizard's "Preview Installment Schedule" reuses `scheduleService.ts`'s exact generation functions client-side (that file has zero server-only dependencies — pure date/money math) rather than a new preview endpoint, so the preview can never drift from what the backend will actually create.
+
+---
+
+## 20. DEVICE_LOAN disburses cash — no store inventory unit involved at all
+
+Corrected a fundamental misreading of what Device Loan means: it isn't "hand over a store device with loan-style financing" (which is what SAVE_TO_OWN/DEPOSIT_INSTALMENT already are, just with different payment shapes) — it's a **cash loan**. The customer receives money and buys a device themselves, outside the store. So unlike the other two types, a DEVICE_LOAN contract never reserves, issues, or otherwise touches a specific serialized `InventoryItem` — `Contract.inventoryItemId` is `null` for every one of them.
+
+- `createContract` branches on contract type before ever touching inventory: SAVE_TO_OWN/DEPOSIT_INSTALMENT still require `inventoryItemId` (a specific available unit at the customer's branch); DEVICE_LOAN requires `productId` instead — pricing still comes from that product's price chart (principal + interest derived exactly as before), it's just never tied to a specific stock unit. No `applyStockMovement` call happens for a DEVICE_LOAN contract at all.
+- This meant moving contract-type selection earlier in the wizard: it used to be the first field inside step 3 ("Configure Payment Terms"), but step 2 now needs to already know the type to decide whether to show an inventory-unit picker or a product-only picker. It's now the first field of step 2, retitled "Select Type & Product".
+- **Disbursement is a real cash outflow, unlike every other payment flow in this app** (all of which are customer→store). Since nothing else in HP-Lite ever tracked money leaving the till, `POST /api/contracts` logs a separate `DEVICE_LOAN_DISBURSEMENT` audit entry distinct from the ordinary `CONTRACT_CREATE` one, and the loan-book report (`reportService.loanBookReport`) now surfaces `disbursedAt` (`= activatedAt`, since a loan is ACTIVE immediately) per row so the report itself shows when each disbursement happened, not just the outstanding balance.
+- Save-to-Own's already-implemented behavior (free-form deposits, blocked once COMPLETED since that's a terminal status, device released only after full payment, withdrawal-with-refund via `reverseAllPaymentsForContract`) was independently re-verified against this same request and needed no changes — it already matched exactly.
+
+---
+
+## 21. Open questions still to resolve during implementation (not blocking)
 
 - Exact CSV import column schema for price chart bulk-import (mission §6) — design when building that screen, not upfront.
 - Whether `payment_allocations` needs a `FEE` target distinct from `PENALTY` for Type C (mission says "penalties/fees → interest → principal") — likely yes, decide when implementing Type C allocation.

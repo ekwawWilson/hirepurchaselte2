@@ -21,6 +21,7 @@ import {
   processDirectDebitCallback, retryFailedDirectDebits, PreapprovalError,
 } from '@/lib/services/hubtelPreapprovalService';
 import { runDirectDebitCollections } from '@/lib/services/collectionsService';
+import { applyLatePenalties } from '@/lib/services/overdueService';
 
 const PASSWORD = 'Passw0rd!123';
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
@@ -194,8 +195,8 @@ describe('Hubtel Direct Debit', () => {
         totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
       },
     });
-    const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'CHARGE');
-    const contract = await createContract({ contractType: 'DEVICE_LOAN', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId });
+    const { customerId, msisdn } = await makeCustomerAndItem(productId, 'CHARGE');
+    const contract = await createContract({ contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId });
     expect(contract.status).toBe('ACTIVE'); // DEVICE_LOAN is ACTIVE immediately, no deposit gate
 
     const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
@@ -263,8 +264,8 @@ describe('Hubtel Direct Debit', () => {
         totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
       },
     });
-    const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'COLLECT');
-    const contract = await createContract({ contractType: 'DEVICE_LOAN', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId });
+    const { customerId, msisdn } = await makeCustomerAndItem(productId, 'COLLECT');
+    const contract = await createContract({ contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId });
 
     const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
     await enableDirectDebit({ contractId: contract.id, preapprovalId: preapproval.id, userId: adminUserId });
@@ -283,5 +284,139 @@ describe('Hubtel Direct Debit', () => {
     await runDirectDebitCollections();
     const paidCountAfter = await prisma.payment.count({ where: { contractId: contract.id } });
     expect(paidCountAfter).toBe(paidCount);
+  });
+
+  it('a DEVICE_LOAN contract created with a direct-debit payment method initiates the mandate immediately (ACTIVE from creation)', async () => {
+    const productId = await makeProduct('DLINIT');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
+      },
+    });
+    const { customerId, msisdn } = await makeCustomerAndItem(productId, 'DLINIT');
+
+    const contract = await createContract({
+      contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId,
+      directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
+    });
+
+    expect(contract.status).toBe('ACTIVE');
+    expect(contract.pendingDirectDebitNetwork).toBe('MTN');
+    expect(contract.hubtelPreapprovalId).not.toBeNull(); // initiated + linked before createContract even returned
+
+    const preapproval = await prisma.hubtelPreapproval.findUniqueOrThrow({ where: { id: contract.hubtelPreapprovalId as string } });
+    expect(preapproval.status).toBe('APPROVED');
+    expect(preapproval.customerId).toBe(customerId);
+  });
+
+  it('a DEPOSIT_INSTALMENT contract defers mandate initiation until the deposit clears and it activates', async () => {
+    const productId = await makeProduct('DIDEFER');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 50000,
+        totalPayableMinor: 100000, instalmentAmountMinor: 8333, createdById: adminUserId,
+      },
+    });
+    const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'DIDEFER');
+
+    const contract = await createContract({
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
+      directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
+    });
+    expect(contract.status).toBe('PENDING_DEPOSIT');
+    expect(contract.hubtelPreapprovalId).toBeNull(); // not eligible yet — mandates require ACTIVE
+    expect(contract.pendingDirectDebitNetwork).toBe('MTN'); // captured, waiting to be used
+
+    await postPayment({ contractId: contract.id, amountMinor: 50000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
+
+    const activated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(activated.status).toBe('ACTIVE');
+    expect(activated.hubtelPreapprovalId).not.toBeNull(); // auto-initiated the moment it activated, no re-asking the customer
+  });
+
+  it('gracePeriodDays and penaltyRateBps default to 7/0 and can be set explicitly at creation', async () => {
+    const productId = await makeProduct('GRACEDEFAULT');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 60000, instalmentAmountMinor: 10000, createdById: adminUserId,
+      },
+    });
+    const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'GRACEDEFAULT');
+    const defaults = await createContract({ contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId });
+    expect(defaults.gracePeriodDays).toBe(7);
+    expect(defaults.penaltyRateBps).toBe(0);
+
+    const productId2 = await makeProduct('GRACECUSTOM');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId: productId2, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 60000, instalmentAmountMinor: 10000, createdById: adminUserId,
+      },
+    });
+    const { customerId: customerId2, inventoryItemId: inventoryItemId2 } = await makeCustomerAndItem(productId2, 'GRACECUSTOM');
+    const custom = await createContract({
+      contractType: 'DEPOSIT_INSTALMENT', customerId: customerId2, inventoryItemId: inventoryItemId2, termMonths: 6, branchId, createdById: adminUserId,
+      gracePeriodDays: 3, penaltyRateBps: 500, // 5%
+    });
+    expect(custom.gracePeriodDays).toBe(3);
+    expect(custom.penaltyRateBps).toBe(500);
+  });
+
+  it('applyLatePenalties charges a one-time late fee once an OVERDUE instalment passes its contract\'s grace period, and never double-charges', async () => {
+    const productId = await makeProduct('PENALTY');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 60000, instalmentAmountMinor: 10000, createdById: adminUserId,
+      },
+    });
+    const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'PENALTY');
+    const contract = await createContract({
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
+      gracePeriodDays: 2, penaltyRateBps: 1000, // 10%
+    });
+    // 0% deposit — any payment clears the gate immediately.
+    await postPayment({ contractId: contract.id, amountMinor: 1, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
+
+    // Push the first instalment 3 days past due (grace is 2) and mark it OVERDUE, same as the daily sweep would.
+    await prisma.instalment.updateMany({
+      where: { contractId: contract.id, instalmentNo: 1 },
+      data: { dueDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), status: 'OVERDUE' },
+    });
+
+    const applied = await applyLatePenalties();
+    expect(applied).toBeGreaterThanOrEqual(1);
+
+    const penalty = await prisma.penalty.findFirstOrThrow({ where: { contractId: contract.id, reason: 'LATE_PENALTY' } });
+    expect(penalty.amountMinor).toBe(1000); // 10% of the 10000-pesewa instalment
+
+    // Running it again must not create a second penalty for the same lapse.
+    await applyLatePenalties();
+    const penaltyCount = await prisma.penalty.count({ where: { contractId: contract.id, reason: 'LATE_PENALTY' } });
+    expect(penaltyCount).toBe(1);
+  });
+
+  it('applyLatePenalties is a no-op for a contract with penaltyRateBps 0 (the default) even when badly overdue', async () => {
+    const productId = await makeProduct('NOPENALTY');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 60000, instalmentAmountMinor: 10000, createdById: adminUserId,
+      },
+    });
+    const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'NOPENALTY');
+    const contract = await createContract({ contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId });
+    await postPayment({ contractId: contract.id, amountMinor: 1, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
+
+    await prisma.instalment.updateMany({
+      where: { contractId: contract.id, instalmentNo: 1 },
+      data: { dueDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), status: 'OVERDUE' },
+    });
+
+    await applyLatePenalties();
+    const penaltyCount = await prisma.penalty.count({ where: { contractId: contract.id } });
+    expect(penaltyCount).toBe(0);
   });
 });

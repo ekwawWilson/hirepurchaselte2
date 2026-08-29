@@ -279,6 +279,14 @@ model Contract {
   // against. Presence + status of the linked mandate (not a separate boolean) is what
   // "enabled" means, so this can never drift out of sync with the mandate itself.
   hubtelPreapprovalId String?
+  // Captured in the contract wizard when the customer picks Hubtel Direct Debit as
+  // their payment method before the contract is eligible for a mandate (DEPOSIT_INSTALMENT
+  // starts PENDING_DEPOSIT; mandates require ACTIVE — see hubtelPreapprovalService.ts).
+  // Consumed once — the moment the contract activates, initiatePreapproval+enableDirectDebit
+  // run automatically using these, then hubtelPreapprovalId above is what "enabled" means
+  // from then on. Left populated afterward as a record of what was requested, never re-read.
+  pendingDirectDebitNetwork String?
+  pendingDirectDebitMsisdn  String?
 
   // Snapshotted pricing terms — never re-read from priceChartEntries after creation.
   totalPriceMinor       Int
@@ -291,6 +299,13 @@ model Contract {
   principalMinor  Int?
   interestRateBps Int?
   rateBasis       String? @default("FLAT")
+
+  // Late-payment handling — set per contract in the wizard (docs/01-plan.md's own
+  // glossary calls out "Grace Period" but it was never implemented until now).
+  // penaltyRateBps of 0 (the default) means no automatic penalty ever applies —
+  // see overdueService.applyLatePenalties, which is a no-op for such contracts.
+  gracePeriodDays Int @default(7)
+  penaltyRateBps  Int @default(0)
 
   status String @default("ACTIVE")
 
@@ -418,6 +433,10 @@ model PaymentAllocation {
   @@map("payment_allocations")
 }
 
+// `reason` is a plain string (not a native enum, matching this schema's convention) —
+// 'LATE_PENALTY' is the one value the app creates automatically, in
+// overdueService.applyLatePenalties, once an instalment is overdue past its
+// contract's gracePeriodDays. Anything else is a manually-recorded penalty.
 model Penalty {
   id           String    @id @default(uuid())
   contractId   String

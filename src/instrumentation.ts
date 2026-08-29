@@ -16,7 +16,7 @@ export async function register() {
   globalThis.__hpLiteCronRegistered = true;
 
   const cron = (await import('node-cron')).default;
-  const { markOverdueInstalments, markDefaultedContracts } = await import('@/lib/services/overdueService');
+  const { markOverdueInstalments, markDefaultedContracts, applyLatePenalties } = await import('@/lib/services/overdueService');
   const { reconcilePendingHubtelTransactions } = await import('@/lib/services/hubtelPaymentService');
   const { pruneExpiredUssdSessions } = await import('@/lib/services/ussdService');
   const { retryFailedDirectDebits } = await import('@/lib/services/hubtelPreapprovalService');
@@ -36,6 +36,13 @@ export async function register() {
       if (count > 0) console.log(`[cron] marked ${count} contract(s) DEFAULTED`);
     } catch (e) {
       console.error('[cron] markDefaultedContracts failed:', e);
+    }
+    try {
+      // Same ordering requirement as markDefaultedContracts above.
+      const count = await applyLatePenalties();
+      if (count > 0) console.log(`[cron] applied ${count} late-payment penalty(ies)`);
+    } catch (e) {
+      console.error('[cron] applyLatePenalties failed:', e);
     }
     try {
       const count = await runDirectDebitCollections();
