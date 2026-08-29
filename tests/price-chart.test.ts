@@ -36,8 +36,8 @@ describe('Price chart: legacy-matching pricing model', () => {
   let productId: string;
 
   beforeAll(async () => {
-    admin = await login('admin@hplite.test');
-    cashier = await login('cashier@hplite.test');
+    admin = await login('admin@zple.test');
+    cashier = await login('cashier@zple.test');
     branchId = (await (await branchesGET(makeRequest('GET', '/api/branches', { token: admin }))).json()).branches[0].id;
 
     const product = await productsPOST(makeRequest('POST', '/api/products', {
@@ -100,7 +100,7 @@ describe('Price chart: bundle creation across all contract types', () => {
   let productId: string;
 
   beforeAll(async () => {
-    admin = await login('admin@hplite.test');
+    admin = await login('admin@zple.test');
     const product = await productsPOST(makeRequest('POST', '/api/products', {
       token: admin, body: { sku: `PCB-SKU-${runId}`, name: 'Bundle Test Phone', cashPriceMinor: 300000 },
     }));

@@ -37,9 +37,9 @@ describe('Reports', () => {
   let productId: string;
 
   beforeAll(async () => {
-    admin = await login('admin@hplite.test');
-    cashier = await login('cashier@hplite.test');
-    sales = await login('sales@hplite.test');
+    admin = await login('admin@zple.test');
+    cashier = await login('cashier@zple.test');
+    sales = await login('sales@zple.test');
 
     branchId = (await (await branchesGET(makeRequest('GET', '/api/branches', { token: admin }))).json()).branches[0].id;
 
