@@ -12,6 +12,7 @@ export const PERMISSIONS = [
   'inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view',
   'report.view.branch', 'report.view.all', 'report.export',
   'user.manage', 'role.manage', 'audit.view',
+  'settings.manage',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

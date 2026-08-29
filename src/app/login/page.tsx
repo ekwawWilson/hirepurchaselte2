@@ -1,14 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, AlertCircle, Shield } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
+import { useOrgSettingsStore } from '@/lib/orgSettingsStore';
 
 export default function LoginPage() {
   const router = useRouter();
   const setAuth = useAuthStore((s) => s.setAuth);
+  const loadOrgSettings = useOrgSettingsStore((s) => s.load);
+  const { companyName, logoUrl } = useOrgSettingsStore((s) => s.settings);
+  useEffect(() => { loadOrgSettings(); }, [loadOrgSettings]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -60,11 +64,16 @@ export default function LoginPage() {
       {/* Right form panel */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-14 bg-[#f5f0eb]">
         <div className="flex items-center gap-2.5 mb-8">
-          <div className="w-9 h-9 bg-blue-600 flex items-center justify-center shadow-sm">
-            <Shield className="w-5 h-5 text-white" />
-          </div>
+          {logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logoUrl} alt={companyName} className="w-9 h-9 object-cover shadow-sm" />
+          ) : (
+            <div className="w-9 h-9 bg-blue-600 flex items-center justify-center shadow-sm">
+              <Shield className="w-5 h-5 text-white" />
+            </div>
+          )}
           <div>
-            <p className="text-sm font-bold text-gray-900 leading-none tracking-wide">HP-LITE</p>
+            <p className="text-sm font-bold text-gray-900 leading-none tracking-wide">{companyName.toUpperCase()}</p>
             <p className="text-xs text-gray-400 leading-none mt-0.5">Management System</p>
           </div>
         </div>

@@ -244,7 +244,19 @@ Requirement: a product's pricing must satisfy SAVE_TO_OWN, DEPOSIT_INSTALMENT, a
 
 ---
 
-## 15. Open questions still to resolve during implementation (not blocking)
+## 16. Company/org settings (name, logo, address, phone, email)
+
+The client running this HP-Lite instance needs to brand it as their own business rather than seeing "HP-Lite" everywhere — shown in the browser tab title, the top navbar/sidebar, and on reports.
+
+- `OrgSettings` — a single always-exactly-one-row table (`id` pinned to the literal `"singleton"`), not a multi-tenant `Company` table: this app is single-tenant per deployment (one business per running instance), so there's no notion of "which company" to key rows by.
+- `GET /api/settings` is deliberately public (no `requireAuth`) — the login screen and the browser tab title need the company name/logo before anyone has signed in, and none of these fields are sensitive. `PATCH /api/settings` requires the new `settings.manage` permission (SUPER_ADMIN + ADMIN, via the same `ALL.filter(...)` pattern as everything else ADMIN can touch except user/role management).
+- The root layout's `generateMetadata` reads `OrgSettings` directly (server component, no HTTP round-trip) to set the tab title. This forced `export const dynamic = "force-dynamic"` onto the whole app: metadata generated during static prerendering would otherwise freeze the title into the build artifact, so a company-name change on the Settings page would never reach a live deployment without a full rebuild+redeploy. Given every page under `(app)` is already a client component gated behind an auth check (no meaningful static HTML being cached either way), trading static generation for per-request rendering costs nothing real here.
+- Client-side branding (`AppTopBar`, `AppSidebar`'s brand strip, the login screen) reads a small `orgSettingsStore` (zustand) hydrated once from `GET /api/settings` on app mount — same pattern as `authStore`. Falls back to the `HP-Lite` defaults on fetch failure so a settings-endpoint hiccup never blocks the rest of the UI.
+- Reports get a shared `ReportLetterhead` component (logo/initials badge + company name + address/phone/email) at the top of each report page; the Daily Cash CSV export also prepends the company name as its own header row.
+
+---
+
+## 17. Open questions still to resolve during implementation (not blocking)
 
 - Exact CSV import column schema for price chart bulk-import (mission §6) — design when building that screen, not upfront.
 - Whether `payment_allocations` needs a `FEE` target distinct from `PENALTY` for Type C (mission says "penalties/fees → interest → principal") — likely yes, decide when implementing Type C allocation.

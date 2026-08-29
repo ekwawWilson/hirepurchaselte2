@@ -3,18 +3,21 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
+import { useOrgSettingsStore } from '@/lib/orgSettingsStore';
 import AppSidebar from './AppSidebar';
 import AppTopBar from './AppTopBar';
 
 export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { user, hydrate, isHydrated } = useAuthStore();
+  const loadOrgSettings = useOrgSettingsStore((s) => s.load);
   const [checked, setChecked] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     hydrate();
-  }, [hydrate]);
+    loadOrgSettings();
+  }, [hydrate, loadOrgSettings]);
 
   useEffect(() => {
     if (!isHydrated) return;

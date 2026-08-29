@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useToast } from '@/hooks/useToast';
+import { useOrgSettingsStore } from '@/lib/orgSettingsStore';
+import { ReportLetterhead } from '@/components/ReportLetterhead';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,6 +25,7 @@ function today() {
 
 export default function DailyCashReportPage() {
   const { toast } = useToast();
+  const { companyName } = useOrgSettingsStore((s) => s.settings);
   const [from, setFrom] = useState(today());
   const [to, setTo] = useState(today());
   const [report, setReport] = useState<DailyCashReport | null>(null);
@@ -44,6 +47,9 @@ export default function DailyCashReportPage() {
   function exportCsv() {
     if (!report) return;
     const rows = [
+      [companyName],
+      [`Daily Cash Received: ${from} to ${to}`],
+      [],
       ['Cashier', 'Amount (GHS)', 'Transaction count'],
       ...report.byCashier.map((c) => [c.name, (c.amountMinor / 100).toFixed(2), String(c.count)]),
     ];
@@ -59,6 +65,7 @@ export default function DailyCashReportPage() {
 
   return (
     <div className="space-y-5">
+      <ReportLetterhead />
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Daily Cash Received</h1>
         <p className="text-sm text-gray-500 mt-0.5">Reconciles exactly against the payment ledger for the range</p>

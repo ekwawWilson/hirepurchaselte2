@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { api, ApiError } from '@/lib/apiClient';
 import { Card, CardContent } from '@/components/ui/card';
+import { ReportLetterhead } from '@/components/ReportLetterhead';
 
 /** Generic authenticated JSON viewer for report endpoints that don't have a dedicated page yet. */
 export default function RawReportPage() {
@@ -19,6 +20,7 @@ export default function RawReportPage() {
 
   return (
     <div className="space-y-5">
+      <ReportLetterhead />
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Report</h1>
         <p className="text-sm text-gray-500 mt-0.5 font-mono">{path}</p>

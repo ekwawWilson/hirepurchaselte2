@@ -97,6 +97,7 @@ model User {
   paymentsReversed          Payment[]           @relation("PaymentReversedBy")
   auditLogs                 AuditLog[]
   hubtelPreapprovalsCreated HubtelPreapproval[] @relation("HubtelPreapprovalCreatedBy")
+  orgSettingsUpdates        OrgSettings[]
 
   @@map("users")
 }
@@ -570,4 +571,28 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Org settings
+// ---------------------------------------------------------------------------
+
+// Single-tenant branding/contact details the client (the business running this
+// HP-Lite instance) sets once from the Settings page — shown in the browser
+// tab title, the top navbar/sidebar, and on reports. Always exactly one row,
+// id pinned to "singleton" (see orgSettingsService.ts) rather than a real
+// table of tenants — this app is single-tenant per deployment.
+model OrgSettings {
+  id          String   @id @default("singleton")
+  companyName String   @default("HP-Lite")
+  address     String?
+  phone       String?
+  email       String?
+  logoUrl     String?
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("org_settings")
 }

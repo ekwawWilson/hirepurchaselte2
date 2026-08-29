@@ -70,3 +70,11 @@ export function contractTypeLabel(type: string): string {
   };
   return labels[type] ?? type;
 }
+
+/** First 1-2 letters of each word in a company name, e.g. "Accra Mobile Finance" -> "AM" — used for the logo badge when no logoUrl is set. */
+export function companyInitials(companyName: string): string {
+  const words = companyName.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "HL";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}

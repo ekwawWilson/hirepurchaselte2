@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useAuthStore } from '@/lib/authStore';
 import { Card } from '@/components/ui/card';
+import { ReportLetterhead } from '@/components/ReportLetterhead';
 
 const rawViewer = (path: string) => `/reports/raw?path=${encodeURIComponent(path)}`;
 
@@ -26,6 +27,7 @@ export default function ReportsIndexPage() {
 
   return (
     <div className="space-y-5">
+      <ReportLetterhead />
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Reports</h1>
         <p className="text-sm text-gray-500 mt-0.5">

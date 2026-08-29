@@ -13,11 +13,13 @@ import {
   Smartphone,
   UserCog,
   Building2,
+  Settings,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { useAuthStore } from "@/lib/authStore";
-import { cn } from "@/lib/utils";
+import { useOrgSettingsStore } from "@/lib/orgSettingsStore";
+import { cn, companyInitials } from "@/lib/utils";
 
 interface NavItem {
   name: string;
@@ -75,18 +77,26 @@ const navGroups: NavGroup[] = [
     items: [
       { name: "Users", href: "/users", icon: UserCog, perms: ["user.manage"] },
       { name: "Branches", href: "/branches", icon: Building2, perms: ["user.manage"] },
+      { name: "Settings", href: "/settings", icon: Settings, perms: ["settings.manage"] },
     ],
   },
 ];
 
 function BrandStrip() {
+  const { companyName, logoUrl } = useOrgSettingsStore((s) => s.settings);
+
   return (
     <div className="h-14 flex items-center gap-2.5 px-4 border-b border-slate-800 shrink-0">
-      <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
-        <span className="text-white text-[11px] font-extrabold tracking-tighter">HL</span>
-      </div>
-      <div className="leading-none">
-        <p className="text-[14px] font-extrabold text-white tracking-tight">HP-LITE</p>
+      {logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={logoUrl} alt={companyName} className="w-7 h-7 rounded-lg object-cover shrink-0" />
+      ) : (
+        <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+          <span className="text-white text-[11px] font-extrabold tracking-tighter">{companyInitials(companyName)}</span>
+        </div>
+      )}
+      <div className="leading-none min-w-0">
+        <p className="text-[14px] font-extrabold text-white tracking-tight truncate">{companyName}</p>
         <p className="text-[9px] text-slate-500 font-medium uppercase tracking-widest mt-0.5">Hire Purchase</p>
       </div>
     </div>
