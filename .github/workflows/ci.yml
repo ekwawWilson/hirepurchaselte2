@@ -1,0 +1,133 @@
+# Build and publish the hp-lite image to GHCR.
+#
+# The fleet is PULL-based: this workflow holds no SSH or age keys and never
+# touches a server. It publishes an image; each box's reconciler notices the new
+# digest within three minutes and converges itself.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/hplite
+
+jobs:
+  check:
+    name: Typecheck, lint and test
+    runs-on: [self-hosted, linux, x64, eyo]
+    container:
+      image: node:22-bookworm
+    # A real Postgres, because the suite exercises route handlers that go
+    # through Prisma. No `ports:` — the job runs INSIDE a container on the same
+    # network, so it reaches the service by name; publishing a port would only
+    # expose it on the runner host.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: hplite
+          POSTGRES_PASSWORD: hplite
+          POSTGRES_DB: hplite_ci
+        options: >-
+          --health-cmd "pg_isready -U hplite"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Both are required: the schema declares `directUrl`, and Prisma refuses to
+      # load a schema whose env() references are unset — even for a datasource
+      # that has no pooler in front of it.
+      DATABASE_URL: postgresql://hplite:hplite@postgres:5432/hplite_ci
+      DIRECT_URL: postgresql://hplite:hplite@postgres:5432/hplite_ci
+      JWT_SECRET: ci-only-not-a-secret-0000000000000000
+      WEBHOOK_SHARED_TOKEN: ci-only-not-a-secret
+      # 4 rounds, not the default 10: the seed hashes a password per demo user
+      # and the tests log in repeatedly. Cost is the point of bcrypt in
+      # production and pure waste here.
+      BCRYPT_ROUNDS: "4"
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx prisma generate
+      # The build has to precede typecheck: Next 16 generates its route types
+      # (LayoutProps, PageProps) into .next/types during the build, so
+      # `tsc --noEmit` on a clean checkout fails with TS2304 — which reads as
+      # broken code rather than a missing generation step.
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npx prisma migrate deploy
+      - run: npm run db:seed
+      - run: npm test
+
+  migrate:
+    name: Apply migrations
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, eyo]
+    container:
+      image: node:22-bookworm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - name: Refuse to run with no database configured
+        env:
+          URL: ${{ secrets.HPLITE_DIRECT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${URL// /}" ]; then
+            echo "::error::HPLITE_DIRECT_URL is empty. Refusing to publish an image"
+            echo "::error::whose schema may not exist. Set it, or remove this job."
+            exit 1
+          fi
+      - name: Migrate
+        env:
+          DATABASE_URL: ${{ secrets.HPLITE_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.HPLITE_DIRECT_URL }}
+        # `migrate deploy` prints the host it connected to, which is the only
+        # place a run says which database was really migrated — a secret cannot
+        # be read back to check.
+        run: npx prisma migrate deploy
+
+  publish:
+    name: Build and publish image
+    # Migrations first, deliberately. A failed migration must mean the image
+    # never ships, so the box keeps serving the old code against the old schema.
+    # Publishing first and migrating after is the wrong way round: the
+    # reconciler would pull new code whose migration had already failed.
+    needs: [check, migrate]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, eyo]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # :main is what the fleet pins for an `env: prod` tenant; the sha tag
+          # is what makes a rollback nameable.
+          tags: |
+            ${{ env.IMAGE }}:main
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
