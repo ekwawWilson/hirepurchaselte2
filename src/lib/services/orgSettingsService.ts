@@ -1,4 +1,5 @@
 import { prisma } from '../db/prisma';
+import { APP_NAME, APP_LOGO_URL } from '../constants/branding';
 
 /**
  * Always exactly one row — a single-tenant "who is this business" record
@@ -17,11 +18,11 @@ export interface OrgSettingsData {
 }
 
 const DEFAULTS: OrgSettingsData = {
-  companyName: 'HP-Lite',
+  companyName: APP_NAME,
   address: null,
   phone: null,
   email: null,
-  logoUrl: null,
+  logoUrl: APP_LOGO_URL,
 };
 
 /** Never throws, never returns null — falls back to DEFAULTS before any row has ever been saved. */

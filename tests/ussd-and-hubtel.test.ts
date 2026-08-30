@@ -168,7 +168,7 @@ describe('USSD + Hubtel payments', () => {
   it('unknown phone number gets a clear rejection, not a crash', async () => {
     const result = await handleUssdInput({ sessionId: `sess-${runId}-unknown`, msisdn: '0200000000', input: '', isNewSession: true });
     expect(result.continueSession).toBe(false);
-    expect(result.message).toMatch(/no hp-lite account/i);
+    expect(result.message).toMatch(/no .+ account found/i);
   });
 
   it('the real /api/ussd route wires the Hubtel-style request/response contract correctly', async () => {

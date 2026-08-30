@@ -5,6 +5,7 @@ import { ShieldAlert } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useOrgSettingsStore } from '@/lib/orgSettingsStore';
+import { APP_NAME } from '@/lib/constants/branding';
 import { useToast } from '@/hooks/useToast';
 import { companyInitials } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -120,11 +121,11 @@ export default function SettingsPage() {
               <img src={form.logoUrl} alt={form.companyName} className="w-8 h-8 rounded-lg object-cover shrink-0" />
             ) : (
               <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
-                <span className="text-white text-[13px] font-extrabold tracking-tighter">{companyInitials(form.companyName || 'HP-Lite')}</span>
+                <span className="text-white text-[13px] font-extrabold tracking-tighter">{companyInitials(form.companyName || APP_NAME)}</span>
               </div>
             )}
             <div className="flex flex-col leading-none">
-              <span className="text-[15px] font-extrabold text-gray-900 tracking-tight">{form.companyName || 'HP-Lite'}</span>
+              <span className="text-[15px] font-extrabold text-gray-900 tracking-tight">{form.companyName || APP_NAME}</span>
               <span className="text-[10px] text-gray-400 font-medium tracking-wide uppercase">Hire Purchase System</span>
             </div>
           </div>

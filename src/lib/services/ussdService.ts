@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma';
 import { formatMoney } from '../utils/money';
 import { initiateHubtelPayment } from './hubtelPaymentService';
+import { APP_NAME } from '../constants/branding';
 
 const SESSION_TTL_MINUTES = 5;
 
@@ -22,7 +23,7 @@ async function startSession(sessionId: string, msisdn: string): Promise<UssdResu
     where: { OR: [{ phone: msisdn }, { phone2: msisdn }, { phone3: msisdn }] },
   });
   if (!customer) {
-    return { message: 'No HP-Lite account found for this number.', continueSession: false };
+    return { message: `No ${APP_NAME} account found for this number.`, continueSession: false };
   }
 
   // DEFAULTED is deliberately included: it isn't a terminal status (see

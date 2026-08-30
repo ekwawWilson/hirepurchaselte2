@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { getOrgSettings } from "@/lib/services/orgSettingsService";
+import { APP_NAME } from "@/lib/constants/branding";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -15,11 +16,11 @@ export const dynamic = "force-dynamic";
 
 // Reads the client's own company name straight from the DB (server component,
 // no HTTP round trip needed) so the browser tab reflects whatever they've set
-// on the Settings page, not a hardcoded "HP-Lite".
+// on the Settings page, not just the application's own default branding.
 export async function generateMetadata(): Promise<Metadata> {
   const { companyName } = await getOrgSettings();
   return {
-    title: companyName === "HP-Lite" ? "HP-Lite" : `${companyName} · HP-Lite`,
+    title: companyName === APP_NAME ? APP_NAME : `${companyName} · ${APP_NAME}`,
     description: "Hire-purchase management system",
   };
 }

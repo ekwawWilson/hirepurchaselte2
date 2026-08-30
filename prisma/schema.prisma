@@ -603,7 +603,7 @@ model AuditLog {
 // table of tenants — this app is single-tenant per deployment.
 model OrgSettings {
   id          String   @id @default("singleton")
-  companyName String   @default("HP-Lite")
+  companyName String   @default("PETROS Hirepurchase")
   address     String?
   phone       String?
   email       String?

@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { api } from './apiClient';
+import { APP_NAME, APP_LOGO_URL } from './constants/branding';
 
 export interface OrgSettings {
   companyName: string;
@@ -11,7 +12,7 @@ export interface OrgSettings {
   logoUrl: string | null;
 }
 
-const DEFAULTS: OrgSettings = { companyName: 'HP-Lite', address: null, phone: null, email: null, logoUrl: null };
+const DEFAULTS: OrgSettings = { companyName: APP_NAME, address: null, phone: null, email: null, logoUrl: APP_LOGO_URL };
 
 interface OrgSettingsState {
   settings: OrgSettings;
@@ -24,8 +25,9 @@ interface OrgSettingsState {
  * Company branding (name/address/phone/email/logo) shown in the top
  * navbar/sidebar and the login screen — fetched once from the public
  * GET /api/settings endpoint (no auth required, see that route's comment)
- * and cached for the session. Falls back to HP-Lite defaults on failure so a
- * settings-endpoint hiccup never blocks the rest of the app from rendering.
+ * and cached for the session. Falls back to the application's own default
+ * branding (constants/branding.ts) on failure so a settings-endpoint hiccup
+ * never blocks the rest of the app from rendering.
  */
 export const useOrgSettingsStore = create<OrgSettingsState>((set, get) => ({
   settings: DEFAULTS,

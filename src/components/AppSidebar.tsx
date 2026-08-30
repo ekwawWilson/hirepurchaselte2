@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "@/lib/authStore";
 import { useOrgSettingsStore } from "@/lib/orgSettingsStore";
+import { APP_NAME } from "@/lib/constants/branding";
 import { cn, companyInitials } from "@/lib/utils";
 
 interface NavItem {
@@ -152,7 +153,7 @@ export default function AppSidebar({ mobileOpen, onMobileClose }: { mobileOpen: 
         <BrandStrip />
         <SidebarNav pathname={pathname} onNavigate={() => {}} />
         <div className="border-t border-slate-800 px-3 py-3 shrink-0">
-          <p className="text-[10px] text-slate-600 text-center">HP-Lite &middot; hire-purchase, simplified</p>
+          <p className="text-[10px] text-slate-600 text-center">{APP_NAME} &middot; hire-purchase, simplified</p>
         </div>
       </div>
 
