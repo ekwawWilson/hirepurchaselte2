@@ -68,7 +68,7 @@ export default function LoginPage() {
             // eslint-disable-next-line @next/next/no-img-element
             <img src={logoUrl} alt={companyName} className="w-9 h-9 object-cover shadow-sm" />
           ) : (
-            <div className="w-9 h-9 bg-blue-600 flex items-center justify-center shadow-sm">
+            <div className="w-9 h-9 bg-primary flex items-center justify-center shadow-sm">
               <Shield className="w-5 h-5 text-white" />
             </div>
           )}
@@ -138,7 +138,7 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors mt-2"
+                className="w-full h-11 bg-primary hover:bg-primary/90 text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors mt-2"
               >
                 {isLoading ? (
                   <>

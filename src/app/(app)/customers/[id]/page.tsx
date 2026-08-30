@@ -77,7 +77,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   }
 
   if (!customer) {
-    return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
+    return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>;
   }
 
   return (
@@ -165,7 +165,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     <TableCell><Link href={`/contracts/${c.id}`} className="font-mono text-xs text-blue-700 hover:underline">{c.contractNumber}</Link></TableCell>
                     <TableCell>{c.product.name}</TableCell>
                     <TableCell>{contractTypeLabel(c.contractType)}</TableCell>
-                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
+                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
                     <TableCell>{formatCurrency(c.balanceMinor)} / {formatCurrency(c.totalPayableMinor)}</TableCell>
                   </TableRow>
                 ))}

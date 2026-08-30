@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, ChevronDown, Menu } from "lucide-react";
+import { LogOut, ChevronDown } from "lucide-react";
 import { useAuthStore } from "@/lib/authStore";
 import { useOrgSettingsStore } from "@/lib/orgSettingsStore";
 import { cn, companyInitials } from "@/lib/utils";
@@ -72,31 +72,23 @@ function UserMenu() {
   );
 }
 
-export default function AppTopBar({ onMenuToggle }: { onMenuToggle?: () => void }) {
+export default function AppTopBar() {
   const { companyName, logoUrl } = useOrgSettingsStore((s) => s.settings);
 
   return (
     <header className="h-14 shrink-0 bg-white border-b border-gray-200 flex items-center justify-between px-4 lg:px-6 z-30 sticky top-0">
       <div className="flex items-center gap-3">
-        {onMenuToggle && (
-          <button
-            onClick={onMenuToggle}
-            className="lg:hidden p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors mr-1"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-        )}
         <div className="flex items-center gap-2.5 min-w-0">
           {logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={logoUrl} alt={companyName} className="w-8 h-8 rounded-lg object-cover shrink-0" />
           ) : (
-            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
               <span className="text-white text-[13px] font-extrabold tracking-tighter leading-none">{companyInitials(companyName)}</span>
             </div>
           )}
           <div className="flex flex-col leading-none min-w-0">
-            <span className="text-[15px] font-extrabold text-gray-900 tracking-tight truncate">{companyName}</span>
+            <span className="font-heading text-[15px] font-extrabold text-gray-900 tracking-tight truncate">{companyName}</span>
             <span className="text-[10px] text-gray-400 font-medium tracking-wide uppercase hidden sm:block">Hire Purchase System</span>
           </div>
         </div>

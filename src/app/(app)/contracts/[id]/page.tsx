@@ -175,7 +175,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   }
 
   if (!contract) {
-    return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
+    return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>;
   }
 
   const canPay = hasPermission('payment.cash.record');
@@ -194,7 +194,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
             {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone ?? contract.customer.phone2 ?? contract.customer.phone3} &middot; {contract.product.name} &middot; {contractTypeLabel(contract.contractType)} &middot; {contract.paymentFrequency.charAt(0) + contract.paymentFrequency.slice(1).toLowerCase()}
           </p>
         </div>
-        <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 ${getStatusColor(contract.status)}`}>{contract.status}</span>
+        <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${getStatusColor(contract.status)}`}>{contract.status}</span>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -244,7 +244,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
             {contract.hubtelPreapproval ? (
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
-                  <span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 ${getStatusColor(contract.hubtelPreapproval.status)}`}>
+                  <span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(contract.hubtelPreapproval.status)}`}>
                     {contract.hubtelPreapproval.status}
                   </span>
                   <span className="text-sm text-gray-600">{contract.hubtelPreapproval.customerMsisdn} &middot; {contract.hubtelPreapproval.network}</span>
@@ -324,7 +324,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   )}
                   <TableCell>{formatCurrency(i.amountPaidMinor)}</TableCell>
                   <TableCell>
-                    <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 ${getStatusColor(i.status)}`}>{i.status}</span>
+                    <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${getStatusColor(i.status)}`}>{i.status}</span>
                     {i.status === 'OVERDUE' && (
                       <span className="ml-1.5 text-[11px] text-red-600">{i.daysPastDue}d past due</span>
                     )}

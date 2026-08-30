@@ -7,9 +7,10 @@
   --card-foreground: 222 47% 11%;
   --popover: 0 0% 100%;
   --popover-foreground: 222 47% 11%;
-  /* Matches the literal blue-600 used everywhere else in this design (sidebar,
-     topbar, stat cards) — kept as one token so it's a single source of truth. */
-  --primary: 221 83% 53%;
+  /* Deeper than the previous 221 83% 53% — matches the legacy hirepurchase app's
+     primary more closely, still the same blue family (single source of truth for
+     sidebar/topbar/stat-card accents). */
+  --primary: 222 84% 35%;
   --primary-foreground: 210 40% 98%;
   --secondary: 210 16% 93%;
   --secondary-foreground: 222 47% 20%;
@@ -21,17 +22,17 @@
   --destructive-foreground: 210 40% 98%;
   --border: 214 20% 88%;
   --input: 214 20% 88%;
-  --ring: 221 83% 53%;
-  /* Squared-off everywhere (design reference: salesinventoryapp/market-inventory,
-     which runs --radius: 0rem app-wide — no rounded cards/buttons/inputs/tables). */
-  --radius: 0rem;
+  --ring: 222 84% 35%;
+  /* Rounded, human-app feel (legacy hirepurchase reference) — was 0rem (deliberately
+     square, matching a different reference app) earlier this project. */
+  --radius: 0.75rem;
 
-  /* Sidebar palette — literal slate-900/800 per the reference, not a derived hue. */
+  /* Sidebar palette — literal slate-900/800, not a derived hue. */
   --sidebar-bg: 222 47% 11%;
   --sidebar-border: 215 25% 20%;
   --sidebar-text: 215 20% 65%;
   --sidebar-text-active: 0 0% 100%;
-  --sidebar-active-bg: 221 83% 53%;
+  --sidebar-active-bg: 222 84% 35%;
   --sidebar-hover-bg: 215 25% 20%;
 
   /* Topbar */
@@ -60,12 +61,11 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
-  /* Hardcoded to 0, not calc()'d off --radius, so a zero base can never produce
-     a negative (invalid) radius value. */
-  --radius-lg: 0rem;
-  --radius-md: 0rem;
-  --radius-sm: 0rem;
-  --font-sans: var(--font-geist-sans), "Segoe UI", system-ui, -apple-system, sans-serif;
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 0.25rem);
+  --radius-sm: calc(var(--radius) - 0.5rem);
+  --font-sans: var(--font-inter), "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-heading: var(--font-jakarta), var(--font-inter), system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
@@ -88,7 +88,7 @@ body {
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-sans);
+  font-family: var(--font-heading);
   letter-spacing: -0.02em;
   font-weight: 700;
 }
@@ -101,6 +101,14 @@ h1, h2, h3, h4, h5, h6 {
 /* Page content fade-in */
 .page-shell {
   animation: rise-in 0.36s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+/* Faint dot-grid texture behind page content — one of the small, deliberate
+   touches (alongside rise-in/slide-down/slide-up) that keeps this from reading
+   as a generic flat dashboard. Subtle on purpose: barely visible at rest. */
+.surface-grid {
+  background-image: radial-gradient(circle, rgba(30, 58, 138, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
 }
 
 .safe-area-bottom {

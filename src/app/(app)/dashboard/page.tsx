@@ -77,14 +77,14 @@ export default function DashboardPage() {
 
       {!stats && !error && (
         <div className="flex h-40 items-center justify-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
       )}
 
       {stats && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            <StatCard title="Today's Cash" value={formatCurrency(stats.todayCashMinor)} icon={Banknote} iconClass="text-blue-600" iconBg="bg-blue-50" href="/reports/daily-cash" />
+            <StatCard title="Today's Cash" value={formatCurrency(stats.todayCashMinor)} icon={Banknote} iconClass="text-primary" iconBg="bg-blue-50" href="/reports/daily-cash" />
             <StatCard
               title="Today's Contracts"
               value={String(stats.todayContractsCount)}
@@ -115,8 +115,8 @@ export default function DashboardPage() {
                 description="Create account & membership ID"
                 colorClass="bg-blue-50 hover:bg-blue-100"
                 labelClass="text-blue-900"
-                descClass="text-blue-600"
-                icon={<Plus className="h-5 w-5 text-blue-600" />}
+                descClass="text-primary"
+                icon={<Plus className="h-5 w-5 text-primary" />}
               />
               <QuickAction
                 href="/contracts"

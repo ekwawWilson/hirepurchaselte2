@@ -260,7 +260,7 @@ export default function ContractsPage() {
             <CardTitle className="text-xl">Create Contract</CardTitle>
             <div className="flex gap-2 mt-3">
               {[1, 2, 3].map((s) => (
-                <div key={s} className={`h-2 flex-1 ${s <= step ? 'bg-blue-600' : 'bg-gray-200'}`} />
+                <div key={s} className={`h-2 flex-1 ${s <= step ? 'bg-primary' : 'bg-gray-200'}`} />
               ))}
             </div>
             <p className="text-xs text-gray-500 mt-1.5">
@@ -595,7 +595,7 @@ export default function ContractsPage() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>
+            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
           ) : contracts.length === 0 ? (
             <div className="text-center py-12 px-4">
               <FileTextIcon className="h-8 w-8 text-gray-300 mx-auto mb-2" />
@@ -624,7 +624,7 @@ export default function ContractsPage() {
                     <TableCell>{c.customer.firstName} {c.customer.lastName}</TableCell>
                     <TableCell>{c.product.name}</TableCell>
                     <TableCell>{contractTypeLabel(c.contractType)}</TableCell>
-                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
+                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
                     <TableCell>{formatCurrency(c.balanceMinor)} / {formatCurrency(c.totalPayableMinor)}</TableCell>
                     <TableCell>
                       <Link href={`/contracts/${c.id}`}><ChevronRight className="h-4 w-4 text-gray-300" /></Link>

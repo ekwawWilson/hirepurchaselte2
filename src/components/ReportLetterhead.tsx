@@ -14,7 +14,7 @@ export function ReportLetterhead() {
         // eslint-disable-next-line @next/next/no-img-element
         <img src={logoUrl} alt={companyName} className="w-9 h-9 rounded-lg object-cover shrink-0" />
       ) : (
-        <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+        <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center shrink-0">
           <span className="text-white text-sm font-extrabold tracking-tighter">{companyInitials(companyName)}</span>
         </div>
       )}

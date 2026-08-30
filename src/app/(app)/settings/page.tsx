@@ -120,7 +120,7 @@ export default function SettingsPage() {
               // eslint-disable-next-line @next/next/no-img-element
               <img src={form.logoUrl} alt={form.companyName} className="w-8 h-8 rounded-lg object-cover shrink-0" />
             ) : (
-              <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
                 <span className="text-white text-[13px] font-extrabold tracking-tighter">{companyInitials(form.companyName || APP_NAME)}</span>
               </div>
             )}

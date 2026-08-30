@@ -246,7 +246,7 @@ export default function PriceChartPage() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>
+            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
           ) : entries.length === 0 ? (
             <div className="text-center py-12 px-4">
               <TagsIcon className="h-8 w-8 text-gray-300 mx-auto mb-2" />

@@ -149,7 +149,7 @@ export default function InventoryPage() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>
+            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
           ) : items.length === 0 ? (
             <div className="text-center py-12 px-4">
               <WarehouseIcon className="h-8 w-8 text-gray-300 mx-auto mb-2" />
@@ -170,7 +170,7 @@ export default function InventoryPage() {
                   <TableRow key={i.id}>
                     <TableCell className="font-mono text-xs">{i.serialNumber}</TableCell>
                     <TableCell className="font-medium text-gray-900">{i.product.name}</TableCell>
-                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 ${getStatusColor(i.status)}`}>{i.status}</span></TableCell>
+                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(i.status)}`}>{i.status}</span></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

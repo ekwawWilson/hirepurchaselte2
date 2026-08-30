@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Banknote, Smartphone, Coins } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useToast } from '@/hooks/useToast';
 import { useOrgSettingsStore } from '@/lib/orgSettingsStore';
 import { ReportLetterhead } from '@/components/ReportLetterhead';
+import { ReportDateFilter, today } from '@/components/ReportDateFilter';
+import { StatTile } from '@/components/StatTile';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { formatCurrency } from '@/lib/utils';
@@ -17,10 +18,6 @@ interface DailyCashReport {
   byChannel: Record<string, number>;
   byCashier: Array<{ userId: string; name: string; amountMinor: number; count: number }>;
   transactionCount: number;
-}
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 export default function DailyCashReportPage() {
@@ -71,21 +68,16 @@ export default function DailyCashReportPage() {
         <p className="text-sm text-gray-500 mt-0.5">Reconciles exactly against the payment ledger for the range</p>
       </div>
 
-      <Card>
-        <CardContent className="p-4 flex flex-wrap items-end gap-3">
-          <div><Label>From</Label><Input type="date" className="mt-1.5" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-          <div><Label>To</Label><Input type="date" className="mt-1.5" value={to} onChange={(e) => setTo(e.target.value)} /></div>
-          <Button onClick={load}>Refresh</Button>
-          <Button variant="outline" onClick={exportCsv} disabled={!report}>Export CSV</Button>
-        </CardContent>
-      </Card>
+      <ReportDateFilter from={from} to={to} onFromChange={setFrom} onToChange={setTo} onRefresh={load}>
+        <Button variant="outline" onClick={exportCsv} disabled={!report}>Export CSV</Button>
+      </ReportDateFilter>
 
       {report && (
         <>
-          <div className="grid grid-cols-3 gap-4">
-            <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Total received</p><p className="text-lg font-semibold text-gray-900">{formatCurrency(report.totalMinor)}</p></CardContent></Card>
-            <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Cash</p><p className="text-lg font-semibold text-gray-900">{formatCurrency(report.byChannel.CASH ?? 0)}</p></CardContent></Card>
-            <Card><CardContent className="p-4"><p className="text-xs text-gray-500">USSD</p><p className="text-lg font-semibold text-gray-900">{formatCurrency(report.byChannel.USSD ?? 0)}</p></CardContent></Card>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <StatTile icon={Coins} label="Total received" value={formatCurrency(report.totalMinor)} color="emerald" />
+            <StatTile icon={Banknote} label="Cash" value={formatCurrency(report.byChannel.CASH ?? 0)} color="blue" />
+            <StatTile icon={Smartphone} label="USSD" value={formatCurrency(report.byChannel.USSD ?? 0)} color="purple" />
           </div>
 
           <Card>
