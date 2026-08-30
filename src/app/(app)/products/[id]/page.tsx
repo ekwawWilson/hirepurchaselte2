@@ -25,6 +25,9 @@ interface Product {
 
 const frequencyLabel = (f: string) => f.charAt(0) + f.slice(1).toLowerCase();
 const ALL_CONTRACT_TYPES = ['SAVE_TO_OWN', 'DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
+const TERM_MONTHS = [3, 4, 6] as const;
+type DeviceLoanPricingForm = { totalPayable: string; interestRate: string };
+const emptyDeviceLoanPricing: Record<number, DeviceLoanPricingForm> = { 3: { totalPayable: '', interestRate: '' }, 4: { totalPayable: '', interestRate: '' }, 6: { totalPayable: '', interestRate: '' } };
 
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -35,6 +38,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', categoryId: '', brand: '', model: '', cashPrice: '', isActive: true });
   const [saving, setSaving] = useState(false);
+  const [showDeviceLoanForm, setShowDeviceLoanForm] = useState(false);
+  const [deviceLoanPricing, setDeviceLoanPricing] = useState(emptyDeviceLoanPricing);
+  const [savingDeviceLoan, setSavingDeviceLoan] = useState(false);
 
   async function load() {
     try {
@@ -78,9 +84,40 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     }
   }
 
-  if (!product) {
-    return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
+  async function onSaveDeviceLoanPricing() {
+    if (!product) return;
+    const payload: Record<number, { totalPayableMinor: number; interestRateBps: number }> = {};
+    for (const term of TERM_MONTHS) {
+      const t = deviceLoanPricing[term];
+      if (!t.totalPayable.trim()) continue; // blank = skip this period
+      payload[term] = { totalPayableMinor: Math.round(parseFloat(t.totalPayable) * 100), interestRateBps: Number(t.interestRate || '0') };
+    }
+    if (Object.keys(payload).length === 0) {
+      toast({ title: 'Enter at least one period to price', variant: 'destructive' });
+      return;
+    }
+    setSavingDeviceLoan(true);
+    try {
+      await api.patch(`/products/${id}`, { deviceLoanPricing: payload });
+      toast({ title: 'Device Loan pricing added' });
+      setShowDeviceLoanForm(false);
+      setDeviceLoanPricing(emptyDeviceLoanPricing);
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save Device Loan pricing', variant: 'destructive' });
+    } finally {
+      setSavingDeviceLoan(false);
+    }
   }
+
+  if (!product) {
+    return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>;
+  }
+
+  const pricedDeviceLoanTerms = new Set(
+    product.priceChartEntries.filter((e) => e.contractType === 'DEVICE_LOAN' && !e.effectiveTo).map((e) => e.termMonths),
+  );
+  const hasMissingDeviceLoanTerm = TERM_MONTHS.some((t) => !pricedDeviceLoanTerms.has(t));
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -193,6 +230,57 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           )}
         </CardContent>
       </Card>
+
+      {canUpdate && hasMissingDeviceLoanTerm && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+            <CardTitle>Device Loan pricing</CardTitle>
+            {!showDeviceLoanForm && (
+              <Button size="sm" variant="outline" onClick={() => setShowDeviceLoanForm(true)}>Add missing pricing</Button>
+            )}
+          </CardHeader>
+          {showDeviceLoanForm && (
+            <CardContent className="space-y-3">
+              {TERM_MONTHS.map((term) => {
+                const priced = pricedDeviceLoanTerms.has(term);
+                return (
+                  <div key={term} className={`ring-1 ring-black/5 p-3 ${priced ? 'opacity-60' : ''}`}>
+                    <div className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                      {term} months
+                      {priced && <Badge variant="success">Already priced</Badge>}
+                    </div>
+                    {!priced && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs font-normal text-gray-500">Total Payable (GHS)</Label>
+                          <Input
+                            type="number" step="0.01" min={0} placeholder="0.00" className="mt-1"
+                            value={deviceLoanPricing[term].totalPayable}
+                            onChange={(e) => setDeviceLoanPricing({ ...deviceLoanPricing, [term]: { ...deviceLoanPricing[term], totalPayable: e.target.value } })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs font-normal text-gray-500">Interest rate (bps/yr, e.g. 2400 = 24%)</Label>
+                          <Input
+                            type="number" min={0} placeholder="0" className="mt-1"
+                            value={deviceLoanPricing[term].interestRate}
+                            onChange={(e) => setDeviceLoanPricing({ ...deviceLoanPricing, [term]: { ...deviceLoanPricing[term], interestRate: e.target.value } })}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="text-xs text-gray-400">Leave blank to skip a period. Cash is disbursed to the customer for a Device Loan — no deposit applies.</p>
+              <div className="flex gap-2 pt-1">
+                <Button type="button" onClick={onSaveDeviceLoanPricing} disabled={savingDeviceLoan}>{savingDeviceLoan ? 'Saving...' : 'Save pricing'}</Button>
+                <Button type="button" variant="outline" onClick={() => { setShowDeviceLoanForm(false); setDeviceLoanPricing(emptyDeviceLoanPricing); }}>Cancel</Button>
+              </div>
+            </CardContent>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

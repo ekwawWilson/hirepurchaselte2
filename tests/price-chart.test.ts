@@ -4,11 +4,12 @@
  * terms, and an admin-entered absolute deposit amount rather than a percentage.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest } from './helpers';
+import { makeRequest, makeParams } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { GET as productsGET, POST as productsPOST } from '@/app/api/products/route';
+import { GET as productGET, PATCH as productPATCH } from '@/app/api/products/[id]/route';
 import { POST as priceChartPOST } from '@/app/api/price-chart/route';
 import { POST as priceChartBundlePOST } from '@/app/api/price-chart/bundle/route';
 import { POST as customersPOST } from '@/app/api/customers/route';
@@ -234,5 +235,91 @@ describe('Product creation: SKU auto-generation and the term-pricing shortcut', 
 
     const existing = await prisma.product.findFirst({ where: { name } });
     expect(existing).toBeNull();
+  });
+});
+
+describe('Product setup/edit can also close a Device Loan pricing gap', () => {
+  let admin: string;
+
+  beforeAll(async () => {
+    admin = await login('admin@zple.test');
+  });
+
+  it('POST /api/products accepts a deviceLoanPricing bundle alongside termPricing', async () => {
+    const res = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin,
+      body: {
+        name: `Device Loan At Creation ${runId}`, cashPriceMinor: 250000,
+        termPricing: { 3: { totalPayableMinor: 280000, depositAmountMinor: 50000 } },
+        deviceLoanPricing: { 6: { totalPayableMinor: 320000, interestRateBps: 2400 } },
+      },
+    }));
+    expect(res.status).toBe(201);
+    const { product } = await res.json();
+
+    const entries = await prisma.priceChartEntry.findMany({ where: { productId: product.id }, orderBy: { termMonths: 'asc' } });
+    expect(entries.map((e) => `${e.contractType}:${e.termMonths}`).sort()).toEqual(['DEPOSIT_INSTALMENT:3', 'DEVICE_LOAN:6'].sort());
+    const loanEntry = entries.find((e) => e.contractType === 'DEVICE_LOAN');
+    expect(loanEntry?.interestRateBps).toBe(2400);
+    expect(loanEntry?.depositAmountMinor).toBe(0);
+
+    const productsRes = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
+    const { products } = await productsRes.json();
+    const listed = products.find((p: { id: string }) => p.id === product.id);
+    expect(listed.missingContractTypes.sort()).toEqual(['SAVE_TO_OWN']);
+  });
+
+  it('PATCH /api/products/[id] adds missing Device Loan pricing without touching existing entries', async () => {
+    const created = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin,
+      body: { name: `Fix Missing Device Loan ${runId}`, cashPriceMinor: 250000 },
+    }));
+    const productId = (await created.json()).product.id;
+
+    const before = await productGET(makeRequest('GET', `/api/products/${productId}`, { token: admin }), makeParams({ id: productId }));
+    expect((await before.json()).product.priceChartEntries).toEqual([]);
+
+    const patched = await productPATCH(
+      makeRequest('PATCH', `/api/products/${productId}`, {
+        token: admin,
+        body: { deviceLoanPricing: { 3: { totalPayableMinor: 300000, interestRateBps: 2000 }, 6: { totalPayableMinor: 340000, interestRateBps: 2000 } } },
+      }),
+      makeParams({ id: productId }),
+    );
+    expect(patched.status).toBe(200);
+
+    const after = await productGET(makeRequest('GET', `/api/products/${productId}`, { token: admin }), makeParams({ id: productId }));
+    const entries = (await after.json()).product.priceChartEntries;
+    expect(entries).toHaveLength(2);
+    expect(entries.every((e: { contractType: string }) => e.contractType === 'DEVICE_LOAN')).toBe(true);
+  });
+
+  it('a re-submitted PATCH does not version-out (overwrite) an already-priced Device Loan term', async () => {
+    const created = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin,
+      body: {
+        name: `Skip Already Priced ${runId}`, cashPriceMinor: 250000,
+        deviceLoanPricing: { 3: { totalPayableMinor: 300000, interestRateBps: 2000 } },
+      },
+    }));
+    const productId = (await created.json()).product.id;
+    const original = await prisma.priceChartEntry.findFirstOrThrow({ where: { productId, contractType: 'DEVICE_LOAN', termMonths: 3 } });
+
+    // Resubmit the same 3-month term (already priced) plus a genuinely new 6-month term.
+    const patched = await productPATCH(
+      makeRequest('PATCH', `/api/products/${productId}`, {
+        token: admin,
+        body: { deviceLoanPricing: { 3: { totalPayableMinor: 999999, interestRateBps: 5000 }, 6: { totalPayableMinor: 340000, interestRateBps: 2000 } } },
+      }),
+      makeParams({ id: productId }),
+    );
+    expect(patched.status).toBe(200);
+
+    const stillOriginal = await prisma.priceChartEntry.findUniqueOrThrow({ where: { id: original.id } });
+    expect(stillOriginal.effectiveTo).toBeNull(); // never superseded
+    expect(stillOriginal.totalPayableMinor).toBe(300000); // untouched, not overwritten with 999999
+
+    const sixMonth = await prisma.priceChartEntry.findFirst({ where: { productId, contractType: 'DEVICE_LOAN', termMonths: 6 } });
+    expect(sixMonth?.totalPayableMinor).toBe(340000); // the genuinely-new term was still created
   });
 });

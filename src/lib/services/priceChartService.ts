@@ -190,6 +190,52 @@ export function validateEntryBody(body: Record<string, unknown>): string | null 
   return null;
 }
 
+export interface TermPricingRaw {
+  totalPayableMinor?: number;
+  depositAmountMinor?: number;
+  interestRateBps?: number;
+}
+export interface ParsedTermPricingEntry {
+  termMonths: number;
+  totalPayableMinor: number;
+  depositAmountMinor: number;
+  interestRateBps: number | null;
+}
+
+/**
+ * Parses a `{ "3"?: {...}, "4"?: {...}, "6"?: {...} }` bundle (one contract
+ * type, up to all three admin-fixed terms) into validated entries ready for
+ * createPriceChartEntryInTx — shared by the product-creation and product-edit
+ * "add missing pricing right here" flows so a period's validation rules (and
+ * what "blank means skip" means) can never drift between the two. Validates
+ * every non-blank period in full before returning anything, so the caller can
+ * create nothing at all on the first error rather than a partial bundle.
+ */
+export function parseTermPricingBundle(
+  contractType: ContractTypeName,
+  input: unknown,
+): { entries: ParsedTermPricingEntry[] } | { error: string } {
+  const entries: ParsedTermPricingEntry[] = [];
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { entries };
+
+  const byTerm = input as Record<string, TermPricingRaw | undefined>;
+  for (const term of PRICE_CHART_TERM_MONTHS) {
+    const raw = byTerm[String(term)];
+    if (!raw || raw.totalPayableMinor === undefined || raw.totalPayableMinor === null) continue; // blank = skip this period
+
+    const totalPayableMinor = raw.totalPayableMinor;
+    const depositAmountMinor = raw.depositAmountMinor ?? 0;
+    const interestRateBps = raw.interestRateBps ?? null;
+    const error = validateEntryBody({
+      productId: 'pending', contractType, termMonths: term, paymentFrequency: 'MONTHLY',
+      totalPayableMinor, depositAmountMinor, interestRateBps,
+    });
+    if (error) return { error: `${term}-month ${contractType} pricing: ${error}` };
+    entries.push({ termMonths: term, totalPayableMinor, depositAmountMinor, interestRateBps });
+  }
+  return { entries };
+}
+
 /** Minimal CSV parser: header row + comma-separated values, no quoting/escaping support (admin-authored data only). */
 export function parsePriceChartCsv(csv: string): Array<Record<string, string>> {
   const lines = csv.trim().split(/\r?\n/).filter((l) => l.trim().length > 0);

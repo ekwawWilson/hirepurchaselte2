@@ -32,6 +32,8 @@ const TERM_MONTHS = [3, 4, 6] as const;
 const NEW_CATEGORY = '__new__';
 type TermPricingForm = { totalPayable: string; deposit: string };
 const emptyTermPricing: Record<number, TermPricingForm> = { 3: { totalPayable: '', deposit: '' }, 4: { totalPayable: '', deposit: '' }, 6: { totalPayable: '', deposit: '' } };
+type DeviceLoanPricingForm = { totalPayable: string; interestRate: string };
+const emptyDeviceLoanPricing: Record<number, DeviceLoanPricingForm> = { 3: { totalPayable: '', interestRate: '' }, 4: { totalPayable: '', interestRate: '' }, 6: { totalPayable: '', interestRate: '' } };
 
 export default function ProductsPage() {
   const canCreate = useAuthStore((s) => s.hasPermission('inventory.receive'));
@@ -43,6 +45,7 @@ export default function ProductsPage() {
   const [form, setForm] = useState({ name: '', description: '', categoryId: '', cashPrice: '' });
   const [newCategoryName, setNewCategoryName] = useState('');
   const [termPricing, setTermPricing] = useState(emptyTermPricing);
+  const [deviceLoanPricing, setDeviceLoanPricing] = useState(emptyDeviceLoanPricing);
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -71,6 +74,7 @@ export default function ProductsPage() {
     setForm({ name: '', description: '', categoryId: '', cashPrice: '' });
     setNewCategoryName('');
     setTermPricing(emptyTermPricing);
+    setDeviceLoanPricing(emptyDeviceLoanPricing);
   }
 
   async function onCreate(e: React.FormEvent) {
@@ -102,10 +106,21 @@ export default function ProductsPage() {
         };
       }
 
+      const deviceLoanPricingPayload: Record<number, { totalPayableMinor: number; interestRateBps: number }> = {};
+      for (const term of TERM_MONTHS) {
+        const t = deviceLoanPricing[term];
+        if (!t.totalPayable.trim()) continue; // blank = skip this period
+        deviceLoanPricingPayload[term] = {
+          totalPayableMinor: Math.round(parseFloat(t.totalPayable) * 100),
+          interestRateBps: Number(t.interestRate || '0'),
+        };
+      }
+
       const cashPriceMinor = Math.round(parseFloat(form.cashPrice) * 100);
       await api.post('/products', {
         name: form.name, description: form.description, categoryId, cashPriceMinor,
         ...(Object.keys(termPricingPayload).length > 0 && { termPricing: termPricingPayload }),
+        ...(Object.keys(deviceLoanPricingPayload).length > 0 && { deviceLoanPricing: deviceLoanPricingPayload }),
       });
       toast({ title: 'Product created', description: `${form.name} was added to the catalogue.` });
       resetForm();
@@ -196,6 +211,38 @@ export default function ProductsPage() {
                 </p>
               </div>
 
+              <div className="pt-2">
+                <p className="text-sm font-semibold text-gray-900">Device Loan Pricing</p>
+                <div className="mt-3 space-y-3">
+                  {TERM_MONTHS.map((term) => (
+                    <div key={term} className="ring-1 ring-black/5 p-3">
+                      <p className="text-xs font-semibold text-gray-700 mb-2">{term} months</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs font-normal text-gray-500">Total Payable (GHS)</Label>
+                          <Input
+                            type="number" step="0.01" min={0} placeholder="0.00" className="mt-1"
+                            value={deviceLoanPricing[term].totalPayable}
+                            onChange={(e) => setDeviceLoanPricing({ ...deviceLoanPricing, [term]: { ...deviceLoanPricing[term], totalPayable: e.target.value } })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs font-normal text-gray-500">Interest rate (bps/yr, e.g. 2400 = 24%)</Label>
+                          <Input
+                            type="number" min={0} placeholder="0" className="mt-1"
+                            value={deviceLoanPricing[term].interestRate}
+                            onChange={(e) => setDeviceLoanPricing({ ...deviceLoanPricing, [term]: { ...deviceLoanPricing[term], interestRate: e.target.value } })}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  Leave blank to skip a period. Cash is disbursed to the customer for a Device Loan — no deposit applies.
+                </p>
+              </div>
+
               <div className="flex gap-2 pt-2">
                 <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Create product'}</Button>
                 <Button type="button" variant="outline" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</Button>
@@ -226,7 +273,7 @@ export default function ProductsPage() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>
+            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
           ) : products.length === 0 ? (
             <div className="text-center py-12 px-4">
               <PackageIcon className="h-8 w-8 text-gray-300 mx-auto mb-2" />
