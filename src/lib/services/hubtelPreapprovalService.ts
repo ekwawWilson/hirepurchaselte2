@@ -13,7 +13,7 @@ export class PreapprovalError extends Error {}
  * swap the trailing /callback on the payment callback URL for
  * /preapproval/callback.
  */
-function preapprovalCallbackUrl(): string {
+export function preapprovalCallbackUrl(): string {
   const explicit = process.env.HUBTEL_PREAPPROVAL_CALLBACK_URL;
   if (explicit) return appendWebhookToken(explicit);
   const base = process.env.HUBTEL_CALLBACK_URL || '';

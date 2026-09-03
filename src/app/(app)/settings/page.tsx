@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { HubtelDiagnostics } from '@/components/settings/HubtelDiagnostics';
 
 export default function SettingsPage() {
   const canManage = useAuthStore((s) => s.hasPermission('settings.manage'));
@@ -132,6 +133,8 @@ export default function SettingsPage() {
           <p className="text-xs text-gray-400 mt-3">This is how the navbar will look. The browser tab title and report headers update the same way.</p>
         </CardContent>
       </Card>
+
+      <HubtelDiagnostics />
     </div>
   );
 }
