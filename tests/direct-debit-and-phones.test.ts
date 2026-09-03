@@ -13,7 +13,7 @@ import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { POST as customersPOST } from '@/app/api/customers/route';
-import { createContract } from '@/lib/services/contractService';
+import { createContract, ContractError } from '@/lib/services/contractService';
 import { postPayment } from '@/lib/services/paymentService';
 import { verifyMobileMoneyNumber } from '@/lib/services/hubtelVerificationService';
 import {
@@ -133,6 +133,35 @@ describe('Hubtel Direct Debit', () => {
     });
     return { customerId: customer.id, inventoryItemId: item.id, msisdn: customer.phone as string };
   }
+
+  it('createContract rejects DIRECT_DEBIT/BOTH without a network+number', async () => {
+    const productId = await makeProduct('NODD');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
+      },
+    });
+    const { customerId } = await makeCustomerAndItem(productId, 'NODD');
+    await expect(createContract({
+      contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId, paymentMethod: 'BOTH',
+    })).rejects.toThrow(ContractError);
+  });
+
+  it('createContract rejects DIRECT_DEBIT/BOTH for SAVE_TO_OWN — no due schedule to auto-collect against', async () => {
+    const productId = await makeProduct('STONODD');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 120000, instalmentAmountMinor: 0, createdById: adminUserId,
+      },
+    });
+    const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'STONODD');
+    await expect(createContract({
+      contractType: 'SAVE_TO_OWN', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
+      paymentMethod: 'DIRECT_DEBIT', directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
+    })).rejects.toThrow(ContractError);
+  });
 
   it('rejects AirtelTigo — that network has no Hubtel direct-debit product', async () => {
     const productId = await makeProduct('AT');
@@ -268,7 +297,7 @@ describe('Hubtel Direct Debit', () => {
     const contract = await createContract({ contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId });
 
     const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
-    await enableDirectDebit({ contractId: contract.id, preapprovalId: preapproval.id, userId: adminUserId });
+    await enableDirectDebit({ contractId: contract.id, preapprovalId: preapproval.id, userId: adminUserId, paymentMethod: 'DIRECT_DEBIT' });
 
     // Force the first instalment's due date into the past so the collections run picks it up today.
     await prisma.instalment.updateMany({ where: { contractId: contract.id, instalmentNo: 1 }, data: { dueDate: new Date(Date.now() - 24 * 60 * 60_000) } });
@@ -284,6 +313,87 @@ describe('Hubtel Direct Debit', () => {
     await runDirectDebitCollections();
     const paidCountAfter = await prisma.payment.count({ where: { contractId: contract.id } });
     expect(paidCountAfter).toBe(paidCount);
+  });
+
+  it('BOTH mode: an instalment due but not yet OVERDUE is left for the customer to pay themselves', async () => {
+    const productId = await makeProduct('BOTHDUE');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
+      },
+    });
+    const { customerId, msisdn } = await makeCustomerAndItem(productId, 'BOTHDUE');
+    const contract = await createContract({
+      contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId,
+      paymentMethod: 'BOTH', directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
+    });
+    expect(contract.paymentMethod).toBe('BOTH');
+
+    // Due date is in the past (so it clears the "due" filter) but status is
+    // still PENDING — simulates "due today, the daily overdue sweep hasn't
+    // flipped it to OVERDUE yet" (see overdueService.markOverdueInstalments,
+    // which normally does that flip before collections runs in the same cron).
+    await prisma.instalment.updateMany({
+      where: { contractId: contract.id, instalmentNo: 1 },
+      data: { dueDate: new Date(Date.now() - 60_000), status: 'PENDING' },
+    });
+
+    const charged = await runDirectDebitCollections();
+    expect(charged).toBe(0);
+    const afterRun = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(afterRun.totalPaidMinor).toBe(0);
+  });
+
+  it('BOTH mode: once an instalment is actually OVERDUE (the customer defaulted), direct debit charges it', async () => {
+    const productId = await makeProduct('BOTHOD');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
+      },
+    });
+    const { customerId, msisdn } = await makeCustomerAndItem(productId, 'BOTHOD');
+    const contract = await createContract({
+      contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId,
+      paymentMethod: 'BOTH', directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
+    });
+
+    await prisma.instalment.updateMany({
+      where: { contractId: contract.id, instalmentNo: 1 },
+      data: { dueDate: new Date(Date.now() - 24 * 60 * 60_000), status: 'OVERDUE' },
+    });
+
+    const charged = await runDirectDebitCollections();
+    expect(charged).toBe(1);
+    const afterRun = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(afterRun.totalPaidMinor).toBeGreaterThan(0);
+  });
+
+  it('CUSTOMER_INITIATED contracts are never touched by the collections run, even with an approved mandate attached', async () => {
+    const productId = await makeProduct('CUSTONLY');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
+      },
+    });
+    const { customerId, msisdn } = await makeCustomerAndItem(productId, 'CUSTONLY');
+    const contract = await createContract({ contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId });
+    expect(contract.paymentMethod).toBe('CUSTOMER_INITIATED');
+
+    // Attach a mandate directly (bypassing enableDirectDebit's paymentMethod
+    // param) to prove the collections filter itself, not just the setup path,
+    // is what keeps a CUSTOMER_INITIATED contract untouched.
+    const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
+    await prisma.contract.update({ where: { id: contract.id }, data: { hubtelPreapprovalId: preapproval.id } });
+    await prisma.instalment.updateMany({
+      where: { contractId: contract.id, instalmentNo: 1 },
+      data: { dueDate: new Date(Date.now() - 24 * 60 * 60_000), status: 'OVERDUE' },
+    });
+
+    const charged = await runDirectDebitCollections();
+    expect(charged).toBe(0);
   });
 
   it('a DEVICE_LOAN contract created with a direct-debit payment method initiates the mandate immediately (ACTIVE from creation)', async () => {

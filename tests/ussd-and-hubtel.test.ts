@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { makeRequest } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
@@ -11,6 +11,8 @@ import { POST as inventoryPOST } from '@/app/api/inventory/route';
 import { POST as contractsPOST } from '@/app/api/contracts/route';
 import { GET as contractGET } from '@/app/api/contracts/[id]/route';
 import { POST as ussdPOST } from '@/app/api/ussd/route';
+import { POST as hubtelCallbackPOST } from '@/app/api/payments/hubtel/callback/route';
+import { POST as serviceFulfilmentPOST } from '@/app/api/payments/hubtel/service-fulfilment/route';
 
 import { handleUssdInput } from '@/lib/services/ussdService';
 import { processHubtelCallback, initiateHubtelPayment, reconcilePendingHubtelTransactions } from '@/lib/services/hubtelPaymentService';
@@ -165,10 +167,47 @@ describe('USSD + Hubtel payments', () => {
     expect(step1.message).toContain(contract.contractNumber);
   });
 
-  it('unknown phone number gets a clear rejection, not a crash', async () => {
-    const result = await handleUssdInput({ sessionId: `sess-${runId}-unknown`, msisdn: '0200000000', input: '', isNewSession: true });
-    expect(result.continueSession).toBe(false);
+  it('unknown phone number is prompted for a registered number instead of dead-ending', async () => {
+    const sessionId = `sess-${runId}-unknown`;
+    const result = await handleUssdInput({ sessionId, msisdn: '0200000000', input: '', isNewSession: true });
+    expect(result.continueSession).toBe(true);
     expect(result.message).toMatch(/no .+ account found/i);
+    expect(result.message).toMatch(/enter a registered phone number/i);
+
+    const cancelled = await handleUssdInput({ sessionId, msisdn: '0200000000', input: '0', isNewSession: false });
+    expect(cancelled.continueSession).toBe(false);
+    expect(cancelled.message).toMatch(/cancelled/i);
+  });
+
+  it('unknown phone number can identify their account with a registered alternate number, and gets billed on the dialed-in number', async () => {
+    const dialedPhone = '0200000001';
+    const registeredPhone = uniquePhone();
+    const contract = await setupContract(registeredPhone);
+    const sessionId = `sess-${runId}-altphone`;
+
+    const step1 = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '', isNewSession: true });
+    expect(step1.continueSession).toBe(true);
+    expect(step1.message).toMatch(/no .+ account found/i);
+
+    // A typo/unregistered number first — must re-prompt, not crash or end the session.
+    const retry = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '0200000002', isNewSession: false });
+    expect(retry.continueSession).toBe(true);
+    expect(retry.message).toMatch(/no account found/i);
+
+    const found = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: registeredPhone, isNewSession: false });
+    expect(found.continueSession).toBe(true);
+    expect(found.message).toContain(contract.contractNumber);
+
+    const enterAmount = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '400', isNewSession: false });
+    expect(enterAmount.message).toMatch(/confirm payment/i);
+
+    const confirmed = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '1', isNewSession: false });
+    expect(confirmed.continueSession).toBe(false);
+    expect(confirmed.message).toMatch(/payment successful/i);
+
+    // Billed to the phone actually dialed in, never the alternate lookup number.
+    const txn = await prisma.hubtelTransaction.findFirstOrThrow({ where: { contractId: contract.id } });
+    expect(txn.msisdn).toBe(dialedPhone);
   });
 
   it('the real /api/ussd route wires the Hubtel-style request/response contract correctly', async () => {
@@ -181,8 +220,34 @@ describe('USSD + Hubtel payments', () => {
     }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.Type).toBe('Response');
+    // Lowercase "response"/"release" and the presence of Label/DataType/FieldType
+    // match Hubtel's own Programmable Services contract exactly — see
+    // ussdService.ts/route.ts, and the docs' Response Parameters table which
+    // marks all three Mandatory.
+    expect(body.Type).toBe('response');
     expect(body.SessionId).toBe(sessionId);
+    expect(typeof body.Label).toBe('string');
+    expect(body.Label.length).toBeGreaterThan(0);
+    expect(body.DataType).toBe('input');
+    expect(typeof body.FieldType).toBe('string');
+  });
+
+  it('a Hubtel "Timeout" notification (customer hung up) ends the session cleanly instead of treating it as input', async () => {
+    const phone = uniquePhone();
+    await setupContract(phone);
+    const sessionId = `sess-${runId}-timeout`;
+
+    await ussdPOST(makeRequest('POST', '/api/ussd', {
+      body: { SessionId: sessionId, Mobile: phone, Message: '', Type: 'Initiation' },
+    }));
+    expect(await prisma.ussdSession.findUnique({ where: { sessionId } })).not.toBeNull();
+
+    const res = await ussdPOST(makeRequest('POST', '/api/ussd', {
+      body: { SessionId: sessionId, Mobile: phone, Message: '', Type: 'Timeout' },
+    }));
+    const body = await res.json();
+    expect(body.Type).toBe('release');
+    expect(await prisma.ussdSession.findUnique({ where: { sessionId } })).toBeNull();
   });
 
   it('Hubtel callback idempotency: replaying the same clientReference does not double-post', async () => {
@@ -206,6 +271,71 @@ describe('USSD + Hubtel payments', () => {
     expect((await detail.json()).contract.totalPaidMinor).toBe(30000); // not 60000
   });
 
+  it('the real /api/payments/hubtel/callback route parses Hubtel\'s actual Receive-Money callback shape', async () => {
+    const phone = uniquePhone();
+    const contract = await setupContract(phone);
+    const clientReference = `TEST-ROUTE-CALLBACK-${runId}`;
+
+    await prisma.hubtelTransaction.create({
+      data: { clientReference, contractId: contract.id, msisdn: phone, amountMinor: 20000, status: 'PENDING' },
+    });
+
+    // Hubtel's real Receive-Money callback shape — {ResponseCode, Message,
+    // Data: {ClientReference, ...}} — not the internal {clientReference,
+    // status} shape processHubtelCallback takes directly.
+    const res = await hubtelCallbackPOST(makeRequest('POST', '/api/payments/hubtel/callback', {
+      token: process.env.WEBHOOK_SHARED_TOKEN,
+      body: {
+        ResponseCode: '0000',
+        Message: 'Success',
+        Data: {
+          ClientReference: clientReference,
+          TransactionId: 'HTX-TEST-1',
+          ExternalTransactionId: 'EXT-TEST-1',
+          Amount: 200,
+          Status: 'Success',
+        },
+      },
+    }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe('SUCCESS');
+
+    const txn = await prisma.hubtelTransaction.findUniqueOrThrow({ where: { clientReference } });
+    expect(txn.status).toBe('SUCCESS');
+  });
+
+  it('the Service Fulfilment route rejects an unauthenticated call — this integration never expects to receive one, but must still fail closed', async () => {
+    const res = await serviceFulfilmentPOST(makeRequest('POST', '/api/payments/hubtel/service-fulfilment', {
+      body: { SessionId: 'sess-x', OrderId: 'order-x' },
+    }));
+    expect(res.status).toBe(401);
+  });
+
+  it('the Service Fulfilment route acknowledges an authenticated call and sends the required Service Fulfillment Callback', async () => {
+    const guardedFetch = globalThis.fetch;
+    const fetchSpy = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe('https://gs-callback.hubtel.com:9055/callback');
+      const sent = JSON.parse(init?.body as string);
+      expect(sent).toEqual({ SessionId: 'sess-unexpected', OrderId: 'order-unexpected', ServiceStatus: 'success', MetaData: null });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const res = await serviceFulfilmentPOST(makeRequest('POST', '/api/payments/hubtel/service-fulfilment', {
+        token: process.env.WEBHOOK_SHARED_TOKEN,
+        body: { SessionId: 'sess-unexpected', OrderId: 'order-unexpected', OrderInfo: { Status: 'Paid' } },
+      }));
+      expect(res.status).toBe(200);
+      expect((await res.json()).received).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = guardedFetch;
+    }
+  });
+
   it('reconciliation marks stale PENDING transactions FAILED', async () => {
     const phone = uniquePhone();
     const contract = await setupContract(phone);
@@ -225,13 +355,68 @@ describe('USSD + Hubtel payments', () => {
     expect(txn.status).toBe('FAILED');
   });
 
-  it('initiateHubtelPayment throws in live mode (not wired to a real account in this build)', async () => {
+  it('reconciliation asks Hubtel\'s Transaction Status Check before failing a stale transaction, and honors a Paid result', async () => {
+    const phone = uniquePhone();
+    const contract = await setupContract(phone);
+    const clientReference = `TEST-STALE-PAID-${runId}`;
+
+    await prisma.hubtelTransaction.create({
+      data: {
+        clientReference, contractId: contract.id, msisdn: phone, amountMinor: 15000, status: 'PENDING',
+        createdAt: new Date(Date.now() - 60 * 60_000),
+      },
+    });
+
+    const originalMode = process.env.HUBTEL_PAYMENTS_MODE;
+    const originalSalesId = process.env.HUBTEL_POS_SALES_ID;
+    const originalKey = process.env.HUBTEL_API_KEY;
+    const originalSecret = process.env.HUBTEL_API_SECRET;
+    process.env.HUBTEL_PAYMENTS_MODE = 'live';
+    process.env.HUBTEL_POS_SALES_ID = 'TEST-SALES-ID';
+    process.env.HUBTEL_API_KEY = 'test-key';
+    process.env.HUBTEL_API_SECRET = 'test-secret';
+
+    // Same response shape the legacy hirepurchase app's checkHubtelPaymentStatus
+    // callers parse for this exact endpoint (data.status, case-insensitive).
+    // Saved/restored directly (not vi.stubGlobal/unstubAllGlobals) so this
+    // test's cleanup can never accidentally remove tests/setup.ts's global
+    // real-network guard — see that file for why.
+    const guardedFetch = globalThis.fetch;
+    const fetchSpy = vi.fn(async (url: string) => {
+      expect(url).toContain('/transactions/TEST-SALES-ID/status');
+      expect(url).toContain(`clientReference=${clientReference}`);
+      return new Response(JSON.stringify({ responseCode: '0000', data: { status: 'Paid' } }), { status: 200 });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const result = await reconcilePendingHubtelTransactions(15);
+      expect(result.succeeded).toBeGreaterThanOrEqual(1);
+      expect(fetchSpy).toHaveBeenCalled();
+
+      const txn = await prisma.hubtelTransaction.findUniqueOrThrow({ where: { clientReference } });
+      expect(txn.status).toBe('SUCCESS');
+    } finally {
+      globalThis.fetch = guardedFetch;
+      process.env.HUBTEL_PAYMENTS_MODE = originalMode;
+      process.env.HUBTEL_POS_SALES_ID = originalSalesId;
+      process.env.HUBTEL_API_KEY = originalKey;
+      process.env.HUBTEL_API_SECRET = originalSecret;
+    }
+  });
+
+  it('initiateHubtelPayment in live mode never reaches the real network in tests', async () => {
     const phone = uniquePhone();
     const contract = await setupContract(phone);
     const original = process.env.HUBTEL_PAYMENTS_MODE;
     process.env.HUBTEL_PAYMENTS_MODE = 'live';
+    // No local fetch stub here on purpose — this relies entirely on
+    // tests/setup.ts's global fetch guard (every test gets it by default) to
+    // prove a careless live-mode call can never slip through to Hubtel's
+    // real API, regardless of what credentials happen to be configured.
     try {
-      await expect(initiateHubtelPayment({ contractId: contract.id, msisdn: phone, amountMinor: 1000 })).rejects.toThrow();
+      await expect(initiateHubtelPayment({ contractId: contract.id, msisdn: phone, amountMinor: 1000 }))
+        .rejects.toThrow(/Blocked outbound network call/);
     } finally {
       process.env.HUBTEL_PAYMENTS_MODE = original;
     }
