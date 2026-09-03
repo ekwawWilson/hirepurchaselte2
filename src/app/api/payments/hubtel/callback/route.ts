@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateWebhookRequest } from '@/lib/auth/webhookSecurity';
-import { processHubtelCallback, HubtelError } from '@/lib/services/hubtelPaymentService';
+import { processHubtelCallback, normalizeHubtelPaymentCallback, HubtelError } from '@/lib/services/hubtelPaymentService';
 
 /**
- * Live-mode Hubtel payment callback. Not used by the mock flow (mock mode
- * resolves synchronously inside initiateHubtelPayment) — this exists for
- * when HUBTEL_PAYMENTS_MODE=live is wired to a real Hubtel account.
+ * Live-mode Hubtel payment callback — the same Receive-Money callback shape
+ * (`{ResponseCode, Message, Data: {ClientReference, Status, ...}}`) the
+ * legacy hirepurchase app's own callback route parses for this product. Not
+ * used by the mock flow (mock mode resolves synchronously inside
+ * initiateHubtelPayment).
  */
 export async function POST(req: NextRequest) {
   const check = validateWebhookRequest(req);
@@ -14,19 +16,23 @@ export async function POST(req: NextRequest) {
   }
 
   const raw = await req.text();
-  const body = JSON.parse(raw) as { ClientReference?: string; Status?: string };
-  const { ClientReference: clientReference, Status: status } = body;
+  const body = JSON.parse(raw) as unknown;
+  const { clientReference, status } = normalizeHubtelPaymentCallback(body);
 
-  if (!clientReference || !status) {
-    return NextResponse.json({ error: 'ClientReference and Status are required' }, { status: 400 });
+  if (!clientReference) {
+    return NextResponse.json({ error: 'ClientReference is required' }, { status: 400 });
+  }
+
+  if (status === 'PENDING') {
+    // Hubtel's real callbacks are always terminal — an unrecognized status
+    // here means we couldn't parse it, not that the payment is genuinely
+    // still pending. Acknowledge (so Hubtel doesn't retry indefinitely) and
+    // let the reconcile sweep's status check settle it instead of guessing.
+    return NextResponse.json({ received: true, status: 'unrecognized' });
   }
 
   try {
-    const txn = await processHubtelCallback({
-      clientReference,
-      status: status.toUpperCase() === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
-      rawPayload: raw,
-    });
+    const txn = await processHubtelCallback({ clientReference, status, rawPayload: raw });
     return NextResponse.json({ received: true, status: txn.status });
   } catch (e) {
     if (e instanceof HubtelError) return NextResponse.json({ error: e.message }, { status: 400 });

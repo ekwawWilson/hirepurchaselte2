@@ -1,16 +1,20 @@
 import { prisma } from '../db/prisma';
 import { generateTransactionRef } from '../utils/idGenerators';
 import { postPayment } from './paymentService';
+import { appendWebhookToken } from '../auth/webhookSecurity';
+import { isHubtelLiveMode, callHubtelReceiveMoney, resolveHubtelStatus, HubtelApiError } from './hubtelClient';
 
 export class HubtelError extends Error {}
 
 /**
  * Kicks off a USSD/mobile-money payment. In mock mode (HUBTEL_PAYMENTS_MODE
  * != 'live', the bootstrap default), it resolves immediately as if Hubtel had
- * already called back with success — no live credentials needed, but the
- * shape (create PENDING transaction, then process a "callback") is identical
- * to the live path, so switching modes later is a one-line change here, not a
- * rewrite of the USSD menu or the ledger posting logic.
+ * already called back with success — no live credentials needed. In live
+ * mode, calls Hubtel's real Receive-Money API (the same product the legacy
+ * hirepurchase app uses) and leaves the transaction PENDING for
+ * /api/payments/hubtel/callback to resolve, unless Hubtel rejects the request
+ * outright (bad channel, malformed payload) — that's settled immediately
+ * since no callback will ever arrive for it.
  */
 export async function initiateHubtelPayment(params: {
   contractId: string;
@@ -30,10 +34,42 @@ export async function initiateHubtelPayment(params: {
     },
   });
 
-  if (process.env.HUBTEL_PAYMENTS_MODE === 'live') {
-    // A real integration would call Hubtel's receive-money API here and leave
-    // the transaction PENDING until /api/payments/hubtel/callback fires.
-    throw new HubtelError('HUBTEL_PAYMENTS_MODE=live is not wired to a real Hubtel account in this build — use mock mode.');
+  if (isHubtelLiveMode()) {
+    const contract = await prisma.contract.findUniqueOrThrow({
+      where: { id: params.contractId },
+      include: { customer: true },
+    });
+    const network = params.network ?? 'MTN';
+    const callbackUrl = appendWebhookToken(process.env.HUBTEL_CALLBACK_URL || '');
+
+    let result;
+    try {
+      result = await callHubtelReceiveMoney({
+        customerName: `${contract.customer.firstName} ${contract.customer.lastName}`,
+        msisdn: params.msisdn,
+        customerEmail: contract.customer.email,
+        amountMinor: params.amountMinor,
+        network,
+        isDirectDebit: false,
+        description: `Payment for ${contract.contractNumber}`,
+        clientReference,
+        callbackUrl,
+      });
+    } catch (e) {
+      throw e instanceof HubtelApiError ? new HubtelError(e.message) : e;
+    }
+
+    if (result.status === 'FAILED') {
+      return processHubtelCallback({ clientReference, status: 'FAILED', rawPayload: JSON.stringify(result.raw) });
+    }
+    // PENDING — stash the initial response for traceability; the transaction
+    // itself stays PENDING until the callback (or the reconcile sweep's
+    // status check) settles it.
+    await prisma.hubtelTransaction.update({
+      where: { clientReference },
+      data: { rawCallbackPayload: JSON.stringify({ initiated: true, ...(result.raw as object) }) },
+    });
+    return prisma.hubtelTransaction.findUniqueOrThrow({ where: { clientReference } });
   }
 
   return processHubtelCallback({
@@ -94,27 +130,70 @@ export async function processHubtelCallback(params: {
 }
 
 /**
- * Marks stale PENDING transactions FAILED. Meaningful mainly for live mode,
- * where a Hubtel callback can be delayed or lost; mock mode resolves
- * synchronously so nothing should linger PENDING there. Run periodically
- * (see src/instrumentation.ts) rather than only on demand.
+ * Normalizes Hubtel's real receive-money callback body (`{ResponseCode,
+ * Message, Data: {ClientReference, TransactionId, ExternalTransactionId, ...}}`)
+ * into the internal {clientReference, status} shape processHubtelCallback
+ * expects — same field paths/casing the legacy hirepurchase app's own
+ * normalizeHubtelCallback tolerates, since Hubtel's exact casing isn't
+ * perfectly consistent across accounts/products.
+ */
+export function normalizeHubtelPaymentCallback(body: unknown): { clientReference: string | null; status: 'SUCCESS' | 'FAILED' | 'PENDING' } {
+  const b = body as Record<string, unknown> | null | undefined;
+  const data = (b?.Data ?? b?.data ?? {}) as Record<string, unknown>;
+  const clientReference = (data.ClientReference ?? data.clientReference ?? null) as string | null;
+  return { clientReference, status: resolveHubtelStatus(body) };
+}
+
+/**
+ * Resolves stale PENDING transactions. Meaningful mainly for live mode, where
+ * a Hubtel callback can be delayed or lost; mock mode resolves synchronously
+ * so nothing should linger PENDING there. Run periodically (see
+ * src/instrumentation.ts) rather than only on demand.
+ *
+ * Before assuming a stale transaction failed, this asks Hubtel's own
+ * Transaction Status Check API what actually happened — required per Hubtel's
+ * docs precisely because a lost callback for a payment that really succeeded
+ * must never be silently written off as FAILED (money would leave the
+ * customer's wallet with nothing posted to their contract balance).
  */
 export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 15) {
   // Imported lazily to avoid a module-load cycle (hubtelPreapprovalService doesn't
   // import this file, but both sit in the same service layer — keeping this one
   // import deferred is simplest and costs nothing at this call frequency).
   const { processDirectDebitCallback } = await import('./hubtelPreapprovalService');
+  const { checkHubtelTransactionStatus } = await import('./hubtelStatusCheckService');
 
   const cutoff = new Date(Date.now() - staleAfterMinutes * 60_000);
   const stale = await prisma.hubtelTransaction.findMany({ where: { status: 'PENDING', createdAt: { lt: cutoff } } });
 
+  let succeeded = 0;
   let failed = 0;
+  let stillPending = 0;
   for (const txn of stale) {
-    const rawPayload = JSON.stringify({ reconciliation: true, reason: 'stale-pending', staleAfterMinutes });
+    let checkedStatus: 'SUCCESS' | 'FAILED' | 'PENDING';
+    try {
+      checkedStatus = (await checkHubtelTransactionStatus(txn.clientReference)).status;
+    } catch {
+      // The status check itself failed (network/misconfiguration) — don't guess;
+      // leave this one PENDING for the next sweep rather than risk wrongly
+      // failing a payment that may actually have succeeded.
+      stillPending += 1;
+      continue;
+    }
+
+    // 'PENDING' (mock mode, or Hubtel genuinely hasn't resolved it yet) falls
+    // through to the stale-pending fallback, preserving today's mock behavior.
+    const rawPayload = JSON.stringify({
+      reconciliation: true,
+      reason: checkedStatus === 'PENDING' ? 'stale-pending-unresolved' : 'status-check',
+      staleAfterMinutes,
+    });
+    const finalStatus = checkedStatus === 'SUCCESS' ? 'SUCCESS' : 'FAILED';
     const result = txn.channel === 'DIRECT_DEBIT'
-      ? await processDirectDebitCallback({ clientReference: txn.clientReference, status: 'FAILED', rawPayload })
-      : await processHubtelCallback({ clientReference: txn.clientReference, status: 'FAILED', rawPayload });
+      ? await processDirectDebitCallback({ clientReference: txn.clientReference, status: finalStatus, rawPayload })
+      : await processHubtelCallback({ clientReference: txn.clientReference, status: finalStatus, rawPayload });
+    if (result.status === 'SUCCESS') succeeded += 1;
     if (result.status === 'FAILED') failed += 1;
   }
-  return { checked: stale.length, failed };
+  return { checked: stale.length, succeeded, failed, stillPending };
 }

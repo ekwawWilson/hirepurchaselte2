@@ -212,6 +212,13 @@ HUBTEL_POS_SALES_ID=
 HUBTEL_API_KEY=
 HUBTEL_API_SECRET=
 HUBTEL_CALLBACK_URL=http://localhost:3000/api/payments/hubtel/callback
+# HUBTEL_POS_SALES_ID above also identifies the merchant for Hubtel's
+# Transaction Status Check API (the mandatory failsafe when a payment
+# callback is lost/delayed) — same ID, no separate credential needed.
+# Optional — auto-derived from HUBTEL_CALLBACK_URL (swaps trailing /callback
+# for /preapproval/callback) when unset. Only set this if that derivation
+# doesn't match your actual routing.
+HUBTEL_PREAPPROVAL_CALLBACK_URL=
 # Shared secret HP-Lite expects on incoming Hubtel callbacks (fails CLOSED if unset).
 WEBHOOK_SHARED_TOKEN=replace-with-a-generated-secret
 ENV_EOF

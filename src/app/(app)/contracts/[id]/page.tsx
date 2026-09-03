@@ -30,6 +30,7 @@ interface ContractDetail {
   payments: Payment[];
   hubtelPreapprovalId: string | null;
   hubtelPreapproval: Preapproval | null;
+  paymentMethod: string;
 }
 
 const DIRECT_DEBIT_ELIGIBLE_TYPES = ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
@@ -51,6 +52,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
 
   const [ddMsisdn, setDdMsisdn] = useState('');
   const [ddNetwork, setDdNetwork] = useState('MTN');
+  const [ddMode, setDdMode] = useState<'DIRECT_DEBIT' | 'BOTH'>('DIRECT_DEBIT');
   const [ddSaving, setDdSaving] = useState(false);
   const [chargeAmount, setChargeAmount] = useState('');
   const [charging, setCharging] = useState(false);
@@ -135,10 +137,15 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     e.preventDefault();
     setDdSaving(true);
     try {
-      const res = await api.post<{ reused: boolean }>(`/contracts/${id}/direct-debit`, { msisdn: ddMsisdn, network: ddNetwork });
+      const res = await api.post<{ reused: boolean; preapproval: { status: string } }>(
+        `/contracts/${id}/direct-debit`, { msisdn: ddMsisdn, network: ddNetwork, paymentMethod: ddMode },
+      );
+      const pending = res.preapproval.status === 'PENDING';
       toast({
-        title: res.reused ? 'Existing mandate reused' : 'Direct debit mandate approved',
-        description: 'Mock mode approves instantly — a live account would prompt the customer via USSD or OTP.',
+        title: res.reused ? 'Existing mandate reused' : pending ? 'Awaiting customer approval' : 'Direct debit mandate approved',
+        description: pending
+          ? 'The customer must confirm on their phone (USSD prompt or OTP) before this can be charged.'
+          : undefined,
       });
       await load();
     } catch (e) {
@@ -260,7 +267,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   </form>
                 )}
                 <p className="text-xs text-gray-400">
-                  The mandate is charged automatically each day against whatever instalment is due — &quot;Charge now&quot; is only for an out-of-cycle collection.
+                  {contract.paymentMethod === 'BOTH'
+                    ? 'Customer can pay cash/USSD themselves — direct debit only charges once an instalment goes overdue (they defaulted on paying it).'
+                    : 'The mandate is charged automatically the moment each instalment is due.'}
+                  {' '}&quot;Charge now&quot; is only for an out-of-cycle collection.
                 </p>
               </div>
             ) : contract.status === 'ACTIVE' ? (
@@ -277,6 +287,17 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                     onChange={(e) => setDdNetwork(e.target.value)}
                   >
                     {DIRECT_DEBIT_NETWORKS.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <Label>Mode</Label>
+                  <select
+                    className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                    value={ddMode}
+                    onChange={(e) => setDdMode(e.target.value as 'DIRECT_DEBIT' | 'BOTH')}
+                  >
+                    <option value="DIRECT_DEBIT">Direct debit only</option>
+                    <option value="BOTH">Both — on default</option>
                   </select>
                 </div>
                 <Button type="submit" disabled={ddSaving}>{ddSaving ? 'Setting up...' : 'Set up direct debit'}</Button>

@@ -12,8 +12,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!perm.authorized) return perm.error;
 
   const { id } = await params;
-  const { msisdn, network } = (await req.json()) as { msisdn?: string; network?: string };
+  const { msisdn, network, paymentMethod } = (await req.json()) as { msisdn?: string; network?: string; paymentMethod?: 'DIRECT_DEBIT' | 'BOTH' };
   if (!msisdn || !network) return NextResponse.json({ error: 'msisdn and network are required' }, { status: 400 });
+  if (paymentMethod && paymentMethod !== 'DIRECT_DEBIT' && paymentMethod !== 'BOTH') {
+    return NextResponse.json({ error: 'paymentMethod must be DIRECT_DEBIT or BOTH' }, { status: 400 });
+  }
 
   const contract = await prisma.contract.findUnique({ where: { id } });
   if (!contract) return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
@@ -23,10 +26,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { preapproval, reused } = await initiatePreapproval({
       customerId: contract.customerId, msisdn, network, createdById: auth.user.id,
     });
-    const updated = await enableDirectDebit({ contractId: id, preapprovalId: preapproval.id, userId: auth.user.id });
+    // Defaults to DIRECT_DEBIT (proactive) when unspecified — matches this
+    // route's pre-existing behavior before BOTH mode was introduced.
+    const updated = await enableDirectDebit({
+      contractId: id, preapprovalId: preapproval.id, userId: auth.user.id, paymentMethod: paymentMethod ?? 'DIRECT_DEBIT',
+    });
     await logAudit({
       userId: auth.user.id, action: 'DIRECT_DEBIT_ENABLE', entityType: 'Contract', entityId: id,
-      newValues: { preapprovalId: preapproval.id, msisdn, network, reused },
+      newValues: { preapprovalId: preapproval.id, msisdn, network, reused, paymentMethod: paymentMethod ?? 'DIRECT_DEBIT' },
     });
     return NextResponse.json({ contract: updated, preapproval, reused });
   } catch (e) {

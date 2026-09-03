@@ -25,3 +25,22 @@ export function validateWebhookRequest(req: NextRequest): { valid: boolean; reas
   }
   return { valid: true };
 }
+
+/**
+ * Appends WEBHOOK_SHARED_TOKEN as a `?token=` query param to a callback URL
+ * before handing it to Hubtel — the counterpart to validateWebhookRequest's
+ * own check of that same query param. Without this, a real Hubtel callback
+ * would arrive with no token at all and be rejected outright.
+ */
+export function appendWebhookToken(callbackUrl: string): string {
+  const secret = process.env.WEBHOOK_SHARED_TOKEN;
+  if (!secret || !callbackUrl) return callbackUrl;
+  try {
+    const parsed = new URL(callbackUrl);
+    parsed.searchParams.set('token', secret);
+    return parsed.toString();
+  } catch {
+    const separator = callbackUrl.includes('?') ? '&' : '?';
+    return `${callbackUrl}${separator}token=${encodeURIComponent(secret)}`;
+  }
+}
