@@ -185,6 +185,7 @@ model InventoryItem {
   productId    String
   branchId     String
   serialNumber String   @unique
+  description  String?
   status       String   @default("AVAILABLE")
   createdAt    DateTime @default(now())
 

@@ -17,11 +17,18 @@ export async function receiveInventoryItem(params: {
   branchId: string;
   serialNumber: string;
   createdById: string;
+  description?: string;
   reason?: string;
 }) {
   return prisma.$transaction(async (tx) => {
     const item = await tx.inventoryItem.create({
-      data: { productId: params.productId, branchId: params.branchId, serialNumber: params.serialNumber, status: 'AVAILABLE' },
+      data: {
+        productId: params.productId,
+        branchId: params.branchId,
+        serialNumber: params.serialNumber,
+        description: params.description || null,
+        status: 'AVAILABLE',
+      },
     });
     await tx.stockMovement.create({
       data: {

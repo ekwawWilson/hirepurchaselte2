@@ -18,6 +18,7 @@ interface Branch { id: string; name: string; code: string }
 interface InventoryItem {
   id: string;
   serialNumber: string;
+  description: string | null;
   status: string;
   product: Product;
 }
@@ -33,6 +34,7 @@ export default function InventoryPage() {
   const [showForm, setShowForm] = useState(false);
   const [productId, setProductId] = useState('');
   const [serialNumber, setSerialNumber] = useState('');
+  const [description, setDescription] = useState('');
   const [branchId, setBranchId] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -70,10 +72,11 @@ export default function InventoryPage() {
     }
     setSaving(true);
     try {
-      await api.post('/inventory', { productId, serialNumber, ...(isAllBranch && { branchId }) });
+      await api.post('/inventory', { productId, serialNumber, description, ...(isAllBranch && { branchId }) });
       toast({ title: 'Stock received', description: `${serialNumber} added to inventory.` });
       setProductId('');
       setSerialNumber('');
+      setDescription('');
       setBranchId('');
       setShowForm(false);
       await load();
@@ -107,6 +110,15 @@ export default function InventoryPage() {
               <div>
                 <Label>Serial number / IMEI</Label>
                 <Input required className="mt-1.5" value={serialNumber} onChange={(e) => setSerialNumber(e.target.value)} />
+              </div>
+              <div>
+                <Label>Description (optional)</Label>
+                <Input
+                  className="mt-1.5"
+                  placeholder="e.g. condition notes, color, accessories included"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
               </div>
               {isAllBranch && (
                 <div>
@@ -168,7 +180,10 @@ export default function InventoryPage() {
               <TableBody>
                 {items.map((i) => (
                   <TableRow key={i.id}>
-                    <TableCell className="font-mono text-xs">{i.serialNumber}</TableCell>
+                    <TableCell>
+                      <div className="font-mono text-xs">{i.serialNumber}</div>
+                      {i.description && <div className="text-xs text-gray-400 mt-0.5">{i.description}</div>}
+                    </TableCell>
                     <TableCell className="font-medium text-gray-900">{i.product.name}</TableCell>
                     <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(i.status)}`}>{i.status}</span></TableCell>
                   </TableRow>

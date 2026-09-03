@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   if (!perm.authorized) return perm.error;
   const user = auth.user;
 
-  const { productId, serialNumber, branchId: branchIdInput, reason } = (await req.json()) as Record<string, string | undefined>;
+  const { productId, serialNumber, branchId: branchIdInput, description, reason } = (await req.json()) as Record<string, string | undefined>;
   if (!productId || !serialNumber) {
     return NextResponse.json({ error: 'productId and serialNumber are required' }, { status: 400 });
   }
@@ -43,6 +43,6 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.inventoryItem.findUnique({ where: { serialNumber } });
   if (existing) return NextResponse.json({ error: 'An inventory item with this serial number already exists' }, { status: 409 });
 
-  const item = await receiveInventoryItem({ productId, branchId, serialNumber, createdById: user.id, reason });
+  const item = await receiveInventoryItem({ productId, branchId, serialNumber, description, createdById: user.id, reason });
   return NextResponse.json({ item }, { status: 201 });
 }
