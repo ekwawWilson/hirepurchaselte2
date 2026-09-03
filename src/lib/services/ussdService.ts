@@ -3,6 +3,7 @@ import { formatMoney } from '../utils/money';
 import { initiateHubtelPayment } from './hubtelPaymentService';
 import { getOrgSettings } from './orgSettingsService';
 import { contractTypeLabel } from '../utils';
+import { phoneVariants } from './hubtelClient';
 
 const SESSION_TTL_MINUTES = 5;
 
@@ -32,9 +33,14 @@ const ALT_PHONE_PROMPT = 'Enter a registered phone number to continue, or 0 to c
 // whichever one happens to be stored in the "main" slot (customerService.ts) —
 // and, via ENTER_ALT_PHONE below, from a number that isn't registered at all
 // (a shared/agent phone) as long as they can type in one that is.
+// Hubtel's real dial-in "Mobile" always arrives 233-prefixed; a customer's
+// number is stored exactly as typed at registration (0-prefixed, 233-prefixed
+// or +233-prefixed, all seen in practice) — so every equivalent form has to be
+// tried, or a real dial-in from a correctly-registered customer never matches.
 function findCustomerByPhone(msisdn: string) {
+  const variants = phoneVariants(msisdn);
   return prisma.customer.findFirst({
-    where: { OR: [{ phone: msisdn }, { phone2: msisdn }, { phone3: msisdn }] },
+    where: { OR: variants.flatMap((v) => [{ phone: v }, { phone2: v }, { phone3: v }]) },
   });
 }
 

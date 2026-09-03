@@ -39,6 +39,26 @@ export function formatPhoneForHubtel(phone: string): string {
   return cleaned;
 }
 
+/**
+ * All equivalent written forms of a Ghana phone number — 0244000111,
+ * 233244000111, +233244000111. Customer phone numbers are stored as free
+ * text (whatever format the operator typed at registration; see
+ * customerService.ts), while Hubtel's real USSD gateway sends the dialing
+ * number as "Mobile" in 233-prefixed form. An exact-match lookup against a
+ * 0-prefixed stored number would silently never match a real dial-in, so
+ * anywhere a phone number from an external source (USSD, a callback) is
+ * matched against stored customer records, it must be matched against every
+ * variant, not the raw value alone.
+ */
+export function phoneVariants(phone: string): string[] {
+  const trimmed = phone.trim();
+  if (!trimmed) return [];
+  const digits = trimmed.replace(/\s/g, '').replace(/^\+/, '');
+  const local = digits.startsWith('233') ? '0' + digits.slice(3) : digits.startsWith('0') ? digits : '0' + digits;
+  const intl = digits.startsWith('233') ? digits : formatPhoneForHubtel(digits);
+  return [...new Set([trimmed, local, intl, `+${intl}`])];
+}
+
 /** Maps our network name to Hubtel's channel code, appending -direct-debit for mandate initiation/charges. */
 export function getHubtelChannel(network: string, isDirectDebit = false): string {
   const suffix = isDirectDebit ? '-direct-debit' : '';
