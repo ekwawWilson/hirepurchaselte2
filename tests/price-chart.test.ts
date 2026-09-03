@@ -269,6 +269,60 @@ describe('Product setup/edit can also close a Device Loan pricing gap', () => {
     expect(listed.missingContractTypes.sort()).toEqual(['SAVE_TO_OWN']);
   });
 
+  it('PATCH /api/products/[id] adds missing Deposit + Instalment pricing without touching existing entries', async () => {
+    const created = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin,
+      body: { name: `Fix Missing Deposit Instalment ${runId}`, cashPriceMinor: 250000 },
+    }));
+    const productId = (await created.json()).product.id;
+
+    const before = await productGET(makeRequest('GET', `/api/products/${productId}`, { token: admin }), makeParams({ id: productId }));
+    expect((await before.json()).product.priceChartEntries).toEqual([]);
+
+    const patched = await productPATCH(
+      makeRequest('PATCH', `/api/products/${productId}`, {
+        token: admin,
+        body: { termPricing: { 3: { totalPayableMinor: 280000, depositAmountMinor: 50000 }, 6: { totalPayableMinor: 320000, depositAmountMinor: 50000 } } },
+      }),
+      makeParams({ id: productId }),
+    );
+    expect(patched.status).toBe(200);
+
+    const after = await productGET(makeRequest('GET', `/api/products/${productId}`, { token: admin }), makeParams({ id: productId }));
+    const entries = (await after.json()).product.priceChartEntries;
+    expect(entries).toHaveLength(2);
+    expect(entries.every((e: { contractType: string }) => e.contractType === 'DEPOSIT_INSTALMENT')).toBe(true);
+  });
+
+  it('a re-submitted PATCH does not version-out (overwrite) an already-priced Deposit + Instalment term', async () => {
+    const created = await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin,
+      body: {
+        name: `Skip Already Priced Deposit ${runId}`, cashPriceMinor: 250000,
+        termPricing: { 3: { totalPayableMinor: 280000, depositAmountMinor: 50000 } },
+      },
+    }));
+    const productId = (await created.json()).product.id;
+    const original = await prisma.priceChartEntry.findFirstOrThrow({ where: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 3 } });
+
+    // Resubmit the same 3-month term (already priced) plus a genuinely new 6-month term.
+    const patched = await productPATCH(
+      makeRequest('PATCH', `/api/products/${productId}`, {
+        token: admin,
+        body: { termPricing: { 3: { totalPayableMinor: 999999, depositAmountMinor: 1 }, 6: { totalPayableMinor: 320000, depositAmountMinor: 50000 } } },
+      }),
+      makeParams({ id: productId }),
+    );
+    expect(patched.status).toBe(200);
+
+    const stillOriginal = await prisma.priceChartEntry.findUniqueOrThrow({ where: { id: original.id } });
+    expect(stillOriginal.effectiveTo).toBeNull(); // never superseded
+    expect(stillOriginal.totalPayableMinor).toBe(280000); // untouched, not overwritten with 999999
+
+    const sixMonth = await prisma.priceChartEntry.findFirst({ where: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6 } });
+    expect(sixMonth?.totalPayableMinor).toBe(320000); // the genuinely-new term was still created
+  });
+
   it('PATCH /api/products/[id] adds missing Device Loan pricing without touching existing entries', async () => {
     const created = await productsPOST(makeRequest('POST', '/api/products', {
       token: admin,

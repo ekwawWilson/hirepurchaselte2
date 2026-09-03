@@ -26,6 +26,8 @@ interface Product {
 const frequencyLabel = (f: string) => f.charAt(0) + f.slice(1).toLowerCase();
 const ALL_CONTRACT_TYPES = ['SAVE_TO_OWN', 'DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
 const TERM_MONTHS = [3, 4, 6] as const;
+type TermPricingForm = { totalPayable: string; deposit: string };
+const emptyTermPricing: Record<number, TermPricingForm> = { 3: { totalPayable: '', deposit: '' }, 4: { totalPayable: '', deposit: '' }, 6: { totalPayable: '', deposit: '' } };
 type DeviceLoanPricingForm = { totalPayable: string; interestRate: string };
 const emptyDeviceLoanPricing: Record<number, DeviceLoanPricingForm> = { 3: { totalPayable: '', interestRate: '' }, 4: { totalPayable: '', interestRate: '' }, 6: { totalPayable: '', interestRate: '' } };
 
@@ -38,6 +40,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', categoryId: '', brand: '', model: '', cashPrice: '', isActive: true });
   const [saving, setSaving] = useState(false);
+  const [showTermPricingForm, setShowTermPricingForm] = useState(false);
+  const [termPricing, setTermPricing] = useState(emptyTermPricing);
+  const [savingTermPricing, setSavingTermPricing] = useState(false);
   const [showDeviceLoanForm, setShowDeviceLoanForm] = useState(false);
   const [deviceLoanPricing, setDeviceLoanPricing] = useState(emptyDeviceLoanPricing);
   const [savingDeviceLoan, setSavingDeviceLoan] = useState(false);
@@ -84,6 +89,32 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     }
   }
 
+  async function onSaveTermPricing() {
+    if (!product) return;
+    const payload: Record<number, { totalPayableMinor: number; depositAmountMinor: number }> = {};
+    for (const term of TERM_MONTHS) {
+      const t = termPricing[term];
+      if (!t.totalPayable.trim()) continue; // blank = skip this period
+      payload[term] = { totalPayableMinor: Math.round(parseFloat(t.totalPayable) * 100), depositAmountMinor: Math.round(parseFloat(t.deposit || '0') * 100) };
+    }
+    if (Object.keys(payload).length === 0) {
+      toast({ title: 'Enter at least one period to price', variant: 'destructive' });
+      return;
+    }
+    setSavingTermPricing(true);
+    try {
+      await api.patch(`/products/${id}`, { termPricing: payload });
+      toast({ title: 'Deposit + Instalment pricing added' });
+      setShowTermPricingForm(false);
+      setTermPricing(emptyTermPricing);
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save pricing', variant: 'destructive' });
+    } finally {
+      setSavingTermPricing(false);
+    }
+  }
+
   async function onSaveDeviceLoanPricing() {
     if (!product) return;
     const payload: Record<number, { totalPayableMinor: number; interestRateBps: number }> = {};
@@ -114,6 +145,10 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>;
   }
 
+  const pricedTermMonths = new Set(
+    product.priceChartEntries.filter((e) => e.contractType === 'DEPOSIT_INSTALMENT' && !e.effectiveTo).map((e) => e.termMonths),
+  );
+  const hasMissingTerm = TERM_MONTHS.some((t) => !pricedTermMonths.has(t));
   const pricedDeviceLoanTerms = new Set(
     product.priceChartEntries.filter((e) => e.contractType === 'DEVICE_LOAN' && !e.effectiveTo).map((e) => e.termMonths),
   );
@@ -230,6 +265,57 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           )}
         </CardContent>
       </Card>
+
+      {canUpdate && hasMissingTerm && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+            <CardTitle>Deposit + Instalment pricing</CardTitle>
+            {!showTermPricingForm && (
+              <Button size="sm" variant="outline" onClick={() => setShowTermPricingForm(true)}>Add missing pricing</Button>
+            )}
+          </CardHeader>
+          {showTermPricingForm && (
+            <CardContent className="space-y-3">
+              {TERM_MONTHS.map((term) => {
+                const priced = pricedTermMonths.has(term);
+                return (
+                  <div key={term} className={`ring-1 ring-black/5 p-3 ${priced ? 'opacity-60' : ''}`}>
+                    <div className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                      {term} months
+                      {priced && <Badge variant="success">Already priced</Badge>}
+                    </div>
+                    {!priced && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs font-normal text-gray-500">Base Price (GHS)</Label>
+                          <Input
+                            type="number" step="0.01" min={0} placeholder="0.00" className="mt-1"
+                            value={termPricing[term].totalPayable}
+                            onChange={(e) => setTermPricing({ ...termPricing, [term]: { ...termPricing[term], totalPayable: e.target.value } })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs font-normal text-gray-500">Deposit (GHS)</Label>
+                          <Input
+                            type="number" step="0.01" min={0} placeholder="0.00" className="mt-1"
+                            value={termPricing[term].deposit}
+                            onChange={(e) => setTermPricing({ ...termPricing, [term]: { ...termPricing[term], deposit: e.target.value } })}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="text-xs text-gray-400">Leave blank to skip a period. These prices are auto-filled during contract creation.</p>
+              <div className="flex gap-2 pt-1">
+                <Button type="button" onClick={onSaveTermPricing} disabled={savingTermPricing}>{savingTermPricing ? 'Saving...' : 'Save pricing'}</Button>
+                <Button type="button" variant="outline" onClick={() => { setShowTermPricingForm(false); setTermPricing(emptyTermPricing); }}>Cancel</Button>
+              </div>
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {canUpdate && hasMissingDeviceLoanTerm && (
         <Card>
