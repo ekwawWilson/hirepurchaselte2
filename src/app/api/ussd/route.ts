@@ -21,11 +21,19 @@ export async function POST(req: NextRequest) {
     msisdn: mobile,
     input: message ?? '',
     isNewSession: type === 'Initiation',
+    isTimeout: type === 'Timeout',
   });
 
+  // Field names/casing and the Label/DataType/FieldType fields follow Hubtel's
+  // Programmable Services response contract exactly — Label/DataType/FieldType
+  // are Mandatory there, and a missing one (or a wrong-cased Type value) is what
+  // produces Hubtel's own "invalid response, Error: UUE" rejection.
   return NextResponse.json({
     SessionId: sessionId,
+    Type: result.continueSession ? 'response' : 'release',
     Message: result.message,
-    Type: result.continueSession ? 'Response' : 'Release',
+    Label: result.label,
+    DataType: result.continueSession ? 'input' : 'display',
+    FieldType: result.fieldType ?? 'text',
   });
 }

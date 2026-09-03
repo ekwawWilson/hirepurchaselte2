@@ -28,7 +28,7 @@ export default function UssdSimulatorPage() {
       });
       const body = await res.json();
       setLog((l) => [...l, { from: 'system', text: body.Message }]);
-      setEnded(body.Type === 'Release');
+      setEnded(body.Type === 'release');
     } finally {
       setLoading(false);
     }
