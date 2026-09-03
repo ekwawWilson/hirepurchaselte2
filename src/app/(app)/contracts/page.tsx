@@ -430,13 +430,13 @@ export default function ContractsPage() {
                           key={term}
                           disabled={!entry}
                           onClick={() => setSelectedTermMonths(term)}
-                          className={`p-3 border text-left transition-colors ${
+                          className={`min-w-0 p-3 border text-left transition-colors ${
                             !entry ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
                             : active ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'
                           }`}
                         >
                           <p className="text-xs font-medium text-gray-500">{term} Months</p>
-                          <p className={`text-sm font-semibold mt-0.5 ${entry ? 'text-gray-900' : 'text-gray-300'}`}>
+                          <p className={`text-sm font-semibold mt-0.5 break-words ${entry ? 'text-gray-900' : 'text-gray-300'}`}>
                             {entry ? formatCurrency(entry.totalPayableMinor) : 'Not priced'}
                           </p>
                         </button>

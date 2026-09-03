@@ -116,7 +116,7 @@ export default function SettingsPage() {
       <Card>
         <CardHeader><CardTitle>Preview</CardTitle></CardHeader>
         <CardContent>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
             {form.logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={form.logoUrl} alt={form.companyName} className="w-8 h-8 rounded-lg object-cover shrink-0" />
@@ -125,8 +125,8 @@ export default function SettingsPage() {
                 <span className="text-white text-[13px] font-extrabold tracking-tighter">{companyInitials(form.companyName || APP_NAME)}</span>
               </div>
             )}
-            <div className="flex flex-col leading-none">
-              <span className="text-[15px] font-extrabold text-gray-900 tracking-tight">{form.companyName || APP_NAME}</span>
+            <div className="flex flex-col leading-none min-w-0">
+              <span className="text-[15px] font-extrabold text-gray-900 tracking-tight truncate">{form.companyName || APP_NAME}</span>
               <span className="text-[10px] text-gray-400 font-medium tracking-wide uppercase">Hire Purchase System</span>
             </div>
           </div>

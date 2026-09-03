@@ -205,13 +205,13 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Total payable</p><p className="text-lg font-semibold text-gray-900">{formatCurrency(contract.totalPayableMinor)}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Total paid</p><p className="text-lg font-semibold text-gray-900">{formatCurrency(contract.totalPaidMinor)}</p></CardContent></Card>
-        <Card>
+        <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total payable</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPayableMinor)}</p></CardContent></Card>
+        <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total paid</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPaidMinor)}</p></CardContent></Card>
+        <Card className="min-w-0">
           <CardContent className="p-4">
             <p className="text-xs text-gray-500">Balance</p>
-            <p className="text-lg font-semibold text-gray-900">{formatCurrency(contract.balanceMinor)}</p>
-            {contract.creditMinor > 0 && <p className="text-xs text-green-700 mt-0.5">Credit: {formatCurrency(contract.creditMinor)}</p>}
+            <p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.balanceMinor)}</p>
+            {contract.creditMinor > 0 && <p className="text-xs text-green-700 mt-0.5 break-words">Credit: {formatCurrency(contract.creditMinor)}</p>}
           </CardContent>
         </Card>
       </div>

@@ -23,12 +23,12 @@ function StatCard({
   return (
     <Link
       href={href}
-      className="flex flex-col gap-3 bg-white shadow-sm ring-1 ring-black/5 p-5 hover:shadow-md hover:-translate-y-px transition-all"
+      className="flex min-w-0 flex-col gap-3 bg-white shadow-sm ring-1 ring-black/5 p-5 hover:shadow-md hover:-translate-y-px transition-all"
     >
       <div className={`flex h-9 w-9 shrink-0 items-center justify-center ${iconBg}`}>
         <Icon className={`h-4.5 w-4.5 ${iconClass}`} strokeWidth={1.75} />
       </div>
-      <p className={`text-2xl font-bold tracking-tight ${highlight ? 'text-red-600' : 'text-gray-900'}`}>{value}</p>
+      <p className={`text-xl sm:text-2xl font-bold tracking-tight break-words ${highlight ? 'text-red-600' : 'text-gray-900'}`}>{value}</p>
       <p className="text-xs font-medium text-gray-500 -mt-2">{title}</p>
       {subtitle && <p className="text-xs text-gray-400 border-t border-gray-100 pt-2.5 truncate">{subtitle}</p>}
     </Link>
