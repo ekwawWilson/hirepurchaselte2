@@ -134,6 +134,12 @@ describe('Reports', () => {
     const { entries } = await res.json();
     expect(entries.some((e: { action: string; entityId: string }) => e.action === 'CONTRACT_CREATE' && e.entityId === contract.id)).toBe(true);
     expect(entries.some((e: { action: string }) => e.action === 'PAYMENT_CASH_RECORD')).toBe(true);
+
+    // CUSTOMER_CREATE's entry should resolve to the customer's actual name,
+    // not just their opaque id — that's the whole point of entityName.
+    const customer = await prisma.customer.findUniqueOrThrow({ where: { id: contract.customerId } });
+    const customerEntry = entries.find((e: { action: string; entityId: string }) => e.action === 'CUSTOMER_CREATE' && e.entityId === contract.customerId);
+    expect(customerEntry.entityName).toBe(`${customer.firstName} ${customer.lastName}`);
   });
 
   it('RBAC: SALES (no report permission) gets 403 on reports and dashboard; ADMIN gets 200', async () => {

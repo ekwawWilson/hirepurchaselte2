@@ -13,7 +13,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { formatDateTime } from '@/lib/utils';
 
 interface Entry {
-  id: string; action: string; entityType: string; entityId: string | null;
+  id: string; action: string; entityType: string; entityId: string | null; entityName: string | null;
   oldValues: string | null; newValues: string | null; createdAt: string;
   user: { firstName: string; lastName: string; email: string } | null;
 }
@@ -90,7 +90,13 @@ export default function AuditTrailReportPage() {
                         <TableCell className="text-gray-500">{formatDateTime(e.createdAt)}</TableCell>
                         <TableCell>{e.user ? `${e.user.firstName} ${e.user.lastName}` : 'System'}</TableCell>
                         <TableCell className="font-medium text-gray-900">{e.action}</TableCell>
-                        <TableCell className="font-mono text-xs">{e.entityType}{e.entityId ? ` · ${e.entityId.slice(0, 8)}…` : ''}</TableCell>
+                        <TableCell className="text-xs">
+                          {e.entityName ? (
+                            <>{e.entityType} · <span className="font-medium text-gray-900">{e.entityName}</span></>
+                          ) : (
+                            <span className="font-mono">{e.entityType}{e.entityId ? ` · ${e.entityId.slice(0, 8)}…` : ''}</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-xs text-primary">{expanded === e.id ? 'Hide' : 'Details'}</TableCell>
                       </TableRow>
                       {expanded === e.id && (e.oldValues || e.newValues) && (

@@ -235,12 +235,26 @@ export async function loanBookReport(scope: Scope) {
 // 11. User activity / audit trail.
 export async function auditTrailReport(from?: string, to?: string) {
   const { start, end } = dayRange(from, to);
-  return prisma.auditLog.findMany({
+  const entries = await prisma.auditLog.findMany({
     where: { createdAt: { gte: start, lte: end } },
     include: { user: { select: { firstName: true, lastName: true, email: true } } },
     orderBy: { createdAt: 'desc' },
     take: 500,
   });
+
+  // Resolve a customer's name for any Customer-entity entry — the raw id
+  // means nothing to a reviewer scanning the report without cross-referencing
+  // the Customers page by hand for every row.
+  const customerIds = [...new Set(entries.filter((e) => e.entityType === 'Customer' && e.entityId).map((e) => e.entityId as string))];
+  const customers = customerIds.length
+    ? await prisma.customer.findMany({ where: { id: { in: customerIds } }, select: { id: true, firstName: true, lastName: true } })
+    : [];
+  const customerNameById = new Map(customers.map((c) => [c.id, `${c.firstName} ${c.lastName}`]));
+
+  return entries.map((e) => ({
+    ...e,
+    entityName: e.entityType === 'Customer' && e.entityId ? customerNameById.get(e.entityId) ?? null : null,
+  }));
 }
 
 // 12. Customer registrations.
