@@ -14,6 +14,7 @@ import { POST as contractReleasePOST } from '@/app/api/contracts/[id]/release/ro
 import { POST as paymentsCashPOST } from '@/app/api/payments/cash/route';
 import { GET as paymentsGET } from '@/app/api/payments/route';
 import { POST as paymentReversePOST } from '@/app/api/payments/[id]/reverse/route';
+import { POST as withdrawPOST } from '@/app/api/payments/withdraw/route';
 
 const PASSWORD = 'Passw0rd!123';
 
@@ -124,6 +125,78 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(released.status).toBe(200);
     expect((await released.json()).contract.status).toBe('RELEASED');
     expect(await getItemStatus(itemId)).toBe('ISSUED');
+  });
+
+  it('SAVE_TO_OWN: customer can withdraw part of their savings, capped at what they saved, and reversing it restores the balance', async () => {
+    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
+    }));
+    expect(entry.status).toBe(201);
+
+    const custId = await makeCustomer('Withdraw');
+    const itemId = await receiveItem('W');
+    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
+    }));
+    const contract = (await created.json()).contract;
+
+    await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
+      token: cashier, body: { contractId: contract.id, amountMinor: 100000, entryType: 'INSTALMENT_PAYMENT' },
+    }));
+
+    // Can't withdraw more than has actually been saved.
+    const overWithdraw = await withdrawPOST(makeRequest('POST', '/api/payments/withdraw', {
+      token: admin, body: { contractId: contract.id, amountMinor: 100001 },
+    }));
+    expect(overWithdraw.status).toBe(400);
+
+    // A cashier (payment.cash.record only, no payment.reverse) can record money in but not pay it back out.
+    const forbidden = await withdrawPOST(makeRequest('POST', '/api/payments/withdraw', {
+      token: cashier, body: { contractId: contract.id, amountMinor: 10000 },
+    }));
+    expect(forbidden.status).toBe(403);
+
+    const withdrawn = await withdrawPOST(makeRequest('POST', '/api/payments/withdraw', {
+      token: admin, body: { contractId: contract.id, amountMinor: 30000 },
+    }));
+    expect(withdrawn.status).toBe(201);
+    const withdrawal = (await withdrawn.json()).payment;
+    expect(withdrawal.entryType).toBe('WITHDRAWAL');
+
+    let detail = await getContract(contract.id, admin);
+    expect(detail.totalPaidMinor).toBe(70000);
+    expect(detail.balanceMinor).toBe(170000);
+
+    // Reversing the withdrawal — same reversal mechanism as any other payment — restores it.
+    const reversed = await paymentReversePOST(
+      makeRequest('POST', `/api/payments/${withdrawal.id}/reverse`, { token: admin, body: { reason: 'test reversal' } }),
+      makeParams({ id: withdrawal.id }),
+    );
+    expect(reversed.status).toBe(200);
+    detail = await getContract(contract.id, admin);
+    expect(detail.totalPaidMinor).toBe(100000);
+    expect(detail.balanceMinor).toBe(140000);
+  });
+
+  it('withdrawals are only available on SAVE_TO_OWN contracts', async () => {
+    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
+    }));
+    expect(entry.status).toBe(201);
+
+    const custId = await makeCustomer('NoWithdraw');
+    const itemId = await receiveItem('NW');
+    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
+    }));
+    const contract = (await created.json()).contract;
+
+    const res = await withdrawPOST(makeRequest('POST', '/api/payments/withdraw', {
+      token: admin, body: { contractId: contract.id, amountMinor: 10000 },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/only available on save to own/i);
   });
 
   it('DEPOSIT_INSTALMENT: device withheld until deposit threshold is met (partial deposits accumulate)', async () => {

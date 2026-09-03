@@ -36,7 +36,12 @@ export async function dailyCashReceivedReport(scope: Scope, from?: string, to?: 
   const byCashier = new Map<string, { name: string; amountMinor: number; count: number }>();
 
   for (const p of payments) {
-    const signed = p.reversesPaymentId ? -p.amountMinor : p.amountMinor;
+    // A WITHDRAWAL is cash actually handed back to the customer — it reduces
+    // the day's net cash position the same way a reversal does. Both signs
+    // can combine (a reversed withdrawal flips back to positive), matching
+    // paymentService.recomputeContract's own sign convention exactly.
+    const magnitude = p.entryType === 'WITHDRAWAL' ? -p.amountMinor : p.amountMinor;
+    const signed = p.reversesPaymentId ? -magnitude : magnitude;
     totalMinor += signed;
     byChannel[p.channel] = (byChannel[p.channel] ?? 0) + signed;
 

@@ -42,7 +42,10 @@ export default function PaymentsRegisterReportPage() {
   }, []);
 
   const successful = report?.payments.filter((p) => p.status === 'SUCCESS' && !p.reversesPaymentId) ?? [];
-  const totalMinor = successful.reduce((s, p) => s + p.amountMinor, 0);
+  // A WITHDRAWAL is cash paid back out to the customer, not received — it
+  // subtracts from the total the same way it subtracts from a contract's
+  // totalPaidMinor (paymentService.recomputeContract).
+  const totalMinor = successful.reduce((s, p) => s + (p.entryType === 'WITHDRAWAL' ? -p.amountMinor : p.amountMinor), 0);
 
   return (
     <div className="space-y-5">
@@ -76,9 +79,13 @@ export default function PaymentsRegisterReportPage() {
                     <TableRow key={p.id}>
                       <TableCell className="text-gray-500">{formatDateTime(p.createdAt)}</TableCell>
                       <TableCell className="font-mono text-xs">{p.contract.contractNumber}</TableCell>
-                      <TableCell>{p.reversesPaymentId ? 'Reversal' : p.entryType === 'DEPOSIT' ? 'Deposit' : 'Instalment'}</TableCell>
+                      <TableCell>
+                        {p.reversesPaymentId ? 'Reversal' : p.entryType === 'DEPOSIT' ? 'Deposit' : p.entryType === 'WITHDRAWAL' ? 'Withdrawal' : 'Instalment'}
+                      </TableCell>
                       <TableCell>{p.channel}</TableCell>
-                      <TableCell>{formatCurrency(p.amountMinor)}</TableCell>
+                      <TableCell className={p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? 'text-red-600' : undefined}>
+                        {p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? '-' : ''}{formatCurrency(p.amountMinor)}
+                      </TableCell>
                       <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(p.status)}`}>{p.status}</span></TableCell>
                       <TableCell className="font-mono text-xs">{p.receiptNumber ?? '—'}</TableCell>
                       <TableCell>{p.createdBy ? `${p.createdBy.firstName} ${p.createdBy.lastName}` : '—'}</TableCell>

@@ -45,6 +45,9 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [entryType, setEntryType] = useState<'DEPOSIT' | 'INSTALMENT_PAYMENT'>('INSTALMENT_PAYMENT');
   const [saving, setSaving] = useState(false);
 
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawing, setWithdrawing] = useState(false);
+
   const [reverseTarget, setReverseTarget] = useState<Payment | null>(null);
   const [reverseReason, setReverseReason] = useState('');
   const [confirmAction, setConfirmAction] = useState<'cancel' | 'writeoff' | 'release' | null>(null);
@@ -93,6 +96,22 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to record payment', variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function recordWithdrawal(e: React.FormEvent) {
+    e.preventDefault();
+    setWithdrawing(true);
+    try {
+      const amountMinor = Math.round(parseFloat(withdrawAmount) * 100);
+      await api.post('/payments/withdraw', { contractId: id, amountMinor });
+      toast({ title: 'Withdrawal recorded', description: formatCurrency(amountMinor) });
+      setWithdrawAmount('');
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to record withdrawal', variant: 'destructive' });
+    } finally {
+      setWithdrawing(false);
     }
   }
 
@@ -312,11 +331,24 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       {contract.contractType === 'SAVE_TO_OWN' ? (
         <Card>
           <CardHeader><CardTitle>Savings progress</CardTitle></CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <p className="text-sm text-gray-500">
               Save to Own has no fixed schedule — the customer deposits any amount, any time, toward the total
               above. The device is released once the balance reaches zero.
             </p>
+            {canReverse && contract.status === 'ACTIVE' && contract.totalPaidMinor > 0 && (
+              <form className="flex items-end gap-3 border-t border-gray-100 pt-4" onSubmit={recordWithdrawal}>
+                <div>
+                  <Label>Withdraw savings (GHS)</Label>
+                  <Input
+                    required type="number" step="0.01" min="0.01" max={contract.totalPaidMinor / 100}
+                    className="mt-1.5 w-40" value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" variant="outline" disabled={withdrawing}>{withdrawing ? 'Withdrawing...' : 'Withdraw'}</Button>
+                <p className="text-xs text-gray-400 pb-2.5">Up to {formatCurrency(contract.totalPaidMinor)} saved so far</p>
+              </form>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -373,7 +405,9 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   <TableCell className="text-gray-500">{formatDateTime(p.createdAt)}</TableCell>
                   <TableCell>{p.entryType}{p.reversesPaymentId && ' (reversal)'}</TableCell>
                   <TableCell>{p.channel}</TableCell>
-                  <TableCell>{formatCurrency(p.amountMinor)}</TableCell>
+                  <TableCell className={p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? 'text-red-600' : undefined}>
+                    {p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? '-' : ''}{formatCurrency(p.amountMinor)}
+                  </TableCell>
                   <TableCell className="font-mono text-xs">{p.receiptNumber ?? '—'}</TableCell>
                   <TableCell>
                     {canReverse && !p.reversesPaymentId && !p.reversedById && (

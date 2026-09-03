@@ -38,7 +38,16 @@ async function recomputeContract(tx: Tx, contractId: string) {
   const contract = await tx.contract.findUniqueOrThrow({ where: { id: contractId } });
   const effectivePayments = await getEffectivePayments(tx, contractId);
 
-  const totalPaidMinor = effectivePayments.reduce((sum, p) => sum + p.amountMinor, 0);
+  // A WITHDRAWAL row stores its magnitude as a positive amountMinor (same
+  // convention as every other payment — sign is never stored raw, see the
+  // reversal rows below), but subtracts from the running total instead of
+  // adding to it. Reversing a withdrawal (the existing reversal mechanism,
+  // unchanged) simply drops it from effectivePayments, restoring the amount —
+  // no separate "undo a withdrawal" logic needed.
+  const totalPaidMinor = effectivePayments.reduce(
+    (sum, p) => sum + (p.entryType === 'WITHDRAWAL' ? -p.amountMinor : p.amountMinor),
+    0,
+  );
 
   const paidByInstalment = new Map<string, number>();
   const paidPenaltyIds = new Set<string>();
@@ -285,6 +294,67 @@ export async function postPayment(params: PostPaymentParams) {
   }
 
   return result;
+}
+
+export interface PostWithdrawalParams {
+  contractId: string;
+  amountMinor: number;
+  notes?: string;
+  createdById: string;
+}
+
+/**
+ * SAVE_TO_OWN's counterpart to postPayment: the customer can pull part of
+ * their savings back out (a real need — an emergency, a change of mind on
+ * how much to save) rather than the money being locked in until the full
+ * target is reached. Deliberately its own function rather than a branch of
+ * postPayment: it only ever makes sense for SAVE_TO_OWN, never allocates
+ * against an instalment/penalty (SAVE_TO_OWN has none), and is capped by
+ * what's actually been saved rather than validated against amountMinor alone.
+ *
+ * Stored as a normal SUCCESS payment row (entryType WITHDRAWAL, amountMinor
+ * always a positive magnitude — same "never store a raw negative" convention
+ * every other payment follows) so it rides the existing ledger unchanged:
+ * recomputeContract subtracts it, reversePayment (existing, untouched) undoes
+ * it by simply excluding it again, and it appears in the Payments list and
+ * every cash report like any other entry — nothing needed a parallel table.
+ */
+export async function postWithdrawal(params: PostWithdrawalParams) {
+  if (params.amountMinor <= 0) throw new PaymentError('amountMinor must be positive');
+
+  const transactionRef = generateTransactionRef();
+
+  return prisma.$transaction(async (tx) => {
+    const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+
+    if (contract.contractType !== 'SAVE_TO_OWN') {
+      throw new PaymentError('Withdrawals are only available on Save to Own contracts');
+    }
+    if (TERMINAL_CONTRACT_STATUSES.includes(contract.status)) {
+      throw new PaymentError(`Cannot withdraw from a contract in status ${contract.status}`);
+    }
+    if (params.amountMinor > contract.totalPaidMinor) {
+      throw new PaymentError('Cannot withdraw more than the customer has saved so far');
+    }
+
+    const payment = await tx.payment.create({
+      data: {
+        contractId: contract.id,
+        entryType: 'WITHDRAWAL',
+        amountMinor: params.amountMinor,
+        channel: 'CASH',
+        transactionRef,
+        status: 'SUCCESS',
+        receiptNumber: generateReceiptNumber(),
+        notes: params.notes,
+        createdById: params.createdById,
+        receivedAt: new Date(),
+      },
+    });
+
+    await recomputeContract(tx, contract.id);
+    return payment;
+  });
 }
 
 /**
