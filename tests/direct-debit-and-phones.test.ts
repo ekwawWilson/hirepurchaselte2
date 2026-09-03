@@ -420,7 +420,43 @@ describe('Hubtel Direct Debit', () => {
     expect(preapproval.customerId).toBe(customerId);
   });
 
-  it('a DEPOSIT_INSTALMENT contract defers mandate initiation until the deposit clears and it activates', async () => {
+  it('a DEPOSIT_INSTALMENT contract initiates the mandate immediately at creation, while still PENDING_DEPOSIT — no re-asking the customer once the deposit clears', async () => {
+    const productId = await makeProduct('DIEAGER');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 50000,
+        totalPayableMinor: 100000, instalmentAmountMinor: 8333, createdById: adminUserId,
+      },
+    });
+    const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'DIEAGER');
+
+    const contract = await createContract({
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
+      directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
+    });
+    expect(contract.status).toBe('PENDING_DEPOSIT');
+    // Requested right away — the customer is still at the counter, not only
+    // after they've paid the deposit and possibly left.
+    expect(contract.hubtelPreapprovalId).not.toBeNull();
+    expect(contract.pendingDirectDebitNetwork).toBe('MTN');
+
+    const mandateId = contract.hubtelPreapprovalId;
+    const mandateCountBefore = await prisma.hubtelPreapproval.count({ where: { customerId, network: 'MTN' } });
+    expect(mandateCountBefore).toBe(1);
+
+    await postPayment({ contractId: contract.id, amountMinor: 50000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
+
+    const activated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(activated.status).toBe('ACTIVE');
+    // Same mandate carried through activation — the deposit-clearing fallback
+    // (paymentService.advanceContractStatus) must not fire a second Hubtel
+    // prompt for a mandate that's already attached.
+    expect(activated.hubtelPreapprovalId).toBe(mandateId);
+    const mandateCountAfter = await prisma.hubtelPreapproval.count({ where: { customerId, network: 'MTN' } });
+    expect(mandateCountAfter).toBe(1);
+  });
+
+  it('a DEPOSIT_INSTALMENT contract created without direct debit still gets the deposit-clearing fallback', async () => {
     const productId = await makeProduct('DIDEFER');
     await prisma.priceChartEntry.create({
       data: {
@@ -430,19 +466,27 @@ describe('Hubtel Direct Debit', () => {
     });
     const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'DIDEFER');
 
+    // No direct-debit network/msisdn at creation — nothing requested yet.
     const contract = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
-      directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
     });
     expect(contract.status).toBe('PENDING_DEPOSIT');
-    expect(contract.hubtelPreapprovalId).toBeNull(); // not eligible yet — mandates require ACTIVE
-    expect(contract.pendingDirectDebitNetwork).toBe('MTN'); // captured, waiting to be used
+    expect(contract.hubtelPreapprovalId).toBeNull();
+
+    // Staff sets it up manually before the deposit is paid — enableDirectDebit
+    // now accepts PENDING_DEPOSIT for this contract type.
+    const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
+    const withMandate = await enableDirectDebit({ contractId: contract.id, preapprovalId: preapproval.id, userId: adminUserId, paymentMethod: 'DIRECT_DEBIT' });
+    expect(withMandate.hubtelPreapprovalId).toBe(preapproval.id);
+
+    // Charging before the deposit clears (contract still PENDING_DEPOSIT) is refused —
+    // the up-front deposit itself is never auto-debited, even once a mandate is attached.
+    await expect(chargeDirectDebit({ contractId: contract.id, amountMinor: 8333 })).rejects.toThrow(/ACTIVE contract/);
 
     await postPayment({ contractId: contract.id, amountMinor: 50000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
-
     const activated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(activated.status).toBe('ACTIVE');
-    expect(activated.hubtelPreapprovalId).not.toBeNull(); // auto-initiated the moment it activated, no re-asking the customer
+    expect(activated.hubtelPreapprovalId).toBe(preapproval.id); // unchanged — no duplicate initiated by the fallback
   });
 
   it('gracePeriodDays and penaltyRateBps default to 7/0 and can be set explicitly at creation', async () => {

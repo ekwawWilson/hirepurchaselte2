@@ -121,10 +121,16 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<Advanc
       }
       const sms = await queueSms({ contractId, templateKey: 'contract.activated', tx });
       if (sms) queuedSmsIds.push(sms.id);
-      // Captured in the wizard before the contract was eligible for a mandate
-      // (mandates require ACTIVE) — now that it just activated, hand it back to
-      // postPayment to initiate outside this transaction (see that function).
-      const pendingDirectDebit = (contract.pendingDirectDebitNetwork && contract.pendingDirectDebitMsisdn)
+      // Fallback only: contractService.ts now tries this at creation time
+      // (while still PENDING_DEPOSIT — enableDirectDebit accepts that status
+      // for DEPOSIT_INSTALMENT), so hubtelPreapprovalId is normally already
+      // set by the time a contract reaches here. Only fire this if that
+      // didn't happen (a failed/unreachable Hubtel call at creation, or a
+      // contract that didn't request direct debit until later) — never
+      // re-initiate a mandate that's already attached, which would fire a
+      // second Hubtel prompt at the customer for one that's already PENDING
+      // approval or already APPROVED.
+      const pendingDirectDebit = (!contract.hubtelPreapprovalId && contract.pendingDirectDebitNetwork && contract.pendingDirectDebitMsisdn)
         ? {
             contractId, customerId: contract.customerId,
             network: contract.pendingDirectDebitNetwork, msisdn: contract.pendingDirectDebitMsisdn,

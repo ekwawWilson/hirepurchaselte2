@@ -257,10 +257,16 @@ async function runContractTransaction(
     return { contract, queuedSmsId };
   }).then(async ({ contract, queuedSmsId }) => {
     if (queuedSmsId) void deliverQueuedSms(queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
-    // DEVICE_LOAN is ACTIVE immediately (no deposit gate) — a DEPOSIT_INSTALMENT contract
-    // is still PENDING_DEPOSIT here, so its pending direct debit is initiated later, from
-    // paymentService.advanceContractStatus, the moment the deposit clears.
-    if (contract.status === 'ACTIVE') {
+    // Tried right away, at creation — DEVICE_LOAN is ACTIVE immediately; a
+    // DEPOSIT_INSTALMENT contract is still PENDING_DEPOSIT here but
+    // enableDirectDebit now accepts that status too (hubtelPreapprovalService.ts),
+    // specifically so the customer gets the USSD/OTP mandate prompt while
+    // still at the counter, not only after the deposit clears (which may be a
+    // separate visit). If this fails or was never requested, postPayment's
+    // own pendingDirectDebit fallback (paymentService.advanceContractStatus)
+    // still catches it the moment the deposit clears and activates the
+    // contract, unchanged.
+    if (contract.pendingDirectDebitNetwork && contract.pendingDirectDebitMsisdn) {
       const updated = await initiateDirectDebitIfRequested({
         contractId: contract.id, customerId: contract.customerId,
         network: contract.pendingDirectDebitNetwork, msisdn: contract.pendingDirectDebitMsisdn,

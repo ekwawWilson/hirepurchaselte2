@@ -275,7 +275,13 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   </span>
                   <span className="text-sm text-gray-600">{contract.hubtelPreapproval.customerMsisdn} &middot; {contract.hubtelPreapproval.network}</span>
                 </div>
-                {contract.hubtelPreapproval.status === 'APPROVED' && canPay && (
+                {contract.status === 'PENDING_DEPOSIT' && (
+                  <p className="text-xs text-amber-600">
+                    Mandate {contract.hubtelPreapproval.status === 'APPROVED' ? 'approved' : 'requested'} — nothing is charged until the deposit
+                    clears and the contract activates.
+                  </p>
+                )}
+                {canPay && contract.hubtelPreapproval.status === 'APPROVED' && contract.status === 'ACTIVE' && (
                   <form className="flex items-end gap-3" onSubmit={chargeNow}>
                     <div>
                       <Label>Charge amount (GHS)</Label>
@@ -285,12 +291,17 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                     <Button type="button" variant="outline" onClick={disableDirectDebit}>Disable</Button>
                   </form>
                 )}
-                <p className="text-xs text-gray-400">
-                  {contract.paymentMethod === 'BOTH'
-                    ? 'Customer can pay cash/USSD themselves — direct debit only charges once an instalment goes overdue (they defaulted on paying it).'
-                    : 'The mandate is charged automatically the moment each instalment is due.'}
-                  {' '}&quot;Charge now&quot; is only for an out-of-cycle collection.
-                </p>
+                {canPay && !(contract.hubtelPreapproval.status === 'APPROVED' && contract.status === 'ACTIVE') && (
+                  <Button type="button" variant="outline" size="sm" onClick={disableDirectDebit}>Disable</Button>
+                )}
+                {contract.status === 'ACTIVE' && (
+                  <p className="text-xs text-gray-400">
+                    {contract.paymentMethod === 'BOTH'
+                      ? 'Customer can pay cash/USSD themselves — direct debit only charges once an instalment goes overdue (they defaulted on paying it).'
+                      : 'The mandate is charged automatically the moment each instalment is due.'}
+                    {' '}&quot;Charge now&quot; is only for an out-of-cycle collection.
+                  </p>
+                )}
               </div>
             ) : contract.status === 'ACTIVE' ? (
               <form className="flex items-end gap-3" onSubmit={setupDirectDebit}>

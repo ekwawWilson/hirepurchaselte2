@@ -106,12 +106,17 @@ export async function cancelPreapproval(params: { preapprovalId: string }) {
 }
 
 /**
- * Attaches an APPROVED mandate to a contract, enabling direct debit for it.
- * SAVE_TO_OWN is never eligible — it's free-form savings with no due schedule to
- * auto-collect against (contractService.ts). Only an ACTIVE contract qualifies:
- * a DEPOSIT_INSTALMENT contract still PENDING_DEPOSIT has no instalment schedule
- * to charge against yet, and the up-front deposit itself is deliberately never
- * auto-debited.
+ * Attaches a mandate to a contract, enabling direct debit for it. SAVE_TO_OWN
+ * is never eligible — it's free-form savings with no due schedule to
+ * auto-collect against (contractService.ts).
+ *
+ * ACTIVE or (for DEPOSIT_INSTALMENT only) still PENDING_DEPOSIT qualify — the
+ * latter so the mandate can be requested at contract creation, the moment
+ * staff have the customer at the counter, rather than only after the deposit
+ * clears and the customer may already be gone. Attaching it this early is
+ * harmless: runDirectDebitCollections and chargeDirectDebit both separately
+ * require the CONTRACT to be ACTIVE before ever charging anything, so a
+ * mandate attached while still PENDING_DEPOSIT simply sits unused until then.
  */
 /**
  * `paymentMethod` (DIRECT_DEBIT or BOTH — never CUSTOMER_INITIATED here, that
@@ -125,7 +130,9 @@ export async function enableDirectDebit(params: { contractId: string; preapprova
   if (!DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.includes(contract.contractType as ContractTypeName)) {
     throw new PreapprovalError(`${contract.contractType} contracts have no due schedule — direct debit isn't available for them`);
   }
-  if (contract.status !== 'ACTIVE') {
+  const statusEligible = contract.status === 'ACTIVE'
+    || (contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT');
+  if (!statusEligible) {
     throw new PreapprovalError(`Direct debit can only be enabled on an ACTIVE contract (currently ${contract.status})`);
   }
   const preapproval = await prisma.hubtelPreapproval.findUniqueOrThrow({ where: { id: params.preapprovalId } });
@@ -162,7 +169,13 @@ export async function disableDirectDebit(params: { contractId: string; userId: s
 /**
  * Charges the mandate directly — no customer approval needed, that's the whole
  * point of a preapproval. Used both by a staff-triggered "charge now" action and
- * the automated collections run (collectionsService.ts).
+ * the automated collections run (collectionsService.ts). Requires an ACTIVE
+ * contract even though the mandate itself may have been approved earlier, while
+ * still PENDING_DEPOSIT (enableDirectDebit now allows requesting one at contract
+ * creation) — the up-front deposit is deliberately never auto-debited, and this
+ * is the one guard standing between "mandate approved" and "money actually
+ * moves," since runDirectDebitCollections' own ACTIVE-only query only protects
+ * the automated sweep, not this manual entrypoint.
  */
 export async function chargeDirectDebit(params: { contractId: string; amountMinor: number }) {
   const contract = await prisma.contract.findUniqueOrThrow({
@@ -171,6 +184,9 @@ export async function chargeDirectDebit(params: { contractId: string; amountMino
   });
   if (!contract.hubtelPreapproval || contract.hubtelPreapproval.status !== 'APPROVED') {
     throw new PreapprovalError('This contract has no approved direct-debit mandate');
+  }
+  if (contract.status !== 'ACTIVE') {
+    throw new PreapprovalError(`Direct debit can only charge an ACTIVE contract (currently ${contract.status})`);
   }
   if (params.amountMinor <= 0 || params.amountMinor > contract.balanceMinor) {
     throw new PreapprovalError('Charge amount must be positive and not exceed the outstanding balance');
