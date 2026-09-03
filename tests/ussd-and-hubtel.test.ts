@@ -449,12 +449,10 @@ describe('USSD + Hubtel payments', () => {
       token: cashier, body: { firstName: 'Ussd', lastName: 'Scheduled', phone },
     }));
     const customerId = (await customer.json()).customer.id;
-    const item = await inventoryPOST(makeRequest('POST', '/api/inventory', {
-      token: admin, body: { productId: scheduledProductId, serialNumber: `IMEI-USSD-DL-${phone}`, branchId },
-    }));
-    const itemId = (await item.json()).item.id;
+    // DEVICE_LOAN disburses cash and is priced against a Product directly —
+    // no InventoryItem is reserved for it (src/app/api/contracts/route.ts).
     const contractRes = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId, inventoryItemId: itemId, termMonths: 6 },
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId, productId: scheduledProductId, termMonths: 6 },
     }));
     const contract = (await contractRes.json()).contract;
 
