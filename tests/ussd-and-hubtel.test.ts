@@ -37,6 +37,7 @@ describe('USSD + Hubtel payments', () => {
   let cashier: string;
   let branchId: string;
   let productId: string;
+  let adminUserId: string;
 
   beforeAll(async () => {
     admin = await login('admin@zple.test');
@@ -44,6 +45,7 @@ describe('USSD + Hubtel payments', () => {
 
     const branchesRes = await branchesGET(makeRequest('GET', '/api/branches', { token: admin }));
     branchId = (await branchesRes.json()).branches[0].id;
+    adminUserId = (await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } })).id;
 
     const productRes = await productsPOST(makeRequest('POST', '/api/products', {
       token: admin, body: { sku: `USSD-SKU-${runId}`, name: 'USSD Test Phone', cashPriceMinor: 240000 },
@@ -420,5 +422,57 @@ describe('USSD + Hubtel payments', () => {
     } finally {
       process.env.HUBTEL_PAYMENTS_MODE = original;
     }
+  });
+
+  it('SAVE_TO_OWN\'s payment prompt shows only the running total paid — no due schedule to report', async () => {
+    const phone = uniquePhone();
+    const contract = await setupContract(phone);
+
+    const step1 = await handleUssdInput({ sessionId: `sess-${runId}-sto`, msisdn: phone, input: '', isNewSession: true });
+    expect(step1.message).toContain('Total paid: GHS0.00');
+    expect(step1.message).not.toContain('Bal ');
+    expect(step1.message).not.toContain('OVERDUE');
+  });
+
+  it('a scheduled contract\'s prompt shows paid/balance and the next due instalment', async () => {
+    const scheduledProductId = (await (await productsPOST(makeRequest('POST', '/api/products', {
+      token: admin, body: { sku: `USSD-DL-SKU-${runId}`, name: 'USSD Device Loan Phone', cashPriceMinor: 120000 },
+    }))).json()).product.id;
+    await prisma.priceChartEntry.create({
+      data: {
+        productId: scheduledProductId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
+      },
+    });
+    const phone = uniquePhone();
+    const customer = await customersPOST(makeRequest('POST', '/api/customers', {
+      token: cashier, body: { firstName: 'Ussd', lastName: 'Scheduled', phone },
+    }));
+    const customerId = (await customer.json()).customer.id;
+    const item = await inventoryPOST(makeRequest('POST', '/api/inventory', {
+      token: admin, body: { productId: scheduledProductId, serialNumber: `IMEI-USSD-DL-${phone}`, branchId },
+    }));
+    const itemId = (await item.json()).item.id;
+    const contractRes = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId, inventoryItemId: itemId, termMonths: 6 },
+    }));
+    const contract = (await contractRes.json()).contract;
+
+    const step1 = await handleUssdInput({ sessionId: `sess-${runId}-dl1`, msisdn: phone, input: '', isNewSession: true });
+    expect(step1.message).toContain('Paid GHS0.00');
+    expect(step1.message).toContain('Bal GHS1200.00');
+    expect(step1.message).toContain('Due GHS');
+    expect(step1.message).not.toContain('OVERDUE');
+
+    // Force the first instalment overdue — same simulate-a-missed-payment
+    // pattern tests/direct-debit-and-phones.test.ts uses for the collections run.
+    await prisma.instalment.updateMany({
+      where: { contractId: contract.id, instalmentNo: 1 },
+      data: { dueDate: new Date(Date.now() - 24 * 60 * 60_000), status: 'OVERDUE' },
+    });
+
+    const step2 = await handleUssdInput({ sessionId: `sess-${runId}-dl2`, msisdn: phone, input: '', isNewSession: true });
+    expect(step2.message).toContain('OVERDUE GHS');
+    expect(step2.message).toContain('Next GHS');
   });
 });

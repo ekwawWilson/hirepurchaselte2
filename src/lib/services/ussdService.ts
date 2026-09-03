@@ -2,7 +2,7 @@ import { prisma } from '../db/prisma';
 import { formatMoney } from '../utils/money';
 import { initiateHubtelPayment } from './hubtelPaymentService';
 import { getOrgSettings } from './orgSettingsService';
-import { contractTypeLabel } from '../utils';
+import { contractTypeLabel, formatDate } from '../utils';
 import { phoneVariants } from './hubtelClient';
 
 const SESSION_TTL_MINUTES = 5;
@@ -44,9 +44,50 @@ function findCustomerByPhone(msisdn: string) {
   });
 }
 
-/** Shared by beginForCustomer and the SELECT_CONTRACT handler so the two never drift. */
-function contractPrompt(contract: { contractNumber: string; contractType: string; balanceMinor: number }): string {
-  return `${contract.contractNumber} (${contractTypeLabel(contract.contractType)})\nBalance: GHS${formatMoney(contract.balanceMinor)}\nEnter amount to pay:`;
+/**
+ * Shared by beginForCustomer and the SELECT_CONTRACT handler so the two never
+ * drift. Content differs by contract type since SAVE_TO_OWN has no due
+ * schedule to report against (contractService.ts) — it's free-form savings,
+ * so all there is to show is the running total paid in. DEPOSIT_INSTALMENT
+ * and DEVICE_LOAN both have one, so they get paid/remaining plus whatever's
+ * next: the upcoming instalment normally, or — when the customer has fallen
+ * behind — the overdue amount they actually owe right now *and* what follows
+ * it, rather than silently quoting a future date as if nothing were wrong.
+ *
+ * Kept deliberately terse (abbreviated labels, no contract-type name here)
+ * to stay well inside a USSD screen's character budget — this app has no
+ * confirmed figure from Hubtel for this build, but industry-standard gateways
+ * commonly cap a single screen around 182 characters, and the worst case
+ * here (overdue, six-figure amounts) lands near 150.
+ */
+async function contractPrompt(contract: {
+  id: string;
+  contractNumber: string;
+  contractType: string;
+  balanceMinor: number;
+  totalPaidMinor: number;
+}): Promise<string> {
+  if (contract.contractType === 'SAVE_TO_OWN') {
+    return `${contract.contractNumber}\nTotal paid: GHS${formatMoney(contract.totalPaidMinor)}\nEnter amount to pay:`;
+  }
+
+  const [due, upcoming] = await prisma.instalment.findMany({
+    where: { contractId: contract.id, status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] } },
+    orderBy: { instalmentNo: 'asc' },
+    take: 2,
+  });
+
+  const paidLine = `Paid GHS${formatMoney(contract.totalPaidMinor)}  Bal GHS${formatMoney(contract.balanceMinor)}`;
+  let dueLine = '';
+  if (due) {
+    const dueAmount = due.amountDueMinor - due.amountPaidMinor;
+    dueLine = due.status === 'OVERDUE'
+      ? `OVERDUE GHS${formatMoney(dueAmount)} (due ${formatDate(due.dueDate)})` +
+        (upcoming ? `\nNext GHS${formatMoney(upcoming.amountDueMinor - upcoming.amountPaidMinor)} on ${formatDate(upcoming.dueDate)}` : '')
+      : `Due GHS${formatMoney(dueAmount)} on ${formatDate(due.dueDate)}`;
+  }
+
+  return `${contract.contractNumber}\n${paidLine}${dueLine ? `\n${dueLine}` : ''}\nEnter amount to pay:`;
 }
 
 /**
@@ -91,7 +132,7 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
     create: { sessionId, msisdn: dialedMsisdn, state: 'ENTER_AMOUNT', contractId: contract.id, context: JSON.stringify(context), expiresAt },
     update: { state: 'ENTER_AMOUNT', contractId: contract.id, context: JSON.stringify(context), expiresAt },
   });
-  return { message: contractPrompt(contract), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+  return { message: await contractPrompt(contract), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
 }
 
 async function startSession(sessionId: string, msisdn: string): Promise<UssdResult> {
@@ -189,7 +230,7 @@ export async function handleUssdInput(params: {
         where: { id: existing.id },
         data: { state: 'ENTER_AMOUNT', contractId: contract.id, context: JSON.stringify({ contractId: contract.id }) },
       });
-      return { message: contractPrompt(contract), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+      return { message: await contractPrompt(contract), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
     }
 
     case 'ENTER_AMOUNT': {
