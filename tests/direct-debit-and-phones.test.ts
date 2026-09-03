@@ -199,17 +199,23 @@ describe('Hubtel Direct Debit', () => {
       .rejects.toThrow(/no due schedule/i);
   });
 
-  it('a DEPOSIT_INSTALMENT contract still PENDING_DEPOSIT is not eligible until it activates', async () => {
-    const productId = await makeProduct('PD');
+  it('a DEVICE_LOAN contract (no PENDING_DEPOSIT phase — DEPOSIT_INSTALMENT-only exception below) is ineligible in any non-ACTIVE status', async () => {
+    // WRITTEN_OFF is the terminal status closest to a real "not ACTIVE" case DEVICE_LOAN
+    // can actually reach — SAVE_TO_OWN's own rejection is covered separately above,
+    // and DEPOSIT_INSTALMENT's PENDING_DEPOSIT is deliberately eligible now (see the
+    // "initiates the mandate immediately at creation" tests below), so this covers what's
+    // left of the ACTIVE-only rule for the type that never gets a PENDING_DEPOSIT exemption.
+    const productId = await makeProduct('DLWO');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 50000,
-        totalPayableMinor: 100000, instalmentAmountMinor: 8333, createdById: adminUserId,
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
       },
     });
-    const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'PD');
-    const contract = await createContract({ contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId });
-    expect(contract.status).toBe('PENDING_DEPOSIT');
+    const { customerId, msisdn } = await makeCustomerAndItem(productId, 'DLWO');
+    const contract = await createContract({ contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId });
+    expect(contract.status).toBe('ACTIVE');
+    await prisma.contract.update({ where: { id: contract.id }, data: { status: 'WRITTEN_OFF' } });
 
     const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
     await expect(enableDirectDebit({ contractId: contract.id, preapprovalId: preapproval.id, userId: adminUserId }))
