@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
-import { CONTRACT_TYPES, PAYMENT_FREQUENCIES, DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName, type PaymentFrequencyName } from '@/lib/constants/contracts';
+import { CONTRACT_TYPES, PAYMENT_FREQUENCIES, DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, PAYMENT_METHODS, type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName } from '@/lib/constants/contracts';
 import { createContract, ContractError } from '@/lib/services/contractService';
 import { logAudit } from '@/lib/services/auditService';
 
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   const body = (await req.json()) as Record<string, unknown>;
   const {
     contractType, customerId, inventoryItemId, productId, termMonths, paymentFrequency, startDate,
-    gracePeriodDays, penaltyRateBps, directDebitNetwork, directDebitMsisdn,
+    gracePeriodDays, penaltyRateBps, paymentMethod, directDebitNetwork, directDebitMsisdn,
   } = body;
 
   if (!(CONTRACT_TYPES as readonly string[]).includes(contractType as string)) {
@@ -69,12 +69,16 @@ export async function POST(req: NextRequest) {
   if (penaltyRateBps !== undefined && (typeof penaltyRateBps !== 'number' || penaltyRateBps < 0)) {
     return NextResponse.json({ error: 'penaltyRateBps must be a non-negative integer' }, { status: 400 });
   }
-  if ((directDebitNetwork !== undefined) !== (directDebitMsisdn !== undefined)) {
-    return NextResponse.json({ error: 'directDebitNetwork and directDebitMsisdn must be provided together' }, { status: 400 });
+  if (paymentMethod !== undefined && !(PAYMENT_METHODS as readonly string[]).includes(paymentMethod as string)) {
+    return NextResponse.json({ error: `paymentMethod must be one of: ${PAYMENT_METHODS.join(', ')}` }, { status: 400 });
   }
-  if (directDebitNetwork !== undefined) {
+  const wantsDirectDebit = paymentMethod === 'DIRECT_DEBIT' || paymentMethod === 'BOTH';
+  if (wantsDirectDebit) {
     if (!DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.includes(contractType as ContractTypeName)) {
       return NextResponse.json({ error: `${contractType} contracts have no due schedule — direct debit isn't available for them` }, { status: 400 });
+    }
+    if (!directDebitNetwork || !directDebitMsisdn) {
+      return NextResponse.json({ error: 'directDebitNetwork and directDebitMsisdn are required for DIRECT_DEBIT/BOTH' }, { status: 400 });
     }
     if (!(DIRECT_DEBIT_NETWORKS as readonly string[]).includes(directDebitNetwork as string)) {
       return NextResponse.json({ error: `directDebitNetwork must be one of: ${DIRECT_DEBIT_NETWORKS.join(', ')}` }, { status: 400 });
@@ -95,6 +99,7 @@ export async function POST(req: NextRequest) {
       startDate: startDate ? new Date(startDate as string) : undefined,
       gracePeriodDays: gracePeriodDays as number | undefined,
       penaltyRateBps: penaltyRateBps as number | undefined,
+      paymentMethod: paymentMethod as PaymentMethodName | undefined,
       directDebitNetwork: directDebitNetwork as string | undefined,
       directDebitMsisdn: directDebitMsisdn as string | undefined,
       branchId,

@@ -7,7 +7,7 @@ import { generateStraightLineSchedule, generateLoanSchedule, derivePrincipalFrom
 import { queueSms, deliverQueuedSms } from './smsService';
 import { reverseAllPaymentsForContract } from './paymentService';
 import { initiatePreapproval, enableDirectDebit } from './hubtelPreapprovalService';
-import { CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName, type PaymentFrequencyName } from '../constants/contracts';
+import { CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName } from '../constants/contracts';
 
 export class ContractError extends Error {}
 
@@ -25,6 +25,9 @@ export interface CreateContractParams {
   startDate?: Date;
   gracePeriodDays?: number;
   penaltyRateBps?: number;
+  // DIRECT_DEBIT/BOTH require directDebitNetwork+directDebitMsisdn (validated below);
+  // CUSTOMER_INITIATED (the default) needs neither.
+  paymentMethod?: PaymentMethodName;
   directDebitNetwork?: string;
   directDebitMsisdn?: string;
   branchId: string;
@@ -60,6 +63,21 @@ export async function createContract(params: CreateContractParams) {
   const customer = await prisma.customer.findUnique({ where: { id: params.customerId } });
   if (!customer) throw new ContractError('Customer not found');
   if (customer.branchId !== params.branchId) throw new ContractError('Customer does not belong to this branch');
+
+  // If direct-debit details are given without an explicit paymentMethod, infer
+  // DIRECT_DEBIT rather than defaulting to CUSTOMER_INITIATED — a caller that
+  // provided a network+number very obviously wants the mandate to actually be
+  // used to collect, not silently ignored by runDirectDebitCollections.
+  const paymentMethod: PaymentMethodName =
+    params.paymentMethod ?? (params.directDebitNetwork && params.directDebitMsisdn ? 'DIRECT_DEBIT' : 'CUSTOMER_INITIATED');
+  if (paymentMethod !== 'CUSTOMER_INITIATED') {
+    if (!DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.includes(params.contractType)) {
+      throw new ContractError(`${params.contractType} contracts have no due schedule — direct debit isn't available for them`);
+    }
+    if (!params.directDebitNetwork || !params.directDebitMsisdn) {
+      throw new ContractError('directDebitNetwork and directDebitMsisdn are required for DIRECT_DEBIT/BOTH');
+    }
+  }
 
   let item: { id: string; productId: string } | null = null;
   let productId: string;
@@ -101,7 +119,7 @@ export async function createContract(params: CreateContractParams) {
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      return await runContractTransaction(params, item, productId, chartEntry, startDate);
+      return await runContractTransaction(params, item, productId, chartEntry, startDate, paymentMethod);
     } catch (e) {
       const isContractNumberCollision =
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -121,6 +139,7 @@ async function runContractTransaction(
   productId: string,
   chartEntry: NonNullable<Awaited<ReturnType<typeof getActivePriceChartEntry>>>,
   startDate: Date,
+  paymentMethod: PaymentMethodName,
 ) {
   const contractNumber = await generateContractNumber();
 
@@ -184,6 +203,7 @@ async function runContractTransaction(
         penaltyRateBps: params.penaltyRateBps ?? 0,
         pendingDirectDebitNetwork: directDebitEligible ? (params.directDebitNetwork ?? null) : null,
         pendingDirectDebitMsisdn: directDebitEligible ? (params.directDebitMsisdn ?? null) : null,
+        paymentMethod: directDebitEligible ? paymentMethod : 'CUSTOMER_INITIATED',
         status,
         totalPayableMinor,
         totalPaidMinor: 0,

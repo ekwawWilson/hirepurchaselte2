@@ -287,6 +287,13 @@ model Contract {
   // from then on. Left populated afterward as a record of what was requested, never re-read.
   pendingDirectDebitNetwork String?
   pendingDirectDebitMsisdn  String?
+  // CUSTOMER_INITIATED (default) — no mandate, customer pays via cash/USSD only.
+  // DIRECT_DEBIT — proactively auto-charged every time an instalment is due (today's
+  // original behavior). BOTH — customer can self-pay; direct debit only steps in once
+  // an instalment is actually OVERDUE (see collectionsService.runDirectDebitCollections),
+  // giving the customer their due date to pay themselves first. DIRECT_DEBIT/BOTH both
+  // require a mandate (hubtelPreapprovalId) — see hubtelPreapprovalService.enableDirectDebit.
+  paymentMethod String @default("CUSTOMER_INITIATED")
 
   // Snapshotted pricing terms — never re-read from priceChartEntries after creation.
   totalPriceMinor       Int

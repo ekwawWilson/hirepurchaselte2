@@ -85,7 +85,7 @@ export default function ContractsPage() {
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [gracePeriodDays, setGracePeriodDays] = useState('7');
   const [penaltyPercent, setPenaltyPercent] = useState('0');
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'HUBTEL_DIRECT_DEBIT'>('CASH');
+  const [paymentMethod, setPaymentMethod] = useState<'CUSTOMER_INITIATED' | 'DIRECT_DEBIT' | 'BOTH'>('CUSTOMER_INITIATED');
   const [directDebitNetwork, setDirectDebitNetwork] = useState('');
   const [directDebitMsisdn, setDirectDebitMsisdn] = useState('');
   const [showSchedulePreview, setShowSchedulePreview] = useState(false);
@@ -104,7 +104,7 @@ export default function ContractsPage() {
   const step1Valid = !!customerId;
   const step2Valid = isDeviceLoan ? !!loanProductId : !!inventoryItemId;
   const step3Valid = !!selectedEntry && !saving &&
-    (paymentMethod !== 'HUBTEL_DIRECT_DEBIT' || (!!directDebitNetwork && !!directDebitMsisdn.trim()));
+    (paymentMethod === 'CUSTOMER_INITIATED' || (!!directDebitNetwork && !!directDebitMsisdn.trim()));
 
   function resetWizard() {
     setStep(1);
@@ -113,7 +113,7 @@ export default function ContractsPage() {
     setPaymentFrequency('MONTHLY'); setSelectedTermMonths(null);
     setStartDate(new Date().toISOString().slice(0, 10));
     setGracePeriodDays('7'); setPenaltyPercent('0');
-    setPaymentMethod('CASH'); setDirectDebitNetwork(''); setDirectDebitMsisdn(''); setShowSchedulePreview(false);
+    setPaymentMethod('CUSTOMER_INITIATED'); setDirectDebitNetwork(''); setDirectDebitMsisdn(''); setShowSchedulePreview(false);
     setCustomerSearch(''); setItemSearch('');
   }
 
@@ -194,7 +194,7 @@ export default function ContractsPage() {
       return;
     }
     if (!selectedEntry) { toast({ title: 'Select an installment period', variant: 'destructive' }); return; }
-    if (paymentMethod === 'HUBTEL_DIRECT_DEBIT' && (!directDebitNetwork || !directDebitMsisdn.trim())) {
+    if (paymentMethod !== 'CUSTOMER_INITIATED' && (!directDebitNetwork || !directDebitMsisdn.trim())) {
       toast({ title: 'Select a network and enter a mobile money number', variant: 'destructive' });
       return;
     }
@@ -205,8 +205,11 @@ export default function ContractsPage() {
         ...(isDeviceLoan ? { productId: loanProductId } : { inventoryItemId }),
         termMonths: selectedEntry.termMonths, paymentFrequency: selectedEntry.paymentFrequency,
         startDate,
-        ...(directDebitEligible && { gracePeriodDays: Number(gracePeriodDays || '0'), penaltyRateBps: Math.round(parseFloat(penaltyPercent || '0') * 100) }),
-        ...(directDebitEligible && paymentMethod === 'HUBTEL_DIRECT_DEBIT' && {
+        ...(directDebitEligible && {
+          gracePeriodDays: Number(gracePeriodDays || '0'), penaltyRateBps: Math.round(parseFloat(penaltyPercent || '0') * 100),
+          paymentMethod,
+        }),
+        ...(directDebitEligible && paymentMethod !== 'CUSTOMER_INITIATED' && {
           directDebitNetwork, directDebitMsisdn: directDebitMsisdn.trim(),
         }),
         ...(selectedCustomer?.branchId && { branchId: selectedCustomer.branchId }),
@@ -494,19 +497,23 @@ export default function ContractsPage() {
 
                     <div>
                       <Label>Payment Method</Label>
-                      <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as 'CASH' | 'HUBTEL_DIRECT_DEBIT')}>
+                      <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as 'CUSTOMER_INITIATED' | 'DIRECT_DEBIT' | 'BOTH')}>
                         <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="CASH">Cash / Regular Payment</SelectItem>
-                          <SelectItem value="HUBTEL_DIRECT_DEBIT">Hubtel - Regular Payment (PIN each time)</SelectItem>
+                          <SelectItem value="CUSTOMER_INITIATED">Customer pays themselves (cash / USSD)</SelectItem>
+                          <SelectItem value="DIRECT_DEBIT">Direct debit — auto-charged every time due</SelectItem>
+                          <SelectItem value="BOTH">Both — customer can pay; direct debit if they default</SelectItem>
                         </SelectContent>
                       </Select>
-                      {paymentMethod === 'HUBTEL_DIRECT_DEBIT' && (
-                        <p className="text-xs text-gray-400 mt-1">Customer will enter PIN for each payment. A mobile money number is required.</p>
+                      {paymentMethod === 'DIRECT_DEBIT' && (
+                        <p className="text-xs text-gray-400 mt-1">A mobile money mandate is charged automatically the moment each instalment is due.</p>
+                      )}
+                      {paymentMethod === 'BOTH' && (
+                        <p className="text-xs text-gray-400 mt-1">Customer can pay cash/USSD on the due date; direct debit only charges once an instalment goes overdue.</p>
                       )}
                     </div>
 
-                    {paymentMethod === 'HUBTEL_DIRECT_DEBIT' && (
+                    {paymentMethod !== 'CUSTOMER_INITIATED' && (
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <Label>Mobile Money Network *</Label>

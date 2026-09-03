@@ -48,3 +48,14 @@ export const DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES: ContractTypeName[] = ['DEPOSI
 /** AirtelTigo has no Hubtel direct-debit product — regular USSD collection only. */
 export const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'] as const;
 export type DirectDebitNetwork = (typeof DIRECT_DEBIT_NETWORKS)[number];
+
+/**
+ * How a contract's instalments get collected. CUSTOMER_INITIATED (default): no
+ * mandate, cash/USSD only. DIRECT_DEBIT: proactively auto-charged the moment an
+ * instalment is due — no need to wait on the customer. BOTH: the customer can pay
+ * themselves; direct debit only triggers once an instalment is actually overdue,
+ * i.e. the customer defaulted on paying it themselves (collectionsService.ts).
+ * DIRECT_DEBIT and BOTH both require a mandate — see DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.
+ */
+export const PAYMENT_METHODS = ['CUSTOMER_INITIATED', 'DIRECT_DEBIT', 'BOTH'] as const;
+export type PaymentMethodName = (typeof PAYMENT_METHODS)[number];
