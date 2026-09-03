@@ -12,10 +12,11 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
 interface PriceChartEntry {
   id: string; contractType: string; termMonths: number; paymentFrequency: string;
-  totalPayableMinor: number; depositAmountMinor: number; effectiveTo: string | null;
+  totalPayableMinor: number; depositAmountMinor: number; interestRateBps: number | null; effectiveTo: string | null;
 }
 interface Category { id: string; name: string }
 interface Product {
@@ -34,6 +35,7 @@ const emptyDeviceLoanPricing: Record<number, DeviceLoanPricingForm> = { 3: { tot
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const canUpdate = useAuthStore((s) => s.hasPermission('inventory.receive'));
+  const canEditPricing = useAuthStore((s) => s.hasPermission('pricechart.edit'));
   const { toast } = useToast();
   const [product, setProduct] = useState<Product | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -46,6 +48,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const [showDeviceLoanForm, setShowDeviceLoanForm] = useState(false);
   const [deviceLoanPricing, setDeviceLoanPricing] = useState(emptyDeviceLoanPricing);
   const [savingDeviceLoan, setSavingDeviceLoan] = useState(false);
+  const [editTarget, setEditTarget] = useState<PriceChartEntry | null>(null);
+  const [editForm, setEditForm] = useState({ totalPayable: '', depositAmount: '', interestRateBps: '' });
+  const [editSaving, setEditSaving] = useState(false);
 
   async function load() {
     try {
@@ -86,6 +91,38 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to update product', variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  }
+
+  function openEdit(entry: PriceChartEntry) {
+    setEditTarget(entry);
+    setEditForm({
+      totalPayable: (entry.totalPayableMinor / 100).toFixed(2),
+      depositAmount: (entry.depositAmountMinor / 100).toFixed(2),
+      interestRateBps: entry.interestRateBps !== null ? String(entry.interestRateBps) : '',
+    });
+  }
+
+  async function onSaveEdit() {
+    if (!editTarget || !product) return;
+    setEditSaving(true);
+    try {
+      await api.post('/price-chart', {
+        productId: product.id,
+        contractType: editTarget.contractType,
+        termMonths: editTarget.termMonths,
+        paymentFrequency: editTarget.paymentFrequency,
+        totalPayableMinor: Math.round(parseFloat(editForm.totalPayable) * 100),
+        depositAmountMinor: editTarget.contractType === 'DEPOSIT_INSTALMENT' ? Math.round(parseFloat(editForm.depositAmount || '0') * 100) : 0,
+        ...(editTarget.contractType === 'DEVICE_LOAN' && { interestRateBps: Number(editForm.interestRateBps || '0') }),
+      });
+      toast({ title: 'Price updated', description: 'The previous entry is kept as history, not overwritten.' });
+      setEditTarget(null);
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to update pricing', variant: 'destructive' });
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -247,6 +284,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                   <TableHead>Deposit</TableHead>
                   <TableHead>Total Payable</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -258,6 +296,11 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                     <TableCell>{formatCurrency(e.depositAmountMinor)}</TableCell>
                     <TableCell>{formatCurrency(e.totalPayableMinor)}</TableCell>
                     <TableCell>{e.effectiveTo ? <Badge variant="secondary">Superseded</Badge> : <Badge variant="success">Active</Badge>}</TableCell>
+                    <TableCell>
+                      {canEditPricing && !e.effectiveTo && (
+                        <button className="text-xs text-primary hover:underline" onClick={() => openEdit(e)}>Edit</button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -367,6 +410,47 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           )}
         </Card>
       )}
+
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit price</DialogTitle>
+          </DialogHeader>
+          {editTarget && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                {contractTypeLabel(editTarget.contractType)} &middot; {editTarget.termMonths} months &middot; {frequencyLabel(editTarget.paymentFrequency)}
+              </p>
+              <p className="text-xs text-gray-400">
+                Saving creates a new price entry effective now and supersedes this one — contracts already
+                priced from it are unaffected; this only changes pricing for contracts created from now on.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <Label>Total payable (GHS)</Label>
+                  <Input required type="number" step="0.01" className="mt-1.5" value={editForm.totalPayable} onChange={(e) => setEditForm({ ...editForm, totalPayable: e.target.value })} />
+                </div>
+                {editTarget.contractType === 'DEPOSIT_INSTALMENT' && (
+                  <div>
+                    <Label>Deposit required (GHS)</Label>
+                    <Input required type="number" step="0.01" min={0} className="mt-1.5" value={editForm.depositAmount} onChange={(e) => setEditForm({ ...editForm, depositAmount: e.target.value })} />
+                  </div>
+                )}
+                {editTarget.contractType === 'DEVICE_LOAN' && (
+                  <div>
+                    <Label>Interest rate (bps/yr, e.g. 2400 = 24%)</Label>
+                    <Input required type="number" className="mt-1.5" value={editForm.interestRateBps} onChange={(e) => setEditForm({ ...editForm, interestRateBps: e.target.value })} />
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button onClick={onSaveEdit} disabled={editSaving}>{editSaving ? 'Saving...' : 'Save new price'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

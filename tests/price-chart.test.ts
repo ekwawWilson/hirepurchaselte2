@@ -94,6 +94,59 @@ describe('Price chart: legacy-matching pricing model', () => {
     const contract = (await contractRes.json()).contract;
     expect(contract.depositAmountMinor).toBe(75000); // exact figure admin typed, no percentage math involved
   });
+
+  it('editing a price (resubmitting the same product/type/term/frequency) supersedes the old entry without touching contracts already snapshotted from it', async () => {
+    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 3, depositAmountMinor: 50000, totalPayableMinor: 200000 },
+    }));
+    expect(entry.status).toBe(201);
+    const original = (await entry.json()).entry;
+
+    const customer = await customersPOST(makeRequest('POST', '/api/customers', {
+      token: cashier, body: { firstName: 'Reprice', lastName: 'Test', phone: uniquePhone() },
+    }));
+    const customerId = (await customer.json()).customer.id;
+    const item = await inventoryPOST(makeRequest('POST', '/api/inventory', {
+      token: admin, body: { productId, serialNumber: `IMEI-REPRICE-${runId}`, branchId },
+    }));
+    const inventoryItemId = (await item.json()).item.id;
+    const contractRes = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 3 },
+    }));
+    expect(contractRes.status).toBe(201);
+    const contract = (await contractRes.json()).contract;
+    expect(contract.totalPayableMinor).toBe(200000); // snapshotted from the original price
+
+    // "Editing" the price — the Edit action in the UI resubmits this same
+    // combo with new figures — versions out the original instead of
+    // overwriting it in place.
+    const reprice = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 3, depositAmountMinor: 60000, totalPayableMinor: 240000 },
+    }));
+    expect(reprice.status).toBe(201);
+    const repriced = (await reprice.json()).entry;
+    expect(repriced.id).not.toBe(original.id);
+    expect(repriced.totalPayableMinor).toBe(240000);
+
+    const supersededOriginal = await prisma.priceChartEntry.findUniqueOrThrow({ where: { id: original.id } });
+    expect(supersededOriginal.effectiveTo).not.toBeNull();
+
+    // The contract created under the old price is completely unaffected —
+    // its own totalPayableMinor is a permanent snapshot, never re-read live.
+    const stillContract = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(stillContract.totalPayableMinor).toBe(200000);
+
+    // A new contract now picks up the edited price.
+    const item2 = await inventoryPOST(makeRequest('POST', '/api/inventory', {
+      token: admin, body: { productId, serialNumber: `IMEI-REPRICE2-${runId}`, branchId },
+    }));
+    const inventoryItemId2 = (await item2.json()).item.id;
+    const contractRes2 = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId: inventoryItemId2, termMonths: 3 },
+    }));
+    expect(contractRes2.status).toBe(201);
+    expect((await contractRes2.json()).contract.totalPayableMinor).toBe(240000);
+  });
 });
 
 describe('Price chart: bundle creation across all contract types', () => {

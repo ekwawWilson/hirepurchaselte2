@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
 interface Product { id: string; name: string; sku: string }
 interface PriceChartEntry {
@@ -60,6 +61,10 @@ export default function PriceChartPage() {
     DEVICE_LOAN: { ...emptyTypeForm },
   });
 
+  const [editTarget, setEditTarget] = useState<PriceChartEntry | null>(null);
+  const [editForm, setEditForm] = useState({ totalPayable: '', depositAmount: '', interestRateBps: '' });
+  const [editSaving, setEditSaving] = useState(false);
+
   // Which contract types already have an active entry for the exact combo
   // currently selected — a product's price chart must satisfy all three
   // contract types, so this bundle form fills in whatever's missing rather
@@ -100,6 +105,38 @@ export default function PriceChartPage() {
     setTermMonths('6');
     setPaymentFrequency('MONTHLY');
     setTypeForms({ SAVE_TO_OWN: { ...emptyTypeForm }, DEPOSIT_INSTALMENT: { ...emptyTypeForm }, DEVICE_LOAN: { ...emptyTypeForm } });
+  }
+
+  function openEdit(entry: PriceChartEntry) {
+    setEditTarget(entry);
+    setEditForm({
+      totalPayable: (entry.totalPayableMinor / 100).toFixed(2),
+      depositAmount: (entry.depositAmountMinor / 100).toFixed(2),
+      interestRateBps: entry.interestRateBps !== null ? String(entry.interestRateBps) : '',
+    });
+  }
+
+  async function onSaveEdit() {
+    if (!editTarget) return;
+    setEditSaving(true);
+    try {
+      await api.post('/price-chart', {
+        productId: editTarget.product.id,
+        contractType: editTarget.contractType,
+        termMonths: editTarget.termMonths,
+        paymentFrequency: editTarget.paymentFrequency,
+        totalPayableMinor: Math.round(parseFloat(editForm.totalPayable) * 100),
+        depositAmountMinor: editTarget.contractType === 'DEPOSIT_INSTALMENT' ? Math.round(parseFloat(editForm.depositAmount || '0') * 100) : 0,
+        ...(editTarget.contractType === 'DEVICE_LOAN' && { interestRateBps: Number(editForm.interestRateBps || '0') }),
+      });
+      toast({ title: 'Price updated', description: 'The previous entry is kept as history, not overwritten.' });
+      setEditTarget(null);
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to update pricing', variant: 'destructive' });
+    } finally {
+      setEditSaving(false);
+    }
   }
 
   async function onCreate(e: React.FormEvent) {
@@ -265,6 +302,7 @@ export default function PriceChartPage() {
                   <TableHead>Total Payable</TableHead>
                   <TableHead>Instalment</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -280,6 +318,11 @@ export default function PriceChartPage() {
                     <TableCell>
                       {e.effectiveTo ? <Badge variant="secondary">Superseded</Badge> : <Badge variant="success">Active</Badge>}
                     </TableCell>
+                    <TableCell>
+                      {canEdit && !e.effectiveTo && (
+                        <button className="text-xs text-primary hover:underline" onClick={() => openEdit(e)}>Edit</button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -287,6 +330,47 @@ export default function PriceChartPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit price</DialogTitle>
+          </DialogHeader>
+          {editTarget && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                {editTarget.product.name} &middot; {contractTypeLabel(editTarget.contractType)} &middot; {editTarget.termMonths} months &middot; {frequencyLabel(editTarget.paymentFrequency)}
+              </p>
+              <p className="text-xs text-gray-400">
+                Saving creates a new price entry effective now and supersedes this one — contracts already
+                priced from it are unaffected; this only changes pricing for contracts created from now on.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <Label>Total payable (GHS)</Label>
+                  <Input required type="number" step="0.01" className="mt-1.5" value={editForm.totalPayable} onChange={(e) => setEditForm({ ...editForm, totalPayable: e.target.value })} />
+                </div>
+                {editTarget.contractType === 'DEPOSIT_INSTALMENT' && (
+                  <div>
+                    <Label>Deposit required (GHS)</Label>
+                    <Input required type="number" step="0.01" min={0} className="mt-1.5" value={editForm.depositAmount} onChange={(e) => setEditForm({ ...editForm, depositAmount: e.target.value })} />
+                  </div>
+                )}
+                {editTarget.contractType === 'DEVICE_LOAN' && (
+                  <div>
+                    <Label>Interest rate (bps/yr, e.g. 2400 = 24%)</Label>
+                    <Input required type="number" className="mt-1.5" value={editForm.interestRateBps} onChange={(e) => setEditForm({ ...editForm, interestRateBps: e.target.value })} />
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button onClick={onSaveEdit} disabled={editSaving}>{editSaving ? 'Saving...' : 'Save new price'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
