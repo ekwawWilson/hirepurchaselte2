@@ -172,7 +172,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
       makeRequest('POST', `/api/payments/${withdrawal.id}/reverse`, { token: admin, body: { reason: 'test reversal' } }),
       makeParams({ id: withdrawal.id }),
     );
-    expect(reversed.status).toBe(200);
+    expect(reversed.status).toBe(201);
     detail = await getContract(contract.id, admin);
     expect(detail.totalPaidMinor).toBe(100000);
     expect(detail.balanceMinor).toBe(140000);
