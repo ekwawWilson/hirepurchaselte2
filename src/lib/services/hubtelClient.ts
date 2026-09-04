@@ -184,6 +184,49 @@ export async function callHubtelPreapprovalInitiate(params: {
 }
 
 /**
+ * Same call as callHubtelPreapprovalInitiate, but for diagnosing a live
+ * failure rather than actually requesting a mandate: returns Hubtel's exact
+ * HTTP status and untouched response body instead of throwing a collapsed
+ * error message, and never writes a HubtelPreapproval row (this app's normal
+ * initiatePreapproval always does, tying the request to a real customer +
+ * contract — a diagnostic probe has neither). Still a real call to Hubtel —
+ * if accepted, it will genuinely prompt whatever number is given, same as
+ * production would. That's the point: "was the prompt actually sent" is only
+ * answerable by actually asking Hubtel.
+ */
+export async function testPreapprovalInitiateRaw(params: {
+  msisdn: string;
+  network: string;
+  callbackUrl: string;
+}): Promise<{ requestUrl: string; requestPayload: unknown; httpStatus: number; responseBody: unknown }> {
+  const creds = requireHubtelCredentials();
+  const clientReferenceId = `DIAGNOSTIC-${Date.now()}`;
+  const payload = {
+    clientReferenceId,
+    customerMsisdn: formatPhoneForHubtel(params.msisdn),
+    channel: getHubtelChannel(params.network, true),
+    callbackUrl: params.callbackUrl,
+  };
+  const requestUrl = preapprovalInitiateUrl(creds.salesId);
+
+  const res = await fetch(requestUrl, {
+    method: 'POST',
+    headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const rawText = await res.text();
+  let responseBody: unknown = rawText;
+  try {
+    responseBody = JSON.parse(rawText);
+  } catch {
+    // Not JSON (an HTML error page from a gateway/proxy in front of Hubtel,
+    // for instance) — leave it as the raw text so it's still visible, not lost.
+  }
+
+  return { requestUrl, requestPayload: payload, httpStatus: res.status, responseBody };
+}
+
+/**
  * Tolerant status/response-code parsing — Hubtel's own field casing/shape has
  * been observed to vary (data.status vs Data.Status, ResponseCode vs
  * responseCode) across its callback and status-check payloads for this same

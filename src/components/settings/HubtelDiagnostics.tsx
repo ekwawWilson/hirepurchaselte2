@@ -2,10 +2,21 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { api } from '@/lib/apiClient';
+import { api, ApiError } from '@/lib/apiClient';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+
+const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'];
+
+interface PreapprovalTestResult {
+  requestUrl: string;
+  requestPayload: unknown;
+  httpStatus: number;
+  responseBody: unknown;
+}
 
 // The exact contract this app's own routes parse/emit for each Hubtel callback
 // and the USSD Service Flow — for pasting into a UAT ticket or screenshotting
@@ -139,6 +150,29 @@ export function HubtelDiagnostics() {
   const [copied, setCopied] = useState<string | null>(null);
   const [showSamples, setShowSamples] = useState(false);
 
+  const [testMsisdn, setTestMsisdn] = useState('');
+  const [testNetwork, setTestNetwork] = useState('MTN');
+  const [testing, setTesting] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<PreapprovalTestResult | null>(null);
+
+  async function runPreapprovalTest() {
+    if (!testMsisdn.trim()) return;
+    setTesting(true);
+    setTestError(null);
+    setTestResult(null);
+    try {
+      const result = await api.post<PreapprovalTestResult>('/settings/hubtel-diagnostics/test-preapproval', {
+        msisdn: testMsisdn.trim(), network: testNetwork,
+      });
+      setTestResult(result);
+    } catch (e) {
+      setTestError(e instanceof ApiError ? e.message : 'Could not reach the server to run the test.');
+    } finally {
+      setTesting(false);
+    }
+  }
+
   async function run() {
     setLoading(true);
     setError(null);
@@ -250,6 +284,67 @@ export function HubtelDiagnostics() {
             )}
           </div>
         )}
+
+        <div className="border-t border-gray-100 pt-4 space-y-3">
+          <div>
+            <p className="text-sm font-medium text-gray-800">Test a direct-debit preapproval</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Sends a real Hubtel preapproval-initiate call for the number below and shows the exact HTTP status and
+              response body — the same call a contract's &quot;Direct debit&quot; setup makes, except a normal
+              contract creation swallows any failure silently so staff never see it. Use this to tell an
+              un-whitelisted IP, bad credentials, and a malformed number apart when the customer says no prompt
+              arrived.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <Label>Mobile money number</Label>
+              <Input className="mt-1.5 w-44" placeholder="0244000111" value={testMsisdn} onChange={(e) => setTestMsisdn(e.target.value)} />
+            </div>
+            <div>
+              <Label>Network</Label>
+              <select
+                className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                value={testNetwork}
+                onChange={(e) => setTestNetwork(e.target.value)}
+              >
+                {DIRECT_DEBIT_NETWORKS.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            <Button type="button" variant="outline" disabled={!testMsisdn.trim() || testing} onClick={runPreapprovalTest}>
+              {testing ? 'Sending...' : 'Send test preapproval'}
+            </Button>
+          </div>
+          <p className="text-xs text-amber-600">
+            This is a real call — if Hubtel accepts it, this number really is prompted, same as production. No
+            record is saved in the app either way.
+          </p>
+          {testError && <p className="text-sm text-red-600">{testError}</p>}
+          {testResult && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">HTTP status:</span>
+                <Badge variant={testResult.httpStatus >= 200 && testResult.httpStatus < 300 ? 'success' : 'destructive'}>
+                  {testResult.httpStatus}
+                </Badge>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Request</p>
+                <pre className="text-xs bg-gray-50 ring-1 ring-gray-200/60 rounded-lg p-3 overflow-x-auto">
+                  {testResult.requestUrl}
+                  {'\n'}
+                  {JSON.stringify(testResult.requestPayload, null, 2)}
+                </pre>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Response (from Hubtel, unedited)</p>
+                <pre className="text-xs bg-gray-50 ring-1 ring-gray-200/60 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
+                  {typeof testResult.responseBody === 'string' ? testResult.responseBody : JSON.stringify(testResult.responseBody, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="border-t border-gray-100 pt-4 space-y-3">
           <div>
