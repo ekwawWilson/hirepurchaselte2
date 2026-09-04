@@ -290,7 +290,7 @@ export function HubtelDiagnostics() {
             <p className="text-sm font-medium text-gray-800">Test a direct-debit preapproval</p>
             <p className="text-xs text-gray-500 mt-0.5">
               Sends a real Hubtel preapproval-initiate call for the number below and shows the exact HTTP status and
-              response body — the same call a contract's &quot;Direct debit&quot; setup makes, except a normal
+              response body — the same call a contract&apos;s &quot;Direct debit&quot; setup makes, except a normal
               contract creation swallows any failure silently so staff never see it. Use this to tell an
               un-whitelisted IP, bad credentials, and a malformed number apart when the customer says no prompt
               arrived.

@@ -429,6 +429,7 @@ describe('USSD + Hubtel payments', () => {
     const contract = await setupContract(phone);
 
     const step1 = await handleUssdInput({ sessionId: `sess-${runId}-sto`, msisdn: phone, input: '', isNewSession: true });
+    expect(step1.message).toContain(contract.contractNumber);
     expect(step1.message).toContain('Total paid: GHS0.00');
     expect(step1.message).not.toContain('Bal ');
     expect(step1.message).not.toContain('OVERDUE');
