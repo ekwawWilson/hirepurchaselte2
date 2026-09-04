@@ -7,7 +7,7 @@
  *  - Hubtel Direct Debit: mandate initiation/reuse, eligibility (no SAVE_TO_OWN,
  *    ACTIVE only), charging, and the proactive collections run.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { makeRequest } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
@@ -146,6 +146,54 @@ describe('Hubtel Direct Debit', () => {
     await expect(createContract({
       contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId, paymentMethod: 'BOTH',
     })).rejects.toThrow(ContractError);
+  });
+
+  it('initiatePreapproval stores whichever verificationType Hubtel decides on (USSD vs OTP is never something this app requests)', async () => {
+    const productId = await makeProduct('VERIFTYPE');
+    await prisma.priceChartEntry.create({
+      data: {
+        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
+        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
+      },
+    });
+    const { customerId, msisdn } = await makeCustomerAndItem(productId, 'VERIFTYPE');
+
+    const originalMode = process.env.HUBTEL_PAYMENTS_MODE;
+    const originalSalesId = process.env.HUBTEL_POS_SALES_ID;
+    const originalKey = process.env.HUBTEL_API_KEY;
+    const originalSecret = process.env.HUBTEL_API_SECRET;
+    process.env.HUBTEL_PAYMENTS_MODE = 'live';
+    process.env.HUBTEL_POS_SALES_ID = 'TEST-SALES-ID';
+    process.env.HUBTEL_API_KEY = 'test-key';
+    process.env.HUBTEL_API_SECRET = 'test-secret';
+
+    const guardedFetch = globalThis.fetch;
+    // Hubtel decided this number needs OTP (already preapproved with another
+    // merchant) — the request never asked for this, it's purely their response.
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
+      message: 'Request received! Pending preapproval',
+      responseCode: '2000',
+      data: {
+        hubtelPreApprovalId: 'HPA-VERIFTYPE-1', clientReferenceId: 'whatever',
+        verificationType: 'OTP', otpPrefix: 'HNRM', preapprovalStatus: 'PENDING',
+      },
+    }), { status: 200 }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
+      expect(preapproval.verificationType).toBe('OTP');
+      expect(preapproval.status).toBe('PENDING');
+
+      const stored = await prisma.hubtelPreapproval.findUniqueOrThrow({ where: { id: preapproval.id } });
+      expect(stored.verificationType).toBe('OTP');
+    } finally {
+      globalThis.fetch = guardedFetch;
+      process.env.HUBTEL_PAYMENTS_MODE = originalMode;
+      process.env.HUBTEL_POS_SALES_ID = originalSalesId;
+      process.env.HUBTEL_API_KEY = originalKey;
+      process.env.HUBTEL_API_SECRET = originalSecret;
+    }
   });
 
   it('createContract rejects DIRECT_DEBIT/BOTH for SAVE_TO_OWN — no due schedule to auto-collect against', async () => {

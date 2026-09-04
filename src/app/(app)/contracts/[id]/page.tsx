@@ -19,7 +19,7 @@ import {
 
 interface Instalment { id: string; instalmentNo: number; dueDate: string; amountDueMinor: number; principalPortionMinor: number; interestPortionMinor: number; amountPaidMinor: number; status: string; daysPastDue?: number }
 interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
-interface Preapproval { id: string; status: string; network: string; customerMsisdn: string }
+interface Preapproval { id: string; status: string; network: string; customerMsisdn: string; verificationType: string | null }
 interface ContractDetail {
   id: string; contractNumber: string; contractType: string; status: string; paymentFrequency: string;
   totalPayableMinor: number; totalPaidMinor: number; balanceMinor: number; creditMinor: number;
@@ -156,15 +156,17 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     e.preventDefault();
     setDdSaving(true);
     try {
-      const res = await api.post<{ reused: boolean; preapproval: { status: string } }>(
+      const res = await api.post<{ reused: boolean; preapproval: { status: string; verificationType: string | null } }>(
         `/contracts/${id}/direct-debit`, { msisdn: ddMsisdn, network: ddNetwork, paymentMethod: ddMode },
       );
       const pending = res.preapproval.status === 'PENDING';
+      const isOtp = res.preapproval.verificationType === 'OTP';
       toast({
         title: res.reused ? 'Existing mandate reused' : pending ? 'Awaiting customer approval' : 'Direct debit mandate approved',
-        description: pending
-          ? 'The customer must confirm on their phone (USSD prompt or OTP) before this can be charged.'
-          : undefined,
+        description: !pending ? undefined : isOtp
+          ? "This number already has a mandate with another Hubtel merchant — Hubtel sent an OTP instead of a USSD prompt, which this app doesn't support entering. Try a different number."
+          : 'The customer must confirm on their phone via a USSD prompt before this can be charged.',
+        variant: isOtp ? 'destructive' : undefined,
       });
       await load();
     } catch (e) {
@@ -275,6 +277,21 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   </span>
                   <span className="text-sm text-gray-600">{contract.hubtelPreapproval.customerMsisdn} &middot; {contract.hubtelPreapproval.network}</span>
                 </div>
+                {contract.hubtelPreapproval.status === 'PENDING' && (
+                  contract.hubtelPreapproval.verificationType === 'OTP' ? (
+                    <p className="text-xs text-red-600">
+                      Hubtel sent this customer an OTP instead of a USSD prompt — their number already has a
+                      direct-debit mandate with a different Hubtel merchant, so Hubtel requires OTP verification for
+                      it. This app doesn&apos;t support entering that OTP yet. Ask the customer for a different mobile
+                      money number, or disable this mandate and try again with one.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-500">
+                      Waiting on the customer to approve on their phone — a USSD prompt, or *170# &rarr; My Wallet
+                      &rarr; My Approvals &rarr; PreApprovals if they missed it.
+                    </p>
+                  )
+                )}
                 {contract.status === 'PENDING_DEPOSIT' && (
                   <p className="text-xs text-amber-600">
                     Mandate {contract.hubtelPreapproval.status === 'APPROVED' ? 'approved' : 'requested'} — nothing is charged until the deposit

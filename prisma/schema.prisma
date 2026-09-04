@@ -506,6 +506,13 @@ model HubtelPreapproval {
   network             String // MTN | VODAFONE | TELECEL — AirtelTigo has no direct-debit product
   clientReferenceId   String    @unique
   hubtelPreapprovalId String?
+  // USSD (customer approves on their own phone via a prompt/*170#) or OTP
+  // (Hubtel sends a 4-digit code instead — only for a number already
+  // preapproved with a DIFFERENT Hubtel merchant; not selectable by us, see
+  // hubtelPreapprovalService.ts). Null in mock mode, which never goes
+  // through a real verification step, and for any mandate created before
+  // this column existed.
+  verificationType    String?
   status              String    @default("PENDING")
   approvedAt          DateTime?
   cancelledAt         DateTime?

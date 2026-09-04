@@ -78,10 +78,15 @@ export async function initiatePreapproval(params: {
     }
     // Stays PENDING — a real mandate is only APPROVED once the customer
     // completes the USSD prompt or OTP on their own phone; the preapproval
-    // callback route flips it once Hubtel confirms.
+    // callback route flips it once Hubtel confirms. verificationType is
+    // Hubtel's own decision (not something this app requests — see
+    // callHubtelPreapprovalInitiate's docs), stored so staff can tell "still
+    // waiting on the customer" (USSD) apart from "stuck — this number needs
+    // OTP verification, which isn't implemented" (OTP) instead of both
+    // looking like the same silent PENDING.
     const pending = await prisma.hubtelPreapproval.update({
       where: { id: preapproval.id },
-      data: { hubtelPreapprovalId: result.hubtelPreapprovalId },
+      data: { hubtelPreapprovalId: result.hubtelPreapprovalId, verificationType: result.verificationType },
     });
     return { preapproval: pending, reused: false as const };
   }
