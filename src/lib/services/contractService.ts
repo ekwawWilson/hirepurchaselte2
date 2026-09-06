@@ -41,6 +41,13 @@ export interface CreateContractParams {
   // rather than replacing it, since a price chart entry still has to exist
   // for *some* term to source interestRateBps/base pricing from.
   termMonthsOverride?: number;
+  // A negotiated instalment count that overrides the frequency-derived default
+  // (numberOfInstalmentsForTerm) — e.g. a customer negotiates 8 instalments
+  // instead of the 6 a monthly/6-month tier would otherwise produce. Doesn't
+  // change termMonths itself (still drives DEVICE_LOAN's interest calc), only
+  // how many instalments the finance amount (and interest, for a loan) is split
+  // across, and their per-instalment size.
+  instalmentCountOverride?: number;
   // DIRECT_DEBIT/BOTH require directDebitNetwork+directDebitMsisdn (validated below);
   // CUSTOMER_INITIATED (the default) needs neither.
   paymentMethod?: PaymentMethodName;
@@ -136,6 +143,9 @@ export async function createContract(params: CreateContractParams) {
   if (params.termMonthsOverride !== undefined && (!Number.isInteger(params.termMonthsOverride) || params.termMonthsOverride <= 0)) {
     throw new ContractError('termMonthsOverride must be a positive integer');
   }
+  if (params.instalmentCountOverride !== undefined && (!Number.isInteger(params.instalmentCountOverride) || params.instalmentCountOverride <= 0)) {
+    throw new ContractError('instalmentCountOverride must be a positive integer');
+  }
 
   const startDate = params.startDate ?? new Date();
 
@@ -227,7 +237,11 @@ async function runContractTransaction(
     // (priceChartService.ts) — chartEntry.instalmentAmountMinor is only correct
     // when nothing was overridden; recomputing unconditionally means this is
     // never stale, at the cost of a no-op recompute in the common case.
-    const instalmentCount = numberOfInstalmentsForTerm(effectiveTermMonths, chartEntry.paymentFrequency as PaymentFrequencyName);
+    // A negotiated instalment count overrides the frequency-derived default —
+    // termMonths (effectiveTermMonths) still drives DEVICE_LOAN's interest calc
+    // below regardless, only how many instalments the amount is split across changes.
+    const instalmentCount = params.instalmentCountOverride
+      ?? numberOfInstalmentsForTerm(effectiveTermMonths, chartEntry.paymentFrequency as PaymentFrequencyName);
     const instalmentAmountMinor = Math.ceil((totalPayableMinor - depositAmountMinor) / instalmentCount);
 
     const contract = await tx.contract.create({
@@ -265,8 +279,8 @@ async function runContractTransaction(
     if (scheduleKind !== 'NONE') {
       const scheduleFrequency = chartEntry.paymentFrequency as PaymentFrequencyName;
       const schedule = scheduleKind === 'LOAN'
-        ? generateLoanSchedule(principalMinor as number, interestRateBps as number, effectiveTermMonths, startDate, scheduleFrequency)
-        : generateStraightLineSchedule(scheduleFinanceAmount, effectiveTermMonths, startDate, scheduleFrequency);
+        ? generateLoanSchedule(principalMinor as number, interestRateBps as number, effectiveTermMonths, startDate, scheduleFrequency, instalmentCount)
+        : generateStraightLineSchedule(scheduleFinanceAmount, effectiveTermMonths, startDate, scheduleFrequency, instalmentCount);
 
       await tx.instalment.createMany({
         data: schedule.map((s) => ({

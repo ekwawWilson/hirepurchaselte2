@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   const {
     contractType, customerId, inventoryItemId, productId, termMonths, paymentFrequency, startDate,
     gracePeriodDays, penaltyRateBps, paymentMethod, directDebitNetwork, directDebitMsisdn,
-    totalPayableMinorOverride, depositAmountMinorOverride, termMonthsOverride,
+    totalPayableMinorOverride, depositAmountMinorOverride, termMonthsOverride, instalmentCountOverride,
   } = body;
 
   if (!(CONTRACT_TYPES as readonly string[]).includes(contractType as string)) {
@@ -98,6 +98,9 @@ export async function POST(req: NextRequest) {
   if (termMonthsOverride !== undefined && typeof termMonthsOverride !== 'number') {
     return NextResponse.json({ error: 'termMonthsOverride must be a number' }, { status: 400 });
   }
+  if (instalmentCountOverride !== undefined && typeof instalmentCountOverride !== 'number') {
+    return NextResponse.json({ error: 'instalmentCountOverride must be a number' }, { status: 400 });
+  }
   // A negotiated price differing from the standard price chart tier — reserved
   // for the two most-trusted roles. Silently ignored (not rejected) for anyone
   // else: the UI never shows these fields as editable outside those roles in
@@ -122,6 +125,7 @@ export async function POST(req: NextRequest) {
       totalPayableMinorOverride: canOverridePricing ? (totalPayableMinorOverride as number | undefined) : undefined,
       depositAmountMinorOverride: canOverridePricing ? (depositAmountMinorOverride as number | undefined) : undefined,
       termMonthsOverride: canOverridePricing ? (termMonthsOverride as number | undefined) : undefined,
+      instalmentCountOverride: canOverridePricing ? (instalmentCountOverride as number | undefined) : undefined,
       branchId,
       createdById: user.id,
     });

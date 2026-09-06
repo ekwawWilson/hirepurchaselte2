@@ -293,6 +293,53 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(contract.termMonths).toBe(6); // the override was ignored, not honored
   });
 
+  it('ADMIN can override the total instalment count directly, independent of termMonths', async () => {
+    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
+    }));
+    expect(entry.status).toBe(201);
+
+    const custId = await makeCustomer('InstalCountAdmin');
+    const itemId = await receiveItem('ICA');
+    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: admin, body: {
+        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6, branchId,
+        instalmentCountOverride: 8,
+      },
+    }));
+    expect(created.status).toBe(201);
+    const contract = (await created.json()).contract;
+    expect(contract.termMonths).toBe(6); // unaffected — only the split count changed, not the term
+    expect(contract.instalmentAmountMinor).toBe(Math.ceil((300000 - 60000) / 8)); // recomputed for an 8-way split, not the 6-month default
+
+    const detail = await getContract(contract.id, admin);
+    expect(detail.instalments).toHaveLength(8);
+    const scheduledTotal = detail.instalments.reduce((s: number, i: { amountDueMinor: number }) => s + i.amountDueMinor, 0);
+    expect(scheduledTotal).toBe(300000 - 60000);
+  });
+
+  it("a non-admin's attempted instalment count override is silently ignored — the frequency-derived default is used instead", async () => {
+    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
+    }));
+    expect(entry.status).toBe(201);
+
+    const custId = await makeCustomer('InstalCountCashier');
+    const itemId = await receiveItem('ICC');
+    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: {
+        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6,
+        instalmentCountOverride: 20,
+      },
+    }));
+    expect(created.status).toBe(201);
+    const contract = (await created.json()).contract;
+    expect(contract.instalmentAmountMinor).toBe(Math.ceil((300000 - 60000) / 6)); // the override was ignored, not honored
+
+    const detail = await getContract(contract.id, cashier);
+    expect(detail.instalments).toHaveLength(6);
+  });
+
   it('DEPOSIT_INSTALMENT: device withheld until deposit threshold is met (partial deposits accumulate)', async () => {
     const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
       token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },

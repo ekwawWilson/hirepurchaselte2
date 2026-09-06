@@ -57,11 +57,15 @@ export function generateStraightLineSchedule(
   termMonths: number,
   startDate: Date,
   paymentFrequency: PaymentFrequencyName = 'MONTHLY',
+  // A negotiated instalment count that overrides the frequency-derived default
+  // below — the caller (contractService.ts) is responsible for authorizing it.
+  instalmentCountOverride?: number,
 ): GeneratedInstalment[] {
   if (termMonths < 1) throw new Error('termMonths must be at least 1');
   if (financeAmountMinor < 0) throw new Error('financeAmountMinor cannot be negative');
 
-  const count = numberOfInstalmentsForTerm(termMonths, paymentFrequency);
+  const count = instalmentCountOverride ?? numberOfInstalmentsForTerm(termMonths, paymentFrequency);
+  if (count < 1) throw new Error('instalment count must be at least 1');
   const perInstalment = Math.ceil(financeAmountMinor / count);
   const schedule: GeneratedInstalment[] = [];
   let runningTotal = 0;
@@ -93,13 +97,18 @@ export function generateLoanSchedule(
   termMonths: number,
   startDate: Date,
   paymentFrequency: PaymentFrequencyName = 'MONTHLY',
+  // A negotiated instalment count that overrides the frequency-derived default
+  // below — termMonths still drives totalInterestMinor (time-value of money
+  // over the loan's real duration), only the split count changes.
+  instalmentCountOverride?: number,
 ): GeneratedInstalment[] {
   if (termMonths < 1) throw new Error('termMonths must be at least 1');
   if (principalMinor < 0) throw new Error('principalMinor cannot be negative');
 
   const totalInterestMinor = Math.round((principalMinor * interestRateBps * termMonths) / (10000 * 12));
 
-  const count = numberOfInstalmentsForTerm(termMonths, paymentFrequency);
+  const count = instalmentCountOverride ?? numberOfInstalmentsForTerm(termMonths, paymentFrequency);
+  if (count < 1) throw new Error('instalment count must be at least 1');
   const perInterest = Math.ceil(totalInterestMinor / count);
   const perPrincipal = Math.ceil(principalMinor / count);
 
