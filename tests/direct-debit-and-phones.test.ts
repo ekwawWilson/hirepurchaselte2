@@ -13,6 +13,7 @@ import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { POST as customersPOST } from '@/app/api/customers/route';
+import { POST as verifyPhonePOST } from '@/app/api/customers/verify-phone/route';
 import { createContract, ContractError } from '@/lib/services/contractService';
 import { postPayment } from '@/lib/services/paymentService';
 import { verifyMobileMoneyNumber } from '@/lib/services/hubtelVerificationService';
@@ -100,6 +101,21 @@ describe('Hubtel mobile money verification (mock mode)', () => {
     const result = await verifyMobileMoneyNumber({ msisdn: uniquePhone(), network: 'MTN', requestedById: 'test-user' });
     expect(result.verified).toBe(true);
     expect(result.accountName).toBeNull();
+  });
+
+  it('POST /api/customers/verify-phone accepts AirtelTigo — this is a lookup, not a direct-debit mandate, so it is not limited to DIRECT_DEBIT_NETWORKS', async () => {
+    const res = await verifyPhonePOST(makeRequest('POST', '/api/customers/verify-phone', {
+      token: cashier, body: { phone: uniquePhone(), network: 'AIRTELTIGO' },
+    }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).verified).toBe(true);
+  });
+
+  it('POST /api/customers/verify-phone still rejects a genuinely unknown network', async () => {
+    const res = await verifyPhonePOST(makeRequest('POST', '/api/customers/verify-phone', {
+      token: cashier, body: { phone: uniquePhone(), network: 'GLO' },
+    }));
+    expect(res.status).toBe(400);
   });
 });
 

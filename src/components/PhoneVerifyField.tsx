@@ -7,8 +7,7 @@ import { useToast } from '@/hooks/useToast';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-
-const NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'];
+import { MOBILE_MONEY_NETWORKS, MOBILE_MONEY_NETWORK_LABELS } from '@/lib/constants/contracts';
 
 /**
  * One phone number field with a "Verify" action — confirms the number is a real,
@@ -60,7 +59,7 @@ export function PhoneVerifyField({
           value={network}
           onChange={(e) => { setNetwork(e.target.value); setResult(null); }}
         >
-          {NETWORKS.map((n) => <option key={n} value={n}>{n}</option>)}
+          {MOBILE_MONEY_NETWORKS.map((n) => <option key={n} value={n}>{MOBILE_MONEY_NETWORK_LABELS[n]}</option>)}
         </select>
         <Button type="button" variant="outline" size="sm" disabled={!value.trim() || checking} onClick={verify}>
           {checking ? '...' : 'Verify'}

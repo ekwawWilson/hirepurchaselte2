@@ -50,6 +50,24 @@ export const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'] as const;
 export type DirectDebitNetwork = (typeof DIRECT_DEBIT_NETWORKS)[number];
 
 /**
+ * Every mobile money network Hubtel supports for a plain (non-direct-debit)
+ * lookup/charge — unlike DIRECT_DEBIT_NETWORKS above, AirtelTigo belongs here
+ * since Hubtel's restriction is specific to the Direct Debit product, not
+ * AirtelTigo generally (getHubtelChannel maps it to 'tigo-gh' fine outside
+ * direct debit). Vodafone Ghana's own 2024 rebrand to Telecel is why this
+ * list has just one of the two, not both — same underlying Hubtel channel
+ * ('vodafone-gh') either way, so carrying both as separate choices here would
+ * only be a duplicate of the same option.
+ */
+export const MOBILE_MONEY_NETWORKS = ['MTN', 'TELECEL', 'AIRTELTIGO'] as const;
+export type MobileMoneyNetwork = (typeof MOBILE_MONEY_NETWORKS)[number];
+export const MOBILE_MONEY_NETWORK_LABELS: Record<MobileMoneyNetwork, string> = {
+  MTN: 'MTN Ghana',
+  TELECEL: 'Telecel Ghana',
+  AIRTELTIGO: 'AirtelTigo Ghana',
+};
+
+/**
  * How a contract's instalments get collected. CUSTOMER_INITIATED (default): no
  * mandate, cash/USSD only. DIRECT_DEBIT: proactively auto-charged the moment an
  * instalment is due — no need to wait on the customer. BOTH: the customer can pay
