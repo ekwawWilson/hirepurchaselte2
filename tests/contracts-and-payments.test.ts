@@ -207,9 +207,12 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
     const custId = await makeCustomer('OverrideAdmin');
     const itemId = await receiveItem('OA');
+    // admin is an all-branch user (branchId null) — every other contract
+    // creation in this file uses the branch-scoped cashier token instead, so
+    // branchId resolves automatically; here it must be passed explicitly.
     const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
       token: admin, body: {
-        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6,
+        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6, branchId,
         totalPayableMinorOverride: 280000, depositAmountMinorOverride: 50000,
       },
     }));
