@@ -51,6 +51,11 @@ const CONTRACT_TYPE_OPTIONS = [
 
 export default function ContractsPage() {
   const canCreate = useAuthStore((s) => s.hasPermission('contract.create'));
+  // A negotiated deal that differs from the standard price chart tier —
+  // reserved for the two most-trusted roles; the API independently re-checks
+  // this server-side (contracts/route.ts) and ignores these fields for
+  // anyone else, so this client-side gate is only about what the form shows.
+  const canOverridePricing = useAuthStore((s) => s.user?.role === 'SUPER_ADMIN' || s.user?.role === 'ADMIN');
   const { toast } = useToast();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -89,6 +94,10 @@ export default function ContractsPage() {
   const [directDebitNetwork, setDirectDebitNetwork] = useState('');
   const [directDebitMsisdn, setDirectDebitMsisdn] = useState('');
   const [showSchedulePreview, setShowSchedulePreview] = useState(false);
+  // Free-text override of the price chart's own figures, SUPER_ADMIN/ADMIN
+  // only — '' means "use the price chart tier as selected", not "zero".
+  const [totalPriceOverride, setTotalPriceOverride] = useState('');
+  const [depositOverride, setDepositOverride] = useState('');
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
   const selectedItem = items.find((i) => i.id === inventoryItemId) ?? null;
@@ -99,7 +108,34 @@ export default function ContractsPage() {
   const selectedEntry = entriesForFrequency.find((e) => e.termMonths === selectedTermMonths) ?? null;
   const directDebitEligible = (DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES as string[]).includes(contractType);
   const totalInstalments = selectedTermMonths ? numberOfInstalmentsForTerm(selectedTermMonths, paymentFrequency) : null;
-  const financeAmountMinor = selectedEntry ? selectedEntry.totalPayableMinor - selectedEntry.depositAmountMinor : 0;
+
+  // Everything below reads from these two, never selectedEntry directly, so a
+  // manual override (SUPER_ADMIN/ADMIN) cascades into the finance amount, the
+  // schedule preview, and the summary with no separate branch per figure —
+  // mirrors exactly how contractService.ts's runContractTransaction does the
+  // same substitution server-side.
+  const parsedTotalOverride = parseFloat(totalPriceOverride);
+  const parsedDepositOverride = parseFloat(depositOverride);
+  const effectiveTotalPayableMinor = totalPriceOverride !== '' && !Number.isNaN(parsedTotalOverride)
+    ? Math.round(parsedTotalOverride * 100)
+    : (selectedEntry?.totalPayableMinor ?? 0);
+  const effectiveDepositAmountMinor = depositOverride !== '' && !Number.isNaN(parsedDepositOverride)
+    ? Math.round(parsedDepositOverride * 100)
+    : (selectedEntry?.depositAmountMinor ?? 0);
+  const financeAmountMinor = selectedEntry ? effectiveTotalPayableMinor - effectiveDepositAmountMinor : 0;
+  // Same formula contractService.ts's runContractTransaction recomputes
+  // server-side whenever a price is overridden — kept in lockstep here so the
+  // summary previews exactly what will actually be stored, not the price
+  // chart tier's now-possibly-stale figure.
+  const effectiveInstalmentAmountMinor = selectedEntry && totalInstalments ? Math.ceil(financeAmountMinor / totalInstalments) : 0;
+
+  // A newly-selected term/product means a different price chart tier — clear
+  // any override from the previous one rather than silently carrying a
+  // negotiated price over onto an unrelated tier.
+  useEffect(() => {
+    setTotalPriceOverride('');
+    setDepositOverride('');
+  }, [selectedEntry?.id]);
 
   const step1Valid = !!customerId;
   const step2Valid = isDeviceLoan ? !!loanProductId : !!inventoryItemId;
@@ -114,7 +150,7 @@ export default function ContractsPage() {
     setStartDate(new Date().toISOString().slice(0, 10));
     setGracePeriodDays('7'); setPenaltyPercent('0');
     setPaymentMethod('CUSTOMER_INITIATED'); setDirectDebitNetwork(''); setDirectDebitMsisdn(''); setShowSchedulePreview(false);
-    setCustomerSearch(''); setItemSearch('');
+    setCustomerSearch(''); setItemSearch(''); setTotalPriceOverride(''); setDepositOverride('');
   }
 
   function previewSchedule(): GeneratedInstalment[] {
@@ -122,7 +158,7 @@ export default function ContractsPage() {
     const start = new Date(startDate);
     if (contractType === 'DEVICE_LOAN') {
       if (selectedEntry.interestRateBps == null) return [];
-      const principal = derivePrincipalFromTotalPayable(selectedEntry.totalPayableMinor, selectedEntry.interestRateBps, selectedEntry.termMonths);
+      const principal = derivePrincipalFromTotalPayable(effectiveTotalPayableMinor, selectedEntry.interestRateBps, selectedEntry.termMonths);
       return generateLoanSchedule(principal, selectedEntry.interestRateBps, selectedEntry.termMonths, start, paymentFrequency);
     }
     return generateStraightLineSchedule(financeAmountMinor, selectedEntry.termMonths, start, paymentFrequency);
@@ -198,6 +234,12 @@ export default function ContractsPage() {
       toast({ title: 'Select a network and enter a mobile money number', variant: 'destructive' });
       return;
     }
+    const hasPriceOverride = canOverridePricing && totalPriceOverride !== '';
+    const hasDepositOverride = canOverridePricing && contractType === 'DEPOSIT_INSTALMENT' && depositOverride !== '';
+    if (hasDepositOverride && effectiveDepositAmountMinor >= effectiveTotalPayableMinor) {
+      toast({ title: 'Deposit must be less than the total price', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
       await api.post('/contracts', {
@@ -205,6 +247,8 @@ export default function ContractsPage() {
         ...(isDeviceLoan ? { productId: loanProductId } : { inventoryItemId }),
         termMonths: selectedEntry.termMonths, paymentFrequency: selectedEntry.paymentFrequency,
         startDate,
+        ...(hasPriceOverride && { totalPayableMinorOverride: effectiveTotalPayableMinor }),
+        ...(hasDepositOverride && { depositAmountMinorOverride: effectiveDepositAmountMinor }),
         ...(directDebitEligible && {
           gracePeriodDays: Number(gracePeriodDays || '0'), penaltyRateBps: Math.round(parseFloat(penaltyPercent || '0') * 100),
           paymentMethod,
@@ -451,12 +495,29 @@ export default function ContractsPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label>Total Price (GHS)</Label>
-                    <Input disabled className="mt-1.5 bg-gray-50" value={selectedEntry ? (selectedEntry.totalPayableMinor / 100).toFixed(2) : '0.00'} />
+                    <Input
+                      disabled={!canOverridePricing}
+                      type={canOverridePricing ? 'number' : 'text'}
+                      step="0.01"
+                      className={`mt-1.5 ${canOverridePricing ? '' : 'bg-gray-50'}`}
+                      value={totalPriceOverride !== '' ? totalPriceOverride : (selectedEntry ? (selectedEntry.totalPayableMinor / 100).toFixed(2) : '0.00')}
+                      onChange={(e) => setTotalPriceOverride(e.target.value)}
+                    />
+                    {canOverridePricing && (
+                      <p className="text-xs text-gray-400 mt-1">Negotiated price — overrides the price chart tier for this contract only.</p>
+                    )}
                   </div>
                   {contractType === 'DEPOSIT_INSTALMENT' && (
                     <div>
                       <Label>Deposit Amount (GHS)</Label>
-                      <Input disabled className="mt-1.5 bg-gray-50" value={selectedEntry ? (selectedEntry.depositAmountMinor / 100).toFixed(2) : '0.00'} />
+                      <Input
+                        disabled={!canOverridePricing}
+                        type={canOverridePricing ? 'number' : 'text'}
+                        step="0.01"
+                        className={`mt-1.5 ${canOverridePricing ? '' : 'bg-gray-50'}`}
+                        value={depositOverride !== '' ? depositOverride : (selectedEntry ? (selectedEntry.depositAmountMinor / 100).toFixed(2) : '0.00')}
+                        onChange={(e) => setDepositOverride(e.target.value)}
+                      />
                     </div>
                   )}
                 </div>
@@ -536,12 +597,12 @@ export default function ContractsPage() {
 
                 <div className="border border-gray-200 p-3 space-y-1.5 text-sm">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Summary</p>
-                  <div className="flex justify-between"><span className="text-gray-500">Total Price</span><span className="font-medium text-gray-900">{selectedEntry ? formatCurrency(selectedEntry.totalPayableMinor) : formatCurrency(0)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Total Price</span><span className="font-medium text-gray-900">{selectedEntry ? formatCurrency(effectiveTotalPayableMinor) : formatCurrency(0)}</span></div>
                   {contractType === 'DEPOSIT_INSTALMENT' && (
-                    <div className="flex justify-between"><span className="text-gray-500">Deposit</span><span className="font-medium text-gray-900">{selectedEntry ? formatCurrency(selectedEntry.depositAmountMinor) : formatCurrency(0)}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-500">Deposit</span><span className="font-medium text-gray-900">{selectedEntry ? formatCurrency(effectiveDepositAmountMinor) : formatCurrency(0)}</span></div>
                   )}
                   <div className="flex justify-between"><span className="text-gray-500">Finance Amount</span><span className="font-medium text-gray-900">{formatCurrency(financeAmountMinor)}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">Installment Amount</span><span className="font-medium text-gray-900">{selectedEntry ? formatCurrency(selectedEntry.instalmentAmountMinor) : formatCurrency(0)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Installment Amount</span><span className="font-medium text-gray-900">{formatCurrency(effectiveInstalmentAmountMinor)}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Payment Frequency</span><Badge variant="secondary">{paymentFrequency}</Badge></div>
                 </div>
 

@@ -199,6 +199,53 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(body.error).toMatch(/only available on save to own/i);
   });
 
+  it('ADMIN can override the price chart tier with a negotiated total/deposit, and the schedule reflects it', async () => {
+    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
+    }));
+    expect(entry.status).toBe(201);
+
+    const custId = await makeCustomer('OverrideAdmin');
+    const itemId = await receiveItem('OA');
+    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: admin, body: {
+        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6,
+        totalPayableMinorOverride: 280000, depositAmountMinorOverride: 50000,
+      },
+    }));
+    expect(created.status).toBe(201);
+    const contract = (await created.json()).contract;
+    expect(contract.totalPayableMinor).toBe(280000); // negotiated, not the price chart's 300000
+    expect(contract.depositAmountMinor).toBe(50000); // negotiated, not the price chart's 60000
+    expect(contract.balanceMinor).toBe(280000);
+    expect(contract.instalmentAmountMinor).toBe(Math.ceil((280000 - 50000) / 6)); // recomputed from the override, not the stale price-chart figure
+
+    const detail = await getContract(contract.id, admin);
+    expect(detail.instalments).toHaveLength(6);
+    const scheduledTotal = detail.instalments.reduce((s: number, i: { amountDueMinor: number }) => s + i.amountDueMinor, 0);
+    expect(scheduledTotal).toBe(280000 - 50000); // the actual generated schedule finances the overridden amount, not the price chart's
+  });
+
+  it('a non-admin\'s attempted price override is silently ignored — the standard price chart tier is used instead', async () => {
+    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
+    }));
+    expect(entry.status).toBe(201);
+
+    const custId = await makeCustomer('OverrideCashier');
+    const itemId = await receiveItem('OC');
+    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: {
+        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6,
+        totalPayableMinorOverride: 1, depositAmountMinorOverride: 0,
+      },
+    }));
+    expect(created.status).toBe(201);
+    const contract = (await created.json()).contract;
+    expect(contract.totalPayableMinor).toBe(300000); // the override was ignored, not honored
+    expect(contract.depositAmountMinor).toBe(60000);
+  });
+
   it('DEPOSIT_INSTALMENT: device withheld until deposit threshold is met (partial deposits accumulate)', async () => {
     const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
       token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },

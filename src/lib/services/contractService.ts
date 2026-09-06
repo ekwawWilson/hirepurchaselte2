@@ -7,7 +7,7 @@ import { generateStraightLineSchedule, generateLoanSchedule, derivePrincipalFrom
 import { queueSms, deliverQueuedSms } from './smsService';
 import { reverseAllPaymentsForContract } from './paymentService';
 import { initiatePreapproval, enableDirectDebit } from './hubtelPreapprovalService';
-import { CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName } from '../constants/contracts';
+import { CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, numberOfInstalmentsForTerm, type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName } from '../constants/contracts';
 
 export class ContractError extends Error {}
 
@@ -25,6 +25,13 @@ export interface CreateContractParams {
   startDate?: Date;
   gracePeriodDays?: number;
   penaltyRateBps?: number;
+  // A negotiated deal that differs from the standard price chart tier — the
+  // API route only ever forwards these for a SUPER_ADMIN/ADMIN caller
+  // (contracts/route.ts), never trusting a client-asserted role, so by the
+  // time they reach here they're already authorized; this layer just
+  // validates the values themselves are sane.
+  totalPayableMinorOverride?: number;
+  depositAmountMinorOverride?: number;
   // DIRECT_DEBIT/BOTH require directDebitNetwork+directDebitMsisdn (validated below);
   // CUSTOMER_INITIATED (the default) needs neither.
   paymentMethod?: PaymentMethodName;
@@ -107,6 +114,17 @@ export async function createContract(params: CreateContractParams) {
     );
   }
 
+  if (params.totalPayableMinorOverride !== undefined && (!Number.isInteger(params.totalPayableMinorOverride) || params.totalPayableMinorOverride <= 0)) {
+    throw new ContractError('totalPayableMinorOverride must be a positive integer');
+  }
+  if (params.depositAmountMinorOverride !== undefined && (!Number.isInteger(params.depositAmountMinorOverride) || params.depositAmountMinorOverride < 0)) {
+    throw new ContractError('depositAmountMinorOverride must be a non-negative integer');
+  }
+  const effectiveTotalPayableMinor = params.totalPayableMinorOverride ?? chartEntry.totalPayableMinor;
+  if (params.depositAmountMinorOverride !== undefined && params.depositAmountMinorOverride >= effectiveTotalPayableMinor) {
+    throw new ContractError('depositAmountMinorOverride must be less than the total payable amount');
+  }
+
   const startDate = params.startDate ?? new Date();
 
   // generateContractNumber's own internal retry only protects against a number
@@ -148,7 +166,13 @@ async function runContractTransaction(
     let depositAmountMinor = 0;
     let principalMinor: number | null = null;
     let interestRateBps: number | null = null;
-    const totalPayableMinor = chartEntry.totalPayableMinor;
+    // A negotiated deal overrides the price chart's own figures (validated in
+    // createContract, and only ever forwarded by contracts/route.ts for a
+    // SUPER_ADMIN/ADMIN caller) — every downstream calculation (schedule,
+    // principal derivation, the contract's own stored totals) reads from
+    // these two local variables, never chartEntry directly, so an override
+    // cascades correctly with no separate branch per figure.
+    const totalPayableMinor = params.totalPayableMinorOverride ?? chartEntry.totalPayableMinor;
     let scheduleFinanceAmount: number;
     let scheduleKind: 'STRAIGHT_LINE' | 'LOAN' | 'NONE';
 
@@ -165,7 +189,7 @@ async function runContractTransaction(
 
       case 'DEPOSIT_INSTALMENT':
         status = 'PENDING_DEPOSIT';
-        depositAmountMinor = chartEntry.depositAmountMinor; // absolute amount set by admin, not derived
+        depositAmountMinor = params.depositAmountMinorOverride ?? chartEntry.depositAmountMinor;
         scheduleFinanceAmount = totalPayableMinor - depositAmountMinor;
         scheduleKind = 'STRAIGHT_LINE';
         break;
@@ -182,6 +206,14 @@ async function runContractTransaction(
 
     const directDebitEligible = DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.includes(params.contractType);
 
+    // Recomputed from the effective (possibly overridden) total/deposit, same
+    // formula createPriceChartEntryInTx uses for the price chart's own figure
+    // (priceChartService.ts) — chartEntry.instalmentAmountMinor is only correct
+    // when nothing was overridden; recomputing unconditionally means this is
+    // never stale, at the cost of a no-op recompute in the common case.
+    const instalmentCount = numberOfInstalmentsForTerm(params.termMonths, chartEntry.paymentFrequency as PaymentFrequencyName);
+    const instalmentAmountMinor = Math.ceil((totalPayableMinor - depositAmountMinor) / instalmentCount);
+
     const contract = await tx.contract.create({
       data: {
         contractNumber,
@@ -195,7 +227,7 @@ async function runContractTransaction(
         depositAmountMinor,
         termMonths: params.termMonths,
         paymentFrequency: chartEntry.paymentFrequency,
-        instalmentAmountMinor: chartEntry.instalmentAmountMinor,
+        instalmentAmountMinor,
         principalMinor,
         interestRateBps,
         rateBasis: params.contractType === 'DEVICE_LOAN' ? 'FLAT' : null,

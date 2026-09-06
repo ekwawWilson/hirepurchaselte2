@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
   const {
     contractType, customerId, inventoryItemId, productId, termMonths, paymentFrequency, startDate,
     gracePeriodDays, penaltyRateBps, paymentMethod, directDebitNetwork, directDebitMsisdn,
+    totalPayableMinorOverride, depositAmountMinorOverride,
   } = body;
 
   if (!(CONTRACT_TYPES as readonly string[]).includes(contractType as string)) {
@@ -88,6 +89,19 @@ export async function POST(req: NextRequest) {
   const branchId = user.branchId ?? (body.branchId as string);
   if (!branchId) return NextResponse.json({ error: 'branchId is required for an all-branch user' }, { status: 400 });
 
+  if (totalPayableMinorOverride !== undefined && typeof totalPayableMinorOverride !== 'number') {
+    return NextResponse.json({ error: 'totalPayableMinorOverride must be a number' }, { status: 400 });
+  }
+  if (depositAmountMinorOverride !== undefined && typeof depositAmountMinorOverride !== 'number') {
+    return NextResponse.json({ error: 'depositAmountMinorOverride must be a number' }, { status: 400 });
+  }
+  // A negotiated price differing from the standard price chart tier — reserved
+  // for the two most-trusted roles. Silently ignored (not rejected) for anyone
+  // else: the UI never shows these fields as editable outside those roles in
+  // the first place, so a non-admin sending them is either a stale form state
+  // or a direct API call, neither of which should be able to move the price.
+  const canOverridePricing = user.roleName === 'SUPER_ADMIN' || user.roleName === 'ADMIN';
+
   try {
     const contract = await createContract({
       contractType: contractType as never,
@@ -102,6 +116,8 @@ export async function POST(req: NextRequest) {
       paymentMethod: paymentMethod as PaymentMethodName | undefined,
       directDebitNetwork: directDebitNetwork as string | undefined,
       directDebitMsisdn: directDebitMsisdn as string | undefined,
+      totalPayableMinorOverride: canOverridePricing ? (totalPayableMinorOverride as number | undefined) : undefined,
+      depositAmountMinorOverride: canOverridePricing ? (depositAmountMinorOverride as number | undefined) : undefined,
       branchId,
       createdById: user.id,
     });
