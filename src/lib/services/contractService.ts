@@ -20,6 +20,9 @@ export interface CreateContractParams {
   // pass productId instead (docs/01-plan.md).
   inventoryItemId?: string;
   productId?: string;
+  // The reference tier used to look up a price chart entry (interestRateBps
+  // for DEVICE_LOAN, and the default total/deposit when those aren't
+  // themselves overridden below) — stays exactly what it always was.
   termMonths: number;
   paymentFrequency?: PaymentFrequencyName;
   startDate?: Date;
@@ -32,6 +35,12 @@ export interface CreateContractParams {
   // validates the values themselves are sane.
   totalPayableMinorOverride?: number;
   depositAmountMinorOverride?: number;
+  // The actual contract term, when it differs from the price chart tier used
+  // to source it above — e.g. a customer negotiates 5 months off a product
+  // only priced at 3/4/6. Decoupled from `termMonths` (the lookup key)
+  // rather than replacing it, since a price chart entry still has to exist
+  // for *some* term to source interestRateBps/base pricing from.
+  termMonthsOverride?: number;
   // DIRECT_DEBIT/BOTH require directDebitNetwork+directDebitMsisdn (validated below);
   // CUSTOMER_INITIATED (the default) needs neither.
   paymentMethod?: PaymentMethodName;
@@ -124,6 +133,9 @@ export async function createContract(params: CreateContractParams) {
   if (params.depositAmountMinorOverride !== undefined && params.depositAmountMinorOverride >= effectiveTotalPayableMinor) {
     throw new ContractError('depositAmountMinorOverride must be less than the total payable amount');
   }
+  if (params.termMonthsOverride !== undefined && (!Number.isInteger(params.termMonthsOverride) || params.termMonthsOverride <= 0)) {
+    throw new ContractError('termMonthsOverride must be a positive integer');
+  }
 
   const startDate = params.startDate ?? new Date();
 
@@ -160,6 +172,10 @@ async function runContractTransaction(
   paymentMethod: PaymentMethodName,
 ) {
   const contractNumber = await generateContractNumber();
+  // The real contract term — everything about the SCHEDULE (its length,
+  // per-instalment amounts, DEVICE_LOAN's principal) uses this, never
+  // params.termMonths directly, which stays purely a price-chart lookup key.
+  const effectiveTermMonths = params.termMonthsOverride ?? params.termMonths;
 
   return prisma.$transaction(async (tx) => {
     let status: string;
@@ -198,7 +214,7 @@ async function runContractTransaction(
         status = 'ACTIVE'; // cash disbursed unconditionally, no down-payment gate (docs/01-plan.md §5) — no device/unit involved at all (§20)
         interestRateBps = chartEntry.interestRateBps;
         if (interestRateBps === null) throw new ContractError('Price chart entry is missing interestRateBps for a DEVICE_LOAN');
-        principalMinor = derivePrincipalFromTotalPayable(totalPayableMinor, interestRateBps, params.termMonths);
+        principalMinor = derivePrincipalFromTotalPayable(totalPayableMinor, interestRateBps, effectiveTermMonths);
         scheduleFinanceAmount = principalMinor; // unused directly — loan schedule uses principal+rate below
         scheduleKind = 'LOAN';
         break;
@@ -211,7 +227,7 @@ async function runContractTransaction(
     // (priceChartService.ts) — chartEntry.instalmentAmountMinor is only correct
     // when nothing was overridden; recomputing unconditionally means this is
     // never stale, at the cost of a no-op recompute in the common case.
-    const instalmentCount = numberOfInstalmentsForTerm(params.termMonths, chartEntry.paymentFrequency as PaymentFrequencyName);
+    const instalmentCount = numberOfInstalmentsForTerm(effectiveTermMonths, chartEntry.paymentFrequency as PaymentFrequencyName);
     const instalmentAmountMinor = Math.ceil((totalPayableMinor - depositAmountMinor) / instalmentCount);
 
     const contract = await tx.contract.create({
@@ -225,7 +241,7 @@ async function runContractTransaction(
         priceChartEntryId: chartEntry.id,
         totalPriceMinor: totalPayableMinor,
         depositAmountMinor,
-        termMonths: params.termMonths,
+        termMonths: effectiveTermMonths,
         paymentFrequency: chartEntry.paymentFrequency,
         instalmentAmountMinor,
         principalMinor,
@@ -249,8 +265,8 @@ async function runContractTransaction(
     if (scheduleKind !== 'NONE') {
       const scheduleFrequency = chartEntry.paymentFrequency as PaymentFrequencyName;
       const schedule = scheduleKind === 'LOAN'
-        ? generateLoanSchedule(principalMinor as number, interestRateBps as number, params.termMonths, startDate, scheduleFrequency)
-        : generateStraightLineSchedule(scheduleFinanceAmount, params.termMonths, startDate, scheduleFrequency);
+        ? generateLoanSchedule(principalMinor as number, interestRateBps as number, effectiveTermMonths, startDate, scheduleFrequency)
+        : generateStraightLineSchedule(scheduleFinanceAmount, effectiveTermMonths, startDate, scheduleFrequency);
 
       await tx.instalment.createMany({
         data: schedule.map((s) => ({

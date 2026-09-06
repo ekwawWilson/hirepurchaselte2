@@ -98,6 +98,11 @@ export default function ContractsPage() {
   // only — '' means "use the price chart tier as selected", not "zero".
   const [totalPriceOverride, setTotalPriceOverride] = useState('');
   const [depositOverride, setDepositOverride] = useState('');
+  // Free-text override of the contract's actual term length, SUPER_ADMIN/ADMIN
+  // only — decoupled from selectedTermMonths (still the price-chart lookup key
+  // sent as termMonths) so a negotiated 5-month term can still be sourced from
+  // a 3/4/6-month priced tier. '' means "use the selected tier's own length".
+  const [termMonthsOverride, setTermMonthsOverride] = useState('');
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
   const selectedItem = items.find((i) => i.id === inventoryItemId) ?? null;
@@ -107,7 +112,11 @@ export default function ContractsPage() {
   const entriesForFrequency = chartEntries.filter((e) => e.paymentFrequency === paymentFrequency);
   const selectedEntry = entriesForFrequency.find((e) => e.termMonths === selectedTermMonths) ?? null;
   const directDebitEligible = (DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES as string[]).includes(contractType);
-  const totalInstalments = selectedTermMonths ? numberOfInstalmentsForTerm(selectedTermMonths, paymentFrequency) : null;
+
+  const parsedTermOverride = parseInt(termMonthsOverride, 10);
+  const hasTermOverridePreview = canOverridePricing && termMonthsOverride !== '' && Number.isInteger(parsedTermOverride) && parsedTermOverride > 0;
+  const effectiveTermMonths = hasTermOverridePreview ? parsedTermOverride : (selectedTermMonths ?? 0);
+  const totalInstalments = selectedTermMonths ? numberOfInstalmentsForTerm(effectiveTermMonths, paymentFrequency) : null;
 
   // Everything below reads from these two, never selectedEntry directly, so a
   // manual override (SUPER_ADMIN/ADMIN) cascades into the finance amount, the
@@ -135,6 +144,7 @@ export default function ContractsPage() {
   useEffect(() => {
     setTotalPriceOverride('');
     setDepositOverride('');
+    setTermMonthsOverride('');
   }, [selectedEntry?.id]);
 
   const step1Valid = !!customerId;
@@ -150,7 +160,7 @@ export default function ContractsPage() {
     setStartDate(new Date().toISOString().slice(0, 10));
     setGracePeriodDays('7'); setPenaltyPercent('0');
     setPaymentMethod('CUSTOMER_INITIATED'); setDirectDebitNetwork(''); setDirectDebitMsisdn(''); setShowSchedulePreview(false);
-    setCustomerSearch(''); setItemSearch(''); setTotalPriceOverride(''); setDepositOverride('');
+    setCustomerSearch(''); setItemSearch(''); setTotalPriceOverride(''); setDepositOverride(''); setTermMonthsOverride('');
   }
 
   function previewSchedule(): GeneratedInstalment[] {
@@ -158,10 +168,10 @@ export default function ContractsPage() {
     const start = new Date(startDate);
     if (contractType === 'DEVICE_LOAN') {
       if (selectedEntry.interestRateBps == null) return [];
-      const principal = derivePrincipalFromTotalPayable(effectiveTotalPayableMinor, selectedEntry.interestRateBps, selectedEntry.termMonths);
-      return generateLoanSchedule(principal, selectedEntry.interestRateBps, selectedEntry.termMonths, start, paymentFrequency);
+      const principal = derivePrincipalFromTotalPayable(effectiveTotalPayableMinor, selectedEntry.interestRateBps, effectiveTermMonths);
+      return generateLoanSchedule(principal, selectedEntry.interestRateBps, effectiveTermMonths, start, paymentFrequency);
     }
-    return generateStraightLineSchedule(financeAmountMinor, selectedEntry.termMonths, start, paymentFrequency);
+    return generateStraightLineSchedule(financeAmountMinor, effectiveTermMonths, start, paymentFrequency);
   }
 
   async function loadContracts() {
@@ -236,6 +246,7 @@ export default function ContractsPage() {
     }
     const hasPriceOverride = canOverridePricing && totalPriceOverride !== '';
     const hasDepositOverride = canOverridePricing && contractType === 'DEPOSIT_INSTALMENT' && depositOverride !== '';
+    const hasTermOverride = hasTermOverridePreview;
     if (hasDepositOverride && effectiveDepositAmountMinor >= effectiveTotalPayableMinor) {
       toast({ title: 'Deposit must be less than the total price', variant: 'destructive' });
       return;
@@ -249,6 +260,7 @@ export default function ContractsPage() {
         startDate,
         ...(hasPriceOverride && { totalPayableMinorOverride: effectiveTotalPayableMinor }),
         ...(hasDepositOverride && { depositAmountMinorOverride: effectiveDepositAmountMinor }),
+        ...(hasTermOverride && { termMonthsOverride: effectiveTermMonths }),
         ...(directDebitEligible && {
           gracePeriodDays: Number(gracePeriodDays || '0'), penaltyRateBps: Math.round(parseFloat(penaltyPercent || '0') * 100),
           paymentMethod,
@@ -538,6 +550,22 @@ export default function ContractsPage() {
                   </div>
                 </div>
 
+                {canOverridePricing && (
+                  <div>
+                    <Label>Term Override (Months)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      step="1"
+                      className="mt-1.5"
+                      placeholder={selectedTermMonths ? `${selectedTermMonths} (price chart tier)` : ''}
+                      value={termMonthsOverride}
+                      onChange={(e) => setTermMonthsOverride(e.target.value)}
+                    />
+                    <p className="text-xs text-gray-400 mt-1">Negotiated term length — priced off the {selectedTermMonths ?? '—'}-month tier above, but the actual schedule runs for this many months instead.</p>
+                  </div>
+                )}
+
                 <div>
                   <Label>Start Date</Label>
                   <Input type="date" className="mt-1.5" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
@@ -604,6 +632,9 @@ export default function ContractsPage() {
                   <div className="flex justify-between"><span className="text-gray-500">Finance Amount</span><span className="font-medium text-gray-900">{formatCurrency(financeAmountMinor)}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Installment Amount</span><span className="font-medium text-gray-900">{formatCurrency(effectiveInstalmentAmountMinor)}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Payment Frequency</span><Badge variant="secondary">{paymentFrequency}</Badge></div>
+                  {hasTermOverridePreview && (
+                    <div className="flex justify-between"><span className="text-gray-500">Term</span><span className="font-medium text-gray-900">{effectiveTermMonths} months</span></div>
+                  )}
                 </div>
 
                 {contractType !== 'SAVE_TO_OWN' && selectedEntry && (
