@@ -18,84 +18,33 @@ interface PreapprovalTestResult {
   responseBody: unknown;
 }
 
-// The exact contract this app's own routes parse/emit for each Hubtel callback
-// and the USSD Service Flow — for pasting into a UAT ticket or screenshotting
-// for Hubtel's reviewer, and for testing the shapes below with curl/Postman
-// directly against this server without a live shortcode.
-const SAMPLE_PAYLOADS_TEXT = `HUBTEL INTEGRATION — REQUEST/RESPONSE CONTRACT
-================================================
-As implemented by this app's USSD, Receive-Money callback, Preapproval
-callback and Transaction Status Check handling.
-
-------------------------------------------------------
-1. USSD — Service Flow Interaction (POST to the Service
-   interaction URL registered with Hubtel)
-------------------------------------------------------
-Request (dial-in):
-{
-  "SessionId": "abc123",
-  "Mobile": "233244000111",
-  "Message": "",
-  "Type": "Initiation"
+interface SamplePayload {
+  request: unknown;
+  response: unknown;
+  capturedAt: string;
+  note: string;
 }
 
-Response (this app always returns all five fields — Label/DataType/FieldType
-are Mandatory per Hubtel's contract; a missing one, or Type in the wrong
-case, is what produces Hubtel's "invalid response, Error: UUE"):
-{
-  "SessionId": "abc123",
-  "Type": "response",
-  "Message": "HP001 (Deposit + Instalment)\\nBalance: GHS450.00\\nEnter amount to pay:",
-  "Label": "Enter amount",
-  "DataType": "input",
-  "FieldType": "decimal"
-}
+const SAMPLE_SECTIONS: { key: keyof DiagnosticsSamples; title: string; emptyHint: string }[] = [
+  { key: 'ussd', title: 'USSD — Service Flow Interaction', emptyHint: 'Dial into the USSD simulator below, or wait for a real dial-in, to capture one.' },
+  { key: 'paymentCallback', title: 'Payment callback', emptyHint: 'Take (or simulate) a payment to capture one.' },
+  { key: 'preapprovalCallback', title: 'Preapproval callback', emptyHint: 'Only fires in live mode, once a customer completes a real direct-debit mandate prompt.' },
+  { key: 'statusCheck', title: 'Transaction status check', emptyHint: 'Only fires in live mode, when the reconcile sweep checks a pending transaction.' },
+];
 
-Follow-up (customer typed a reply):
-{ "SessionId": "abc123", "Mobile": "233244000111", "Message": "50", "Type": "Response" }
-
-Session ended by the network (hang-up / timeout):
-{ "SessionId": "abc123", "Mobile": "233244000111", "Message": "", "Type": "Timeout" }
-Response: { ..., "Type": "release", "DataType": "display" }
-
-------------------------------------------------------
-2. PAYMENT CALLBACK (POST to HUBTEL_CALLBACK_URL)
-------------------------------------------------------
-{
-  "ResponseCode": "0000",
-  "Message": "Success",
-  "Data": {
-    "ClientReference": "a1b2c3d4-e5f6",
-    "TransactionId": "8a6cd5c6d3f24e1a9b2c",
-    "Status": "Success",
-    "Amount": 50.00,
-    "CustomerMsisdn": "233244000111"
+function formatSamplesForCopy(samples: DiagnosticsSamples): string {
+  const lines = ['HUBTEL INTEGRATION — REAL CAPTURED REQUEST/RESPONSE PAYLOADS', '='.repeat(60), ''];
+  for (const { key, title, emptyHint } of SAMPLE_SECTIONS) {
+    const sample = samples[key];
+    lines.push(`--- ${title} ---`);
+    if (!sample) {
+      lines.push(`(not captured on this server yet — ${emptyHint})`, '');
+      continue;
+    }
+    lines.push(`Captured: ${new Date(sample.capturedAt).toLocaleString()}`, sample.note, '', 'Request:', JSON.stringify(sample.request, null, 2), '', 'Response:', JSON.stringify(sample.response, null, 2), '');
   }
+  return lines.join('\n');
 }
-A non-success ResponseCode (e.g. "2001") or Status of Failed/Rejected/Cancelled
-is treated as a failed payment. Query string carries ?token=<WEBHOOK_SHARED_TOKEN>.
-
-------------------------------------------------------
-3. PREAPPROVAL CALLBACK (POST to the preapproval callback URL)
-------------------------------------------------------
-{
-  "ClientReferenceId": "a1b2c3d4-e5f6",
-  "HubtelPreapprovalId": "PA-00019284",
-  "PreapprovalStatus": "Approved"
-}
-PreapprovalStatus of Cancelled/Expired -> mandate CANCELLED.
-Declined/Failed/Rejected -> mandate FAILED. Anything else is ignored (not
-yet a terminal state).
-
-------------------------------------------------------
-4. TRANSACTION STATUS CHECK — response
-------------------------------------------------------
-GET https://api-txnstatus.hubtel.com/transactions/{salesId}/status?clientReference={ref}
-{
-  "ResponseCode": "0000",
-  "Data": { "Status": "Paid", "ClientReference": "a1b2c3d4-e5f6" }
-}
-`;
 
 interface Probe {
   service: string;
@@ -103,6 +52,13 @@ interface Probe {
   verdict: 'reachable' | 'blocked' | 'timeout' | 'error';
   detail: string;
   httpStatus?: number;
+}
+
+interface DiagnosticsSamples {
+  ussd: SamplePayload | null;
+  paymentCallback: SamplePayload | null;
+  preapprovalCallback: SamplePayload | null;
+  statusCheck: SamplePayload | null;
 }
 
 interface Diagnostics {
@@ -118,6 +74,7 @@ interface Diagnostics {
   ip: string | null;
   ipSource?: string;
   probes: Probe[];
+  samples: DiagnosticsSamples;
 }
 
 const VERDICT_STYLES: Record<Probe['verdict'], 'success' | 'destructive'> = {
@@ -362,25 +319,58 @@ export function HubtelDiagnostics() {
           </Button>
         </div>
 
-        <div className="border-t border-gray-100 pt-4 space-y-2">
-          <button
-            type="button"
-            className="text-sm font-medium text-gray-800 hover:text-gray-600"
-            onClick={() => setShowSamples((v) => !v)}
-          >
-            {showSamples ? 'Hide' : 'Show'} sample request/response payloads
-          </button>
-          {showSamples && (
-            <div className="space-y-2">
-              <pre className="text-xs bg-gray-50 ring-1 ring-gray-200/60 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
-                {SAMPLE_PAYLOADS_TEXT}
-              </pre>
-              <Button type="button" size="sm" variant="outline" onClick={() => copy(SAMPLE_PAYLOADS_TEXT, 'samples')}>
-                {copied === 'samples' ? 'Copied' : 'Copy for Hubtel'}
-              </Button>
-            </div>
-          )}
-        </div>
+        {diagnostics && (
+          <div className="border-t border-gray-100 pt-4 space-y-2">
+            <button
+              type="button"
+              className="text-sm font-medium text-gray-800 hover:text-gray-600"
+              onClick={() => setShowSamples((v) => !v)}
+            >
+              {showSamples ? 'Hide' : 'Show'} sample request/response payloads
+            </button>
+            <p className="text-xs text-gray-400">
+              Real traffic this server has actually handled — not illustrative examples. A section reading
+              &quot;not captured yet&quot; means nothing has gone through that path here.
+            </p>
+            {showSamples && (
+              <div className="space-y-4">
+                {SAMPLE_SECTIONS.map(({ key, title, emptyHint }) => {
+                  const sample = diagnostics.samples[key];
+                  return (
+                    <div key={key} className="border border-gray-100 rounded-lg p-3 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <p className="text-sm font-medium text-gray-800">{title}</p>
+                        {sample && <span className="text-xs text-gray-400">{new Date(sample.capturedAt).toLocaleString()}</span>}
+                      </div>
+                      {sample ? (
+                        <>
+                          <p className="text-xs text-gray-500">{sample.note}</p>
+                          <div>
+                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Request</p>
+                            <pre className="text-xs bg-gray-50 ring-1 ring-gray-200/60 rounded-lg p-3 overflow-x-auto">
+                              {JSON.stringify(sample.request, null, 2)}
+                            </pre>
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Response</p>
+                            <pre className="text-xs bg-gray-50 ring-1 ring-gray-200/60 rounded-lg p-3 overflow-x-auto">
+                              {JSON.stringify(sample.response, null, 2)}
+                            </pre>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-xs text-gray-400">Not captured on this server yet — {emptyHint}</p>
+                      )}
+                    </div>
+                  );
+                })}
+                <Button type="button" size="sm" variant="outline" onClick={() => copy(formatSamplesForCopy(diagnostics.samples), 'samples')}>
+                  {copied === 'samples' ? 'Copied' : 'Copy for Hubtel'}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

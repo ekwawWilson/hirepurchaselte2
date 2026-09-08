@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
+import { prisma } from '@/lib/db/prisma';
 import {
   isHubtelLiveMode,
   requireHubtelCredentials,
@@ -9,6 +10,7 @@ import {
   transactionStatusUrl,
 } from '@/lib/services/hubtelClient';
 import { preapprovalCallbackUrl } from '@/lib/services/hubtelPreapprovalService';
+import type { HubtelSampleKind } from '@/lib/services/hubtelSampleLogService';
 
 /**
  * GET /api/settings/hubtel-diagnostics
@@ -81,6 +83,72 @@ async function probe(service: string, url: string, auth: string): Promise<Probe>
   }
 }
 
+interface SamplePayload {
+  request: unknown;
+  response: unknown;
+  capturedAt: string;
+  note: string;
+}
+
+function safeJsonParse(text: string | null): unknown {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * Real request/response pairs pulled from what this server has actually
+ * sent/received, for Settings > Hubtel Diagnostics's sample-payloads panel —
+ * never hand-typed illustrative JSON. USSD/preapproval-callback/status-check
+ * come from HubtelSampleLog (see hubtelSampleLogService.ts, the only durable
+ * record of their raw traffic); the payment callback is sourced straight from
+ * HubtelTransaction.rawCallbackPayload, which already holds it. `null` for a
+ * kind means nothing has gone through that path on this server yet.
+ */
+async function loadSamplePayloads(): Promise<Record<string, SamplePayload | null>> {
+  const kinds: HubtelSampleKind[] = ['USSD', 'PREAPPROVAL_CALLBACK', 'STATUS_CHECK'];
+  const [logs, latestPaymentTxn] = await Promise.all([
+    prisma.hubtelSampleLog.findMany({ where: { kind: { in: kinds } } }),
+    prisma.hubtelTransaction.findFirst({
+      where: { status: { in: ['SUCCESS', 'FAILED'] }, rawCallbackPayload: { not: null } },
+      orderBy: { updatedAt: 'desc' },
+    }),
+  ]);
+  const byKind = new Map(logs.map((l) => [l.kind, l]));
+
+  const fromLog = (kind: HubtelSampleKind, note: string): SamplePayload | null => {
+    const log = byKind.get(kind);
+    if (!log) return null;
+    return {
+      request: safeJsonParse(log.requestPayload),
+      response: safeJsonParse(log.responsePayload),
+      capturedAt: log.capturedAt.toISOString(),
+      note,
+    };
+  };
+
+  const paymentCallback: SamplePayload | null = latestPaymentTxn
+    ? {
+        request: safeJsonParse(latestPaymentTxn.rawCallbackPayload),
+        response: { received: true, status: latestPaymentTxn.status },
+        capturedAt: latestPaymentTxn.updatedAt.toISOString(),
+        note: (safeJsonParse(latestPaymentTxn.rawCallbackPayload) as { mock?: boolean } | null)?.mock
+          ? 'From this server’s mock payment flow (no live credentials configured at the time), not a real Hubtel callback.'
+          : 'A real callback Hubtel sent this server.',
+      }
+    : null;
+
+  return {
+    ussd: fromLog('USSD', 'The most recent dial-in this server actually handled — from Hubtel’s gateway or the built-in USSD simulator (both hit this same endpoint).'),
+    paymentCallback,
+    preapprovalCallback: fromLog('PREAPPROVAL_CALLBACK', 'A real mandate-status callback Hubtel sent this server (this path never runs in mock mode).'),
+    statusCheck: fromLog('STATUS_CHECK', 'A real response from Hubtel’s Transaction Status Check API (this path never runs in mock mode).'),
+  };
+}
+
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if ('error' in auth) return auth.error;
@@ -111,5 +179,7 @@ export async function GET(req: NextRequest) {
     ]);
   }
 
-  return NextResponse.json({ mode, config, ip, ipSource: source, probes });
+  const samples = await loadSamplePayloads();
+
+  return NextResponse.json({ mode, config, ip, ipSource: source, probes, samples });
 }

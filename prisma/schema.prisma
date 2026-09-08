@@ -550,6 +550,24 @@ model UssdSession {
   @@map("ussd_sessions")
 }
 
+// One row per `kind` (upserted, never accumulated) capturing the most recent
+// real request/response for an integration point Hubtel calls into that has
+// nothing else durable to source an example from (USSD's Service Flow
+// Interaction, and the Preapproval/Transaction-Status-Check APIs, which don't
+// persist their raw bodies anywhere else — unlike the payment callback, whose
+// real payload already lives on HubtelTransaction.rawCallbackPayload). Powers
+// the Settings > Hubtel Diagnostics "sample payloads" panel with genuine
+// captured traffic instead of hand-typed illustrative JSON.
+model HubtelSampleLog {
+  id              String   @id @default(uuid())
+  kind            String   @unique // USSD | PREAPPROVAL_CALLBACK | STATUS_CHECK
+  requestPayload  String?
+  responsePayload String?
+  capturedAt      DateTime @default(now())
+
+  @@map("hubtel_sample_logs")
+}
+
 // ---------------------------------------------------------------------------
 // SMS
 // ---------------------------------------------------------------------------

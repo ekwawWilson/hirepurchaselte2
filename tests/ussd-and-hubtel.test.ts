@@ -13,6 +13,7 @@ import { GET as contractGET } from '@/app/api/contracts/[id]/route';
 import { POST as ussdPOST } from '@/app/api/ussd/route';
 import { POST as hubtelCallbackPOST } from '@/app/api/payments/hubtel/callback/route';
 import { POST as serviceFulfilmentPOST } from '@/app/api/payments/hubtel/service-fulfilment/route';
+import { GET as hubtelDiagnosticsGET } from '@/app/api/settings/hubtel-diagnostics/route';
 
 import { handleUssdInput } from '@/lib/services/ussdService';
 import { processHubtelCallback, initiateHubtelPayment, reconcilePendingHubtelTransactions } from '@/lib/services/hubtelPaymentService';
@@ -235,6 +236,23 @@ describe('USSD + Hubtel payments', () => {
     expect(body.Label.length).toBeGreaterThan(0);
     expect(body.DataType).toBe('input');
     expect(typeof body.FieldType).toBe('string');
+
+    // Settings > Hubtel Diagnostics sources its "sample payloads" panel from
+    // real captured traffic, not hand-typed illustrative JSON — this is the
+    // one durable record of a USSD exchange's raw shape (see
+    // hubtelSampleLogService.ts).
+    const sample = await prisma.hubtelSampleLog.findUnique({ where: { kind: 'USSD' } });
+    expect(sample).not.toBeNull();
+    expect(JSON.parse(sample!.requestPayload as string)).toMatchObject({ SessionId: sessionId, Type: 'Initiation' });
+    expect(JSON.parse(sample!.responsePayload as string)).toMatchObject({ SessionId: sessionId, Type: 'response' });
+
+    // Settings > Hubtel Diagnostics surfaces exactly that captured exchange —
+    // real traffic this server handled, not hand-typed illustrative JSON.
+    const diag = await hubtelDiagnosticsGET(makeRequest('GET', '/api/settings/hubtel-diagnostics', { token: admin }));
+    expect(diag.status).toBe(200);
+    const diagBody = await diag.json();
+    expect(diagBody.samples.ussd).not.toBeNull();
+    expect(diagBody.samples.ussd.request).toMatchObject({ SessionId: sessionId });
   });
 
   it('a Hubtel "Timeout" notification (customer hung up) ends the session cleanly instead of treating it as input', async () => {

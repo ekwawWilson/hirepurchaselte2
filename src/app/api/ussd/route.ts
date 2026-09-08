@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { handleUssdInput } from '@/lib/services/ussdService';
+import { recordHubtelSample } from '@/lib/services/hubtelSampleLogService';
 
 /**
  * USSD gateway webhook. Deliberately unauthenticated (a real USSD gateway
@@ -28,12 +29,17 @@ export async function POST(req: NextRequest) {
   // Programmable Services response contract exactly — Label/DataType/FieldType
   // are Mandatory there, and a missing one (or a wrong-cased Type value) is what
   // produces Hubtel's own "invalid response, Error: UUE" rejection.
-  return NextResponse.json({
+  const response = {
     SessionId: sessionId,
     Type: result.continueSession ? 'response' : 'release',
     Message: result.message,
     Label: result.label,
     DataType: result.continueSession ? 'input' : 'display',
     FieldType: result.fieldType ?? 'text',
-  });
+  };
+  // A genuine dial-in captured for Settings > Hubtel Diagnostics's
+  // sample-payloads panel — recordHubtelSample swallows its own errors, so
+  // this can never fail the actual USSD response the gateway is waiting on.
+  await recordHubtelSample('USSD', body, response);
+  return NextResponse.json(response);
 }
