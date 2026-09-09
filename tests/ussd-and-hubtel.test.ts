@@ -17,6 +17,7 @@ import { GET as hubtelDiagnosticsGET } from '@/app/api/settings/hubtel-diagnosti
 
 import { handleUssdInput } from '@/lib/services/ussdService';
 import { processHubtelCallback, initiateHubtelPayment, reconcilePendingHubtelTransactions } from '@/lib/services/hubtelPaymentService';
+import { getOrgSettings } from '@/lib/services/orgSettingsService';
 import { makeParams } from './helpers';
 
 const PASSWORD = 'Passw0rd!123';
@@ -85,6 +86,8 @@ describe('USSD + Hubtel payments', () => {
 
     const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
     expect(step1.continueSession).toBe(true);
+    const { companyName } = await getOrgSettings();
+    expect(step1.message).toContain(companyName); // the tenant's own configured business name, on the welcome screen
     expect(step1.message).toContain('Hi Ussd Tester'); // greets the customer by their full name, not an account/contract number
     expect(step1.message).not.toContain(contract.contractNumber);
     expect(step1.message).toContain('Enter amount');

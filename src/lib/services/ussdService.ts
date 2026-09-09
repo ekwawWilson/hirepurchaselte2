@@ -54,16 +54,18 @@ function findCustomerByPhone(msisdn: string) {
  * behind — the overdue amount they actually owe right now *and* what follows
  * it, rather than silently quoting a future date as if nothing were wrong.
  *
- * Opens with "Hi {full name}" — the customer should see their own name the
- * moment they dial in, not an account/contract number (Hubtel's own USSD
- * menu already shows the registered service name above this screen).
+ * Opens with "{companyName}\nHi {full name}" — the tenant's own configured
+ * company name (Settings page, same source startSession's no-account-found
+ * message uses), not the application's default branding, since this is a
+ * customer-facing screen. The customer should see who they're paying and
+ * their own name the moment they dial in, not an account/contract number.
  *
  * Kept deliberately terse otherwise (abbreviated labels, no contract-type
  * name here) to stay well inside a USSD screen's character budget — this app
  * has no confirmed figure from Hubtel for this build, but industry-standard
  * gateways commonly cap a single screen around 182 characters, and the worst
- * case here (overdue, six-figure amounts, an unusually long name) still
- * lands well under that.
+ * case here (overdue, six-figure amounts, an unusually long company/customer
+ * name) still lands well under that.
  */
 async function contractPrompt(contract: {
   id: string;
@@ -71,7 +73,8 @@ async function contractPrompt(contract: {
   balanceMinor: number;
   totalPaidMinor: number;
 }, customerName: string): Promise<string> {
-  const greeting = `Hi ${customerName}\n`;
+  const { companyName } = await getOrgSettings();
+  const greeting = `${companyName}\nHi ${customerName}\n`;
   if (contract.contractType === 'SAVE_TO_OWN') {
     return `${greeting}Total paid: GHS${formatMoney(contract.totalPaidMinor)}\nEnter amount to pay:`;
   }
@@ -127,7 +130,8 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
       update: { state: 'SELECT_CONTRACT', contractId: null, context: JSON.stringify(context), expiresAt },
     });
     const lines = contracts.map((c, i) => `${i + 1}. ${c.contractNumber} (${contractTypeLabel(c.contractType)}) Bal GHS${formatMoney(c.balanceMinor)}`);
-    return { message: `Hi ${customerName}\nSelect a contract:\n${lines.join('\n')}`, continueSession: true, label: 'Select contract', fieldType: 'number' };
+    const { companyName } = await getOrgSettings();
+    return { message: `${companyName}\nHi ${customerName}\nSelect a contract:\n${lines.join('\n')}`, continueSession: true, label: 'Select contract', fieldType: 'number' };
   }
 
   const contract = contracts[0];
