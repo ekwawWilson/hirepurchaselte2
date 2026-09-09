@@ -85,8 +85,8 @@ describe('USSD + Hubtel payments', () => {
 
     const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
     expect(step1.continueSession).toBe(true);
-    expect(step1.message).toContain('Hi Ussd'); // greets the customer by their first name (setupContract's firstName: 'Ussd')
-    expect(step1.message).toContain(contract.contractNumber);
+    expect(step1.message).toContain('Hi Ussd Tester'); // greets the customer by their full name, not an account/contract number
+    expect(step1.message).not.toContain(contract.contractNumber);
     expect(step1.message).toContain('Enter amount');
 
     const step2 = await handleUssdInput({ sessionId, msisdn: phone, input: '500', isNewSession: false });
@@ -126,17 +126,19 @@ describe('USSD + Hubtel payments', () => {
 
     const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
     expect(step1.continueSession).toBe(true);
-    expect(step1.message).toContain('Hi Ussd');
+    expect(step1.message).toContain('Hi Ussd Tester');
     expect(step1.message).toContain('Select a contract');
     expect(step1.message).toContain(contractA.contractNumber);
     expect(step1.message).toContain(contractB.contractNumber);
 
-    // Pick the second contract listed (index 2).
+    // Pick the second contract listed (index 2) — its own prompt greets by
+    // full name only, no contract number (that's only shown in the selection
+    // list above, to tell the choices apart).
     const step2 = await handleUssdInput({ sessionId, msisdn: phone, input: '2', isNewSession: false });
     expect(step2.continueSession).toBe(true);
-    expect(step2.message).toContain('Hi Ussd');
-    expect(step2.message).toContain(contractB.contractNumber);
+    expect(step2.message).toContain('Hi Ussd Tester');
     expect(step2.message).not.toContain(contractA.contractNumber);
+    expect(step2.message).not.toContain(contractB.contractNumber);
 
     const step3 = await handleUssdInput({ sessionId, msisdn: phone, input: '300', isNewSession: false });
     expect(step3.message).toContain('Confirm payment of GHS300.00');
@@ -170,7 +172,7 @@ describe('USSD + Hubtel payments', () => {
     const sessionId = `sess-${runId}-defaulted`;
     const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
     expect(step1.continueSession).toBe(true);
-    expect(step1.message).toContain(contract.contractNumber);
+    expect(step1.message).toContain('Hi Ussd Tester');
   });
 
   it('unknown phone number is prompted for a registered number instead of dead-ending', async () => {
@@ -202,7 +204,7 @@ describe('USSD + Hubtel payments', () => {
 
     const found = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: registeredPhone, isNewSession: false });
     expect(found.continueSession).toBe(true);
-    expect(found.message).toContain(contract.contractNumber);
+    expect(found.message).toContain('Hi Ussd Tester');
 
     const enterAmount = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '400', isNewSession: false });
     expect(enterAmount.message).toMatch(/confirm payment/i);
@@ -488,7 +490,7 @@ describe('USSD + Hubtel payments', () => {
     const contract = await setupContract(phone);
 
     const step1 = await handleUssdInput({ sessionId: `sess-${runId}-sto`, msisdn: phone, input: '', isNewSession: true });
-    expect(step1.message).toContain(contract.contractNumber);
+    expect(step1.message).not.toContain(contract.contractNumber);
     expect(step1.message).toContain('Total paid: GHS0.00');
     expect(step1.message).not.toContain('Bal ');
     expect(step1.message).not.toContain('OVERDUE');

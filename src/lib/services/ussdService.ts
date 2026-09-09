@@ -54,28 +54,26 @@ function findCustomerByPhone(msisdn: string) {
  * behind — the overdue amount they actually owe right now *and* what follows
  * it, rather than silently quoting a future date as if nothing were wrong.
  *
- * Opens with "Hi {firstName}" — the customer should see their own name the
- * moment they dial in, not just an account/contract number. First name only
- * (not the full name) to keep the greeting cheap against the character
- * budget below.
+ * Opens with "Hi {full name}" — the customer should see their own name the
+ * moment they dial in, not an account/contract number (Hubtel's own USSD
+ * menu already shows the registered service name above this screen).
  *
  * Kept deliberately terse otherwise (abbreviated labels, no contract-type
  * name here) to stay well inside a USSD screen's character budget — this app
  * has no confirmed figure from Hubtel for this build, but industry-standard
  * gateways commonly cap a single screen around 182 characters, and the worst
- * case here (overdue, six-figure amounts, an unusually long first name) still
- * lands near 150.
+ * case here (overdue, six-figure amounts, an unusually long name) still
+ * lands well under that.
  */
 async function contractPrompt(contract: {
   id: string;
-  contractNumber: string;
   contractType: string;
   balanceMinor: number;
   totalPaidMinor: number;
-}, customerFirstName: string): Promise<string> {
-  const greeting = `Hi ${customerFirstName}\n`;
+}, customerName: string): Promise<string> {
+  const greeting = `Hi ${customerName}\n`;
   if (contract.contractType === 'SAVE_TO_OWN') {
-    return `${greeting}${contract.contractNumber}\nTotal paid: GHS${formatMoney(contract.totalPaidMinor)}\nEnter amount to pay:`;
+    return `${greeting}Total paid: GHS${formatMoney(contract.totalPaidMinor)}\nEnter amount to pay:`;
   }
 
   const [due, upcoming] = await prisma.instalment.findMany({
@@ -94,7 +92,7 @@ async function contractPrompt(contract: {
       : `Due GHS${formatMoney(dueAmount)} on ${formatDate(due.dueDate)}`;
   }
 
-  return `${greeting}${contract.contractNumber}\n${paidLine}${dueLine ? `\n${dueLine}` : ''}\nEnter amount to pay:`;
+  return `${greeting}${paidLine}${dueLine ? `\n${dueLine}` : ''}\nEnter amount to pay:`;
 }
 
 /**
@@ -105,7 +103,7 @@ async function contractPrompt(contract: {
  * is always the phone actually dialed in (what a payment gets billed to) —
  * never an alternate number typed in purely to *find* the account.
  */
-async function beginForCustomer(sessionId: string, dialedMsisdn: string, customerId: string, customerFirstName: string): Promise<UssdResult> {
+async function beginForCustomer(sessionId: string, dialedMsisdn: string, customerId: string, customerName: string): Promise<UssdResult> {
   // DEFAULTED is deliberately included: it isn't a terminal status (see
   // overdueService.markDefaultedContracts / paymentService.advanceContractStatus) —
   // a customer catching up their own arrears via USSD is exactly the self-service
@@ -129,7 +127,7 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
       update: { state: 'SELECT_CONTRACT', contractId: null, context: JSON.stringify(context), expiresAt },
     });
     const lines = contracts.map((c, i) => `${i + 1}. ${c.contractNumber} (${contractTypeLabel(c.contractType)}) Bal GHS${formatMoney(c.balanceMinor)}`);
-    return { message: `Hi ${customerFirstName}\nSelect a contract:\n${lines.join('\n')}`, continueSession: true, label: 'Select contract', fieldType: 'number' };
+    return { message: `Hi ${customerName}\nSelect a contract:\n${lines.join('\n')}`, continueSession: true, label: 'Select contract', fieldType: 'number' };
   }
 
   const contract = contracts[0];
@@ -139,12 +137,12 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
     create: { sessionId, msisdn: dialedMsisdn, state: 'ENTER_AMOUNT', contractId: contract.id, context: JSON.stringify(context), expiresAt },
     update: { state: 'ENTER_AMOUNT', contractId: contract.id, context: JSON.stringify(context), expiresAt },
   });
-  return { message: await contractPrompt(contract, customerFirstName), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+  return { message: await contractPrompt(contract, customerName), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
 }
 
 async function startSession(sessionId: string, msisdn: string): Promise<UssdResult> {
   const customer = await findCustomerByPhone(msisdn);
-  if (customer) return beginForCustomer(sessionId, msisdn, customer.id, customer.firstName);
+  if (customer) return beginForCustomer(sessionId, msisdn, customer.id, `${customer.firstName} ${customer.lastName}`);
 
   // Unrecognized dial-in number (e.g. a shared or agent phone) — let them
   // identify their account by typing in a registered number instead of
@@ -222,7 +220,7 @@ export async function handleUssdInput(params: {
       }
       // params.msisdn (the phone actually dialed in) stays what gets billed —
       // altPhone was only used to identify the account.
-      return beginForCustomer(params.sessionId, params.msisdn, customer.id, customer.firstName);
+      return beginForCustomer(params.sessionId, params.msisdn, customer.id, `${customer.firstName} ${customer.lastName}`);
     }
 
     case 'SELECT_CONTRACT': {
@@ -237,7 +235,7 @@ export async function handleUssdInput(params: {
         where: { id: existing.id },
         data: { state: 'ENTER_AMOUNT', contractId: contract.id, context: JSON.stringify({ contractId: contract.id }) },
       });
-      return { message: await contractPrompt(contract, contract.customer.firstName), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+      return { message: await contractPrompt(contract, `${contract.customer.firstName} ${contract.customer.lastName}`), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
     }
 
     case 'ENTER_AMOUNT': {
