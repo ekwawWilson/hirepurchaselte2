@@ -49,7 +49,9 @@ export async function runDirectDebitCollections() {
     const outstanding = due.amountDueMinor - due.amountPaidMinor;
     if (outstanding <= 0) continue;
     try {
-      await chargeDirectDebit({ contractId: contract.id, amountMinor: Math.min(outstanding, contract.balanceMinor) });
+      // balanceMinor is only ever null for SAVE_TO_OWN, which can never reach
+      // here (no mandate — excluded from DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES).
+      await chargeDirectDebit({ contractId: contract.id, amountMinor: Math.min(outstanding, contract.balanceMinor ?? 0) });
       charged += 1;
     } catch (e) {
       console.error(`[collections] direct debit charge failed for contract ${contract.id}:`, e);

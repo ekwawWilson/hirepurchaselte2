@@ -24,6 +24,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!contract) return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
   if (!assertBranchAccess(auth.user, contract.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const creditMinor = Math.max(0, contract.totalPaidMinor - contract.totalPayableMinor);
+  // SAVE_TO_OWN has no target to overpay against — credit only applies to
+  // contracts with a real totalPayableMinor (contractService.ts).
+  const creditMinor = contract.totalPayableMinor === null ? 0 : Math.max(0, contract.totalPaidMinor - contract.totalPayableMinor);
   return NextResponse.json({ contract: { ...contract, creditMinor } });
 }

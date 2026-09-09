@@ -128,14 +128,14 @@ describe('Payment frequency: DAILY/WEEKLY/MONTHLY schedules', () => {
     const productId = await makeProduct('NO-ENTRY');
     await prisma.priceChartEntry.create({
       data: {
-        productId, contractType: 'SAVE_TO_OWN', termMonths: 4, paymentFrequency: 'MONTHLY', depositAmountMinor: 0,
+        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 4, paymentFrequency: 'MONTHLY', depositAmountMinor: 0,
         totalPayableMinor: 80000, instalmentAmountMinor: 20000, createdById: adminUserId,
       },
     });
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'D');
 
     await expect(createContract({
-      contractType: 'SAVE_TO_OWN', customerId, inventoryItemId, termMonths: 4, paymentFrequency: 'WEEKLY',
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 4, paymentFrequency: 'WEEKLY',
       branchId, createdById: adminUserId,
     })).rejects.toThrow(/No active price chart entry/);
   });

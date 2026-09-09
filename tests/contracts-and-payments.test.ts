@@ -87,56 +87,51 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     return (await res.json()).contract;
   }
 
-  it('SAVE_TO_OWN: pays from zero, device withheld until fully paid, then explicitly released', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
-    }));
-    expect(entry.status).toBe(201);
-
+  it('SAVE_TO_OWN: open-ended savings — no product, no target, deposits accumulate, and it never auto-completes', async () => {
     const custId = await makeCustomer('SaveToOwn');
-    const itemId = await receiveItem('A');
 
+    // No inventoryItemId, no productId, no termMonths — SAVE_TO_OWN needs
+    // none of them (contractService.ts).
     const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
+      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId },
     }));
     expect(created.status).toBe(201);
     const contract = (await created.json()).contract;
     expect(contract.status).toBe('ACTIVE');
-    expect(contract.depositAmountMinor).toBe(0);
-    expect(contract.totalPayableMinor).toBe(240000);
-    expect(await getItemStatus(itemId)).toBe('RESERVED');
+    expect(contract.productId).toBeNull();
+    expect(contract.inventoryItemId).toBeNull();
+    expect(contract.totalPayableMinor).toBeNull();
+    expect(contract.balanceMinor).toBeNull();
 
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 200000, entryType: 'INSTALMENT_PAYMENT' },
+      token: cashier, body: { contractId: contract.id, amountMinor: 200000, entryType: 'INSTALMENT_PAYMENT', notes: 'Counter cash deposit' },
     }));
     let detail = await getContract(contract.id, cashier);
-    expect(detail.balanceMinor).toBe(40000);
+    expect(detail.totalPaidMinor).toBe(200000);
+    expect(detail.balanceMinor).toBeNull();
     expect(detail.status).toBe('ACTIVE');
+    expect(detail.payments[0].notes).toBe('Counter cash deposit');
 
+    // A further, larger deposit — still nothing to "complete" against.
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 40000, entryType: 'INSTALMENT_PAYMENT' },
+      token: cashier, body: { contractId: contract.id, amountMinor: 400000, entryType: 'INSTALMENT_PAYMENT' },
     }));
     detail = await getContract(contract.id, cashier);
-    expect(detail.status).toBe('COMPLETED');
-    expect(detail.balanceMinor).toBe(0);
-    expect(detail.instalments.every((i: { status: string }) => i.status === 'PAID')).toBe(true);
+    expect(detail.totalPaidMinor).toBe(600000);
+    expect(detail.balanceMinor).toBeNull();
+    expect(detail.status).toBe('ACTIVE'); // never auto-completes — no target to reach
+    expect(detail.instalments).toHaveLength(0);
 
+    // No device was ever reserved, so release (which requires an inventory
+    // item and a COMPLETED status neither of which this account has) is refused.
     const released = await contractReleasePOST(makeRequest('POST', `/api/contracts/${contract.id}/release`, { token: admin }), makeParams({ id: contract.id }));
-    expect(released.status).toBe(200);
-    expect((await released.json()).contract.status).toBe('RELEASED');
-    expect(await getItemStatus(itemId)).toBe('ISSUED');
+    expect(released.status).toBe(400);
   });
 
-  it('SAVE_TO_OWN: customer can withdraw part of their savings, capped at what they saved, and reversing it restores the balance', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
-    }));
-    expect(entry.status).toBe(201);
-
+  it('SAVE_TO_OWN: customer can withdraw part of their savings, capped at what they saved, and reversing it restores the total', async () => {
     const custId = await makeCustomer('Withdraw');
-    const itemId = await receiveItem('W');
     const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
+      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId },
     }));
     const contract = (await created.json()).contract;
 
@@ -157,15 +152,16 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(forbidden.status).toBe(403);
 
     const withdrawn = await withdrawPOST(makeRequest('POST', '/api/payments/withdraw', {
-      token: admin, body: { contractId: contract.id, amountMinor: 30000 },
+      token: admin, body: { contractId: contract.id, amountMinor: 30000, notes: 'Emergency withdrawal' },
     }));
     expect(withdrawn.status).toBe(201);
     const withdrawal = (await withdrawn.json()).payment;
     expect(withdrawal.entryType).toBe('WITHDRAWAL');
+    expect(withdrawal.notes).toBe('Emergency withdrawal');
 
     let detail = await getContract(contract.id, admin);
     expect(detail.totalPaidMinor).toBe(70000);
-    expect(detail.balanceMinor).toBe(170000);
+    expect(detail.balanceMinor).toBeNull(); // SAVE_TO_OWN never has a balance to speak of
 
     // Reversing the withdrawal — same reversal mechanism as any other payment — restores it.
     const reversed = await paymentReversePOST(
@@ -175,7 +171,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(reversed.status).toBe(201);
     detail = await getContract(contract.id, admin);
     expect(detail.totalPaidMinor).toBe(100000);
-    expect(detail.balanceMinor).toBe(140000);
+    expect(detail.balanceMinor).toBeNull();
   });
 
   it('withdrawals are only available on SAVE_TO_OWN contracts', async () => {
@@ -491,12 +487,22 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
   });
 
   it('Overpayment is accepted and flagged as credit, not rejected', async () => {
+    // DEVICE_LOAN, not SAVE_TO_OWN — this exercises overpayment against a real
+    // target (totalPayableMinor), which SAVE_TO_OWN no longer has at all
+    // (open-ended savings, contractService.ts). Starts ACTIVE immediately,
+    // no deposit gate to clear first.
+    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000, interestRateBps: 2400 },
+    }));
+    expect(entry.status).toBe(201);
+
     const custId = await makeCustomer('Overpay');
-    const itemId = await receiveItem('D');
     const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, productId, termMonths: 6 },
     }));
     const contract = (await created.json()).contract;
+    expect(contract.status).toBe('ACTIVE');
+    expect(contract.totalPayableMinor).toBe(240000);
 
     const over = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
       token: cashier, body: { contractId: contract.id, amountMinor: 250000, entryType: 'INSTALMENT_PAYMENT' },
@@ -509,10 +515,11 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
   });
 
   it('RBAC: SALES cannot record cash payments (403), CASHIER can', async () => {
+    // SAVE_TO_OWN needs no product/price chart entry at all — the simplest
+    // vehicle for a test that's only about the permission check.
     const custId = await makeCustomer('RbacCheck');
-    const itemId = await receiveItem('E');
     const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
+      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId },
     }));
     const contract = (await created.json()).contract;
 

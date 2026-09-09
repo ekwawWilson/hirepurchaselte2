@@ -14,16 +14,18 @@ export class ContractError extends Error {}
 export interface CreateContractParams {
   contractType: ContractTypeName;
   customerId: string;
-  // Required for SAVE_TO_OWN/DEPOSIT_INSTALMENT — a specific serialized unit is
+  // Required for DEPOSIT_INSTALMENT — a specific serialized unit is
   // reserved/issued from this branch's stock. DEVICE_LOAN disburses cash for the
   // customer to buy a device outside the store, so it has no unit to reserve —
-  // pass productId instead (docs/01-plan.md).
+  // pass productId instead (docs/01-plan.md). Neither is accepted for
+  // SAVE_TO_OWN: it's open-ended savings with no linked product at all.
   inventoryItemId?: string;
   productId?: string;
   // The reference tier used to look up a price chart entry (interestRateBps
   // for DEVICE_LOAN, and the default total/deposit when those aren't
-  // themselves overridden below) — stays exactly what it always was.
-  termMonths: number;
+  // themselves overridden below) — stays exactly what it always was. Not
+  // required for SAVE_TO_OWN, which has no price chart entry or term to speak of.
+  termMonths?: number;
   paymentFrequency?: PaymentFrequencyName;
   startDate?: Date;
   gracePeriodDays?: number;
@@ -102,6 +104,41 @@ export async function createContract(params: CreateContractParams) {
     }
   }
 
+  const startDate = params.startDate ?? new Date();
+
+  // generateContractNumber's own internal retry only protects against a number
+  // that a PRIOR request already committed — two truly concurrent requests can
+  // both read the same "next" candidate before either commits. That collision
+  // only surfaces as a unique-constraint violation at insert time, so retry
+  // just the number-generation + transaction step with a fresh number —
+  // never for any other error (e.g. the inventory item losing its race to
+  // another contract, which must fail cleanly, not retry into a different item).
+  const MAX_ATTEMPTS = 3;
+  const isContractNumberCollision = (e: unknown) =>
+    e instanceof Prisma.PrismaClientKnownRequestError &&
+    e.code === 'P2002' &&
+    Array.isArray(e.meta?.target) &&
+    (e.meta.target as string[]).includes('contractNumber');
+
+  if (params.contractType === 'SAVE_TO_OWN') {
+    // Open-ended savings — no product, no price chart entry, no term. The
+    // customer deposits any amount, any time, until they withdraw or the
+    // saved balance goes toward a purchase (handled entirely outside contract
+    // creation — see postWithdrawal in paymentService.ts).
+    if (params.inventoryItemId || params.productId) {
+      throw new ContractError('SAVE_TO_OWN accounts are not linked to a product');
+    }
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return await runSaveToOwnTransaction(params, startDate);
+      } catch (e) {
+        if (isContractNumberCollision(e) && attempt < MAX_ATTEMPTS) continue;
+        throw e;
+      }
+    }
+    throw new ContractError('Could not create contract after multiple attempts, please retry');
+  }
+
   let item: { id: string; productId: string } | null = null;
   let productId: string;
 
@@ -122,11 +159,13 @@ export async function createContract(params: CreateContractParams) {
     productId = found.productId;
   }
 
+  if (params.termMonths === undefined) throw new ContractError('termMonths is required for this contract type');
+  const termMonths = params.termMonths;
   const paymentFrequency = params.paymentFrequency ?? 'MONTHLY';
-  const chartEntry = await getActivePriceChartEntry(productId, params.contractType, params.termMonths, paymentFrequency);
+  const chartEntry = await getActivePriceChartEntry(productId, params.contractType, termMonths, paymentFrequency);
   if (!chartEntry) {
     throw new ContractError(
-      `No active price chart entry for this product, ${params.contractType}, ${params.termMonths} months, ${paymentFrequency} — configure one first`,
+      `No active price chart entry for this product, ${params.contractType}, ${termMonths} months, ${paymentFrequency} — configure one first`,
     );
   }
 
@@ -147,36 +186,56 @@ export async function createContract(params: CreateContractParams) {
     throw new ContractError('instalmentCountOverride must be a positive integer');
   }
 
-  const startDate = params.startDate ?? new Date();
-
-  // generateContractNumber's own internal retry only protects against a number
-  // that a PRIOR request already committed — two truly concurrent requests can
-  // both read the same "next" candidate before either commits. That collision
-  // only surfaces as a unique-constraint violation at insert time, so retry
-  // just the number-generation + transaction step with a fresh number —
-  // never for any other error (e.g. the inventory item losing its race to
-  // another contract, which must fail cleanly, not retry into a different item).
-  const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      return await runContractTransaction(params, item, productId, chartEntry, startDate, paymentMethod);
+      return await runContractTransaction(params, item, productId, termMonths, chartEntry, startDate, paymentMethod);
     } catch (e) {
-      const isContractNumberCollision =
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2002' &&
-        Array.isArray(e.meta?.target) &&
-        (e.meta.target as string[]).includes('contractNumber');
-      if (isContractNumberCollision && attempt < MAX_ATTEMPTS) continue;
+      if (isContractNumberCollision(e) && attempt < MAX_ATTEMPTS) continue;
       throw e;
     }
   }
   throw new ContractError('Could not create contract after multiple attempts, please retry');
 }
 
+/**
+ * SAVE_TO_OWN's own creation path, entirely separate from runContractTransaction:
+ * no product/inventory item, no price chart entry, no term, no schedule, no
+ * stock movement. Just an ACTIVE savings account the customer deposits into
+ * (postPayment) and can withdraw from (postWithdrawal) — see paymentService.ts.
+ */
+async function runSaveToOwnTransaction(params: CreateContractParams, startDate: Date) {
+  const contractNumber = await generateContractNumber();
+
+  return prisma.$transaction(async (tx) => {
+    const contract = await tx.contract.create({
+      data: {
+        contractNumber,
+        contractType: 'SAVE_TO_OWN',
+        customerId: params.customerId,
+        branchId: params.branchId,
+        paymentMethod: 'CUSTOMER_INITIATED', // never direct-debit eligible — no due schedule to auto-collect against
+        status: 'ACTIVE',
+        startDate,
+        activatedAt: new Date(),
+        createdById: params.createdById,
+      },
+    });
+
+    const sms = await queueSms({ contractId: contract.id, templateKey: 'contract.activated', tx });
+    return { contract, queuedSmsId: sms?.id ?? null };
+  }).then(async ({ contract, queuedSmsId }) => {
+    if (queuedSmsId) void deliverQueuedSms(queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
+    return contract;
+  });
+}
+
+/** Only ever called for DEPOSIT_INSTALMENT/DEVICE_LOAN — SAVE_TO_OWN has its
+ *  own creation path (runSaveToOwnTransaction) with no chart entry to speak of. */
 async function runContractTransaction(
   params: CreateContractParams,
   item: { id: string; productId: string } | null,
   productId: string,
+  termMonths: number,
   chartEntry: NonNullable<Awaited<ReturnType<typeof getActivePriceChartEntry>>>,
   startDate: Date,
   paymentMethod: PaymentMethodName,
@@ -184,8 +243,8 @@ async function runContractTransaction(
   const contractNumber = await generateContractNumber();
   // The real contract term — everything about the SCHEDULE (its length,
   // per-instalment amounts, DEVICE_LOAN's principal) uses this, never
-  // params.termMonths directly, which stays purely a price-chart lookup key.
-  const effectiveTermMonths = params.termMonthsOverride ?? params.termMonths;
+  // termMonths directly, which stays purely a price-chart lookup key.
+  const effectiveTermMonths = params.termMonthsOverride ?? termMonths;
 
   return prisma.$transaction(async (tx) => {
     let status: string;
@@ -204,14 +263,9 @@ async function runContractTransaction(
 
     switch (params.contractType) {
       case 'SAVE_TO_OWN':
-        status = 'ACTIVE';
-        scheduleFinanceAmount = totalPayableMinor; // no deposit — pays from zero
-        // Free-form savings: the customer deposits any amount, any time, toward
-        // totalPayableMinor — no due dates, no fixed instalment amount, no
-        // OVERDUE/arrears/defaulting concept for this type. So unlike the other
-        // two types, no Instalment schedule is generated at all.
-        scheduleKind = 'NONE';
-        break;
+        // Defensive only — createContract routes SAVE_TO_OWN to
+        // runSaveToOwnTransaction instead, which never calls this function.
+        throw new ContractError('SAVE_TO_OWN contracts are created via runSaveToOwnTransaction, not this path');
 
       case 'DEPOSIT_INSTALMENT':
         status = 'PENDING_DEPOSIT';
@@ -294,10 +348,10 @@ async function runContractTransaction(
       });
     }
 
-    // SAVE_TO_OWN reserves the device until fully paid; DEPOSIT_INSTALMENT reserves it
-    // until the deposit clears (see paymentService.advanceContractStatus). DEVICE_LOAN
-    // has no `item` at all — it disburses cash for the customer to buy a device outside
-    // the store, so there's no stock unit to touch (§20).
+    // DEPOSIT_INSTALMENT reserves the unit until the deposit clears (see
+    // paymentService.advanceContractStatus). DEVICE_LOAN has no `item` at all —
+    // it disburses cash for the customer to buy a device outside the store, so
+    // there's no stock unit to touch (§20).
     if (item) {
       await applyStockMovement({
         inventoryItemId: item.id,

@@ -40,20 +40,24 @@ export async function queueSms(params: {
   const nextInstalment = contract.instalments[0];
 
   // Rendered as one clause (not separate amount/date fields) so each of the three
-  // cases below reads as a real sentence: a scheduled contract's next due instalment,
-  // SAVE_TO_OWN's free-form savings (no schedule to quote an amount/date from — see
-  // contractService.ts), and a contract that's already fully paid off.
-  const nextDueLine = contract.balanceMinor <= 0
-    ? 'Your contract is fully paid.'
-    : nextInstalment
-      ? `Next due: ${currencyCode()} ${formatMoney(nextInstalment.amountDueMinor - nextInstalment.amountPaidMinor)} on ${nextInstalment.dueDate.toISOString().slice(0, 10)}.`
-      : 'Deposit any amount, any time, to keep saving toward it.';
+  // cases below reads as a real sentence: SAVE_TO_OWN's free-form savings (no
+  // schedule, no target, no balance to speak of — see contractService.ts),
+  // a scheduled contract's next due instalment, and a contract that's already
+  // fully paid off. SAVE_TO_OWN is checked first since its balanceMinor is
+  // always null, not a real "fully paid" zero.
+  const nextDueLine = contract.contractType === 'SAVE_TO_OWN'
+    ? 'Deposit any amount, any time, to keep saving toward it.'
+    : (contract.balanceMinor ?? 0) <= 0
+      ? 'Your contract is fully paid.'
+      : nextInstalment
+        ? `Next due: ${currencyCode()} ${formatMoney(nextInstalment.amountDueMinor - nextInstalment.amountPaidMinor)} on ${nextInstalment.dueDate.toISOString().slice(0, 10)}.`
+        : '';
 
   const vars: Record<string, string> = {
     customerName: `${contract.customer.firstName} ${contract.customer.lastName}`,
     contractNumber: contract.contractNumber,
     amountPaid: payment ? formatMoney(payment.amountMinor) : '',
-    outstandingBalance: formatMoney(contract.balanceMinor),
+    outstandingBalance: contract.contractType === 'SAVE_TO_OWN' ? formatMoney(contract.totalPaidMinor) : formatMoney(contract.balanceMinor ?? 0),
     nextDueLine,
     currency: currencyCode(),
   };

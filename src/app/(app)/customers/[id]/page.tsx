@@ -21,7 +21,8 @@ interface Customer {
 }
 interface Contract {
   id: string; contractNumber: string; contractType: string; status: string;
-  totalPayableMinor: number; balanceMinor: number; product: { name: string };
+  // Null for SAVE_TO_OWN — open-ended savings has no target/product (contractService.ts).
+  totalPayableMinor: number | null; balanceMinor: number | null; totalPaidMinor: number; product: { name: string } | null;
 }
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -163,10 +164,14 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 {contracts.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell><Link href={`/contracts/${c.id}`} className="font-mono text-xs text-blue-700 hover:underline">{c.contractNumber}</Link></TableCell>
-                    <TableCell>{c.product.name}</TableCell>
+                    <TableCell>{c.product?.name ?? '—'}</TableCell>
                     <TableCell>{contractTypeLabel(c.contractType)}</TableCell>
                     <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
-                    <TableCell>{formatCurrency(c.balanceMinor)} / {formatCurrency(c.totalPayableMinor)}</TableCell>
+                    <TableCell>
+                      {c.contractType === 'SAVE_TO_OWN'
+                        ? `Saved: ${formatCurrency(c.totalPaidMinor)}`
+                        : `${formatCurrency(c.balanceMinor ?? 0)} / ${formatCurrency(c.totalPayableMinor ?? 0)}`}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

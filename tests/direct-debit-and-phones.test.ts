@@ -150,6 +150,18 @@ describe('Hubtel Direct Debit', () => {
     return { customerId: customer.id, inventoryItemId: item.id, msisdn: customer.phone as string };
   }
 
+  // SAVE_TO_OWN needs no product/price chart entry/inventory item at all
+  // (contractService.ts).
+  async function makeCustomer(label: string) {
+    const customer = await prisma.customer.create({
+      data: {
+        membershipId: `DD-MEM-${label}-${runId}`, firstName: 'DD', lastName: label,
+        phone: `025${runId}${label}`, branchId, createdById: adminUserId,
+      },
+    });
+    return { customerId: customer.id, msisdn: customer.phone as string };
+  }
+
   it('createContract rejects DIRECT_DEBIT/BOTH without a network+number', async () => {
     const productId = await makeProduct('NODD');
     await prisma.priceChartEntry.create({
@@ -221,16 +233,9 @@ describe('Hubtel Direct Debit', () => {
   });
 
   it('createContract rejects DIRECT_DEBIT/BOTH for SAVE_TO_OWN — no due schedule to auto-collect against', async () => {
-    const productId = await makeProduct('STONODD');
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0,
-        totalPayableMinor: 120000, instalmentAmountMinor: 0, createdById: adminUserId,
-      },
-    });
-    const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'STONODD');
+    const { customerId, msisdn } = await makeCustomer('STONODD');
     await expect(createContract({
-      contractType: 'SAVE_TO_OWN', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
+      contractType: 'SAVE_TO_OWN', customerId, branchId, createdById: adminUserId,
       paymentMethod: 'DIRECT_DEBIT', directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
     })).rejects.toThrow(ContractError);
   });
@@ -256,15 +261,8 @@ describe('Hubtel Direct Debit', () => {
   });
 
   it('SAVE_TO_OWN contracts are never eligible for direct debit', async () => {
-    await prisma.priceChartEntry.create({
-      data: {
-        productId: await makeProduct('STO'), contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0,
-        totalPayableMinor: 60000, instalmentAmountMinor: 10000, createdById: adminUserId,
-      },
-    });
-    const productId = (await prisma.priceChartEntry.findFirstOrThrow({ where: { contractType: 'SAVE_TO_OWN' }, orderBy: { createdAt: 'desc' } })).productId;
-    const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'STO');
-    const contract = await createContract({ contractType: 'SAVE_TO_OWN', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId });
+    const { customerId, msisdn } = await makeCustomer('STO');
+    const contract = await createContract({ contractType: 'SAVE_TO_OWN', customerId, branchId, createdById: adminUserId });
 
     const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
     await expect(enableDirectDebit({ contractId: contract.id, preapprovalId: preapproval.id, userId: adminUserId }))

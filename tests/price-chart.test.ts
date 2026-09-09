@@ -49,16 +49,25 @@ describe('Price chart: legacy-matching pricing model', () => {
 
   it('rejects a term outside the fixed 3/4/6-month tiers', async () => {
     const res = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 5, depositAmountMinor: 0, totalPayableMinor: 200000 },
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 5, depositAmountMinor: 0, totalPayableMinor: 200000 },
     }));
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/termMonths must be one of/i);
   });
 
+  it('rejects SAVE_TO_OWN outright — it has no payment terms to price at all', async () => {
+    const res = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
+      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 200000 },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/no payment terms to price/i);
+  });
+
   it.each([3, 4, 6])('accepts a %i-month term', async (months) => {
     const res = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: months, depositAmountMinor: 0, totalPayableMinor: 200000 },
+      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: months, depositAmountMinor: 0, totalPayableMinor: 200000 },
     }));
     expect(res.status).toBe(201);
   });
@@ -161,11 +170,11 @@ describe('Price chart: bundle creation across all contract types', () => {
     productId = (await product.json()).product.id;
   });
 
-  it('flags a freshly created product as missing pricing for all 3 contract types', async () => {
+  it('flags a freshly created product as missing pricing for both priceable contract types (SAVE_TO_OWN is never priced)', async () => {
     const res = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
     const { products } = await res.json();
     const product = products.find((p: { id: string }) => p.id === productId);
-    expect(product.missingContractTypes.sort()).toEqual(['DEPOSIT_INSTALMENT', 'DEVICE_LOAN', 'SAVE_TO_OWN'].sort());
+    expect(product.missingContractTypes.sort()).toEqual(['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'].sort());
   });
 
   it('creates entries for multiple contract types atomically in one request', async () => {
@@ -174,7 +183,6 @@ describe('Price chart: bundle creation across all contract types', () => {
       body: {
         productId, termMonths: 6, paymentFrequency: 'MONTHLY',
         entries: {
-          SAVE_TO_OWN: { totalPayableMinor: 300000 },
           DEPOSIT_INSTALMENT: { totalPayableMinor: 320000, depositAmountMinor: 60000 },
           DEVICE_LOAN: { totalPayableMinor: 350000, interestRateBps: 2400 },
         },
@@ -182,7 +190,7 @@ describe('Price chart: bundle creation across all contract types', () => {
     }));
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(Object.keys(body.entries).sort()).toEqual(['DEPOSIT_INSTALMENT', 'DEVICE_LOAN', 'SAVE_TO_OWN'].sort());
+    expect(Object.keys(body.entries).sort()).toEqual(['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'].sort());
 
     const productRes = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
     const { products } = await productRes.json();
@@ -193,7 +201,7 @@ describe('Price chart: bundle creation across all contract types', () => {
   it('rejects a bundle where every submitted type is already priced for that exact combo', async () => {
     const res = await priceChartBundlePOST(makeRequest('POST', '/api/price-chart/bundle', {
       token: admin,
-      body: { productId, termMonths: 6, paymentFrequency: 'MONTHLY', entries: { SAVE_TO_OWN: { totalPayableMinor: 310000 } } },
+      body: { productId, termMonths: 6, paymentFrequency: 'MONTHLY', entries: { DEPOSIT_INSTALMENT: { totalPayableMinor: 310000, depositAmountMinor: 50000 } } },
     }));
     expect(res.status).toBe(400);
     const body = await res.json();
@@ -206,14 +214,14 @@ describe('Price chart: bundle creation across all contract types', () => {
       body: {
         productId, termMonths: 4, paymentFrequency: 'MONTHLY',
         entries: {
-          SAVE_TO_OWN: { totalPayableMinor: 300000 },
+          DEPOSIT_INSTALMENT: { totalPayableMinor: 300000, depositAmountMinor: 50000 },
           DEVICE_LOAN: { totalPayableMinor: -100 },
         },
       },
     }));
     expect(res.status).toBe(400);
 
-    // the whole bundle rolled back — not even the valid SAVE_TO_OWN entry should exist
+    // the whole bundle rolled back — not even the valid DEPOSIT_INSTALMENT entry should exist
     const fourMonthEntries = await prisma.priceChartEntry.findMany({ where: { productId, termMonths: 4 } });
     expect(fourMonthEntries).toEqual([]);
   });
@@ -268,11 +276,12 @@ describe('Product creation: SKU auto-generation and the term-pricing shortcut', 
     expect(entries.every((e) => e.contractType === 'DEPOSIT_INSTALMENT')).toBe(true);
     expect(entries.find((e) => e.termMonths === 3)?.depositAmountMinor).toBe(50000);
 
-    // Save-to-Own / Device Loan are untouched by this shortcut — still missing.
+    // Device Loan is untouched by this shortcut — still missing. (SAVE_TO_OWN
+    // is never priced at all, so it never appears in missingContractTypes.)
     const productsRes = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
     const { products } = await productsRes.json();
     const listed = products.find((p: { id: string }) => p.id === product.id);
-    expect(listed.missingContractTypes.sort()).toEqual(['DEVICE_LOAN', 'SAVE_TO_OWN']);
+    expect(listed.missingContractTypes).toEqual(['DEVICE_LOAN']);
   });
 
   it('rejects the whole creation if any filled-in period is invalid, without creating the product at all', async () => {
@@ -316,10 +325,12 @@ describe('Product setup/edit can also close a Device Loan pricing gap', () => {
     expect(loanEntry?.interestRateBps).toBe(2400);
     expect(loanEntry?.depositAmountMinor).toBe(0);
 
+    // Both priceable types are now covered — SAVE_TO_OWN never counts (it's
+    // never priced at all), so nothing is left missing.
     const productsRes = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
     const { products } = await productsRes.json();
     const listed = products.find((p: { id: string }) => p.id === product.id);
-    expect(listed.missingContractTypes.sort()).toEqual(['SAVE_TO_OWN']);
+    expect(listed.missingContractTypes).toEqual([]);
   });
 
   it('PATCH /api/products/[id] adds missing Deposit + Instalment pricing without touching existing entries', async () => {

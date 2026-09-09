@@ -70,7 +70,7 @@ function findCustomerByPhone(msisdn: string) {
 async function contractPrompt(contract: {
   id: string;
   contractType: string;
-  balanceMinor: number;
+  balanceMinor: number | null;
   totalPaidMinor: number;
 }, customerName: string): Promise<string> {
   const { companyName } = await getOrgSettings();
@@ -85,7 +85,10 @@ async function contractPrompt(contract: {
     take: 2,
   });
 
-  const paidLine = `Paid GHS${formatMoney(contract.totalPaidMinor)}  Bal GHS${formatMoney(contract.balanceMinor)}`;
+  // Never actually null here — only SAVE_TO_OWN's balanceMinor is null, and
+  // that branch already returned above — but the type is shared with the
+  // SAVE_TO_OWN case, so this stays defensive rather than asserted.
+  const paidLine = `Paid GHS${formatMoney(contract.totalPaidMinor)}  Bal GHS${formatMoney(contract.balanceMinor ?? 0)}`;
   let dueLine = '';
   if (due) {
     const dueAmount = due.amountDueMinor - due.amountPaidMinor;
@@ -111,8 +114,15 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
   // overdueService.markDefaultedContracts / paymentService.advanceContractStatus) —
   // a customer catching up their own arrears via USSD is exactly the self-service
   // path that cures a default, so hiding it here would strand them on cash-only.
+  // SAVE_TO_OWN has no balanceMinor at all (open-ended savings, no target — see
+  // paymentService.recomputeContract) — it's always payable while ACTIVE, so the
+  // balanceMinor > 0 gate only applies to the other two types.
   const contracts = await prisma.contract.findMany({
-    where: { customerId, balanceMinor: { gt: 0 }, status: { in: ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'] } },
+    where: {
+      customerId,
+      status: { in: ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'] },
+      OR: [{ contractType: 'SAVE_TO_OWN' }, { balanceMinor: { gt: 0 } }],
+    },
     orderBy: { createdAt: 'asc' },
   });
   if (contracts.length === 0) {
@@ -129,7 +139,9 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
       create: { sessionId, msisdn: dialedMsisdn, state: 'SELECT_CONTRACT', context: JSON.stringify(context), expiresAt },
       update: { state: 'SELECT_CONTRACT', contractId: null, context: JSON.stringify(context), expiresAt },
     });
-    const lines = contracts.map((c, i) => `${i + 1}. ${c.contractNumber} (${contractTypeLabel(c.contractType)}) Bal GHS${formatMoney(c.balanceMinor)}`);
+    const lines = contracts.map((c, i) => `${i + 1}. ${c.contractNumber} (${contractTypeLabel(c.contractType)}) ${
+      c.contractType === 'SAVE_TO_OWN' ? `Saved GHS${formatMoney(c.totalPaidMinor)}` : `Bal GHS${formatMoney(c.balanceMinor ?? 0)}`
+    }`);
     const { companyName } = await getOrgSettings();
     return { message: `${companyName}\nHi ${customerName}\nSelect a contract:\n${lines.join('\n')}`, continueSession: true, label: 'Select contract', fieldType: 'number' };
   }

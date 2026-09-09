@@ -39,8 +39,9 @@ const initials = (first: string, last: string) => `${first.charAt(0)}${last.char
 
 interface Contract {
   id: string; contractNumber: string; contractType: string; status: string;
-  totalPayableMinor: number; balanceMinor: number;
-  customer: { firstName: string; lastName: string }; product: { name: string };
+  // Null for SAVE_TO_OWN — open-ended savings has no target/product (contractService.ts).
+  totalPayableMinor: number | null; balanceMinor: number | null; totalPaidMinor: number;
+  customer: { firstName: string; lastName: string }; product: { name: string } | null;
 }
 
 const CONTRACT_TYPE_OPTIONS = [
@@ -157,9 +158,12 @@ export default function ContractsPage() {
     setInstalmentCountOverride('');
   }, [selectedEntry?.id]);
 
+  const isSaveToOwn = contractType === 'SAVE_TO_OWN';
   const step1Valid = !!customerId;
-  const step2Valid = isDeviceLoan ? !!loanProductId : !!inventoryItemId;
-  const step3Valid = !!selectedEntry && !saving &&
+  // Save to Own has no product/unit to pick — it's open-ended savings, not
+  // linked to anything (contractService.ts).
+  const step2Valid = isSaveToOwn ? true : (isDeviceLoan ? !!loanProductId : !!inventoryItemId);
+  const step3Valid = isSaveToOwn ? !saving : !!selectedEntry && !saving &&
     (paymentMethod === 'CUSTOMER_INITIATED' || (!!directDebitNetwork && !!directDebitMsisdn.trim()));
 
   function resetWizard() {
@@ -246,6 +250,26 @@ export default function ContractsPage() {
 
   async function onSubmit() {
     if (!customerId) { toast({ title: 'Select a customer', variant: 'destructive' }); return; }
+
+    if (isSaveToOwn) {
+      setSaving(true);
+      try {
+        await api.post('/contracts', {
+          contractType, customerId, startDate,
+          ...(selectedCustomer?.branchId && { branchId: selectedCustomer.branchId }),
+        });
+        toast({ title: 'Savings account created' });
+        setShowForm(false);
+        resetWizard();
+        await loadContracts();
+      } catch (e) {
+        toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to create contract', variant: 'destructive' });
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     if (isDeviceLoan ? !loanProductId : !inventoryItemId) {
       toast({ title: isDeviceLoan ? 'Select a product' : 'Select an available unit', variant: 'destructive' });
       return;
@@ -397,8 +421,17 @@ export default function ContractsPage() {
                   {isDeviceLoan && (
                     <p className="text-xs text-gray-400 mt-1">Cash is disbursed to the customer to buy a device outside the store — no unit is reserved from stock.</p>
                   )}
+                  {isSaveToOwn && (
+                    <p className="text-xs text-gray-400 mt-1">Open-ended savings — not linked to any product. The customer deposits any amount, any time, until they withdraw or the saved amount goes toward a purchase.</p>
+                  )}
                 </div>
 
+                {isSaveToOwn ? (
+                  <div className="bg-blue-50 p-3 text-sm text-blue-900">
+                    No product or unit to select for Save to Own — continue to review and create the account.
+                  </div>
+                ) : (
+                <>
                 <div className="relative">
                   <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
                   <input
@@ -464,10 +497,12 @@ export default function ContractsPage() {
                     )}
                   </div>
                 )}
+                </>
+                )}
 
                 <div className="flex gap-2 pt-1">
                   <Button variant="outline" onClick={() => setStep(1)} className="flex-1">Back</Button>
-                  <Button onClick={() => setStep(3)} disabled={!step2Valid} className="flex-1">Next: Payment Terms</Button>
+                  <Button onClick={() => setStep(3)} disabled={!step2Valid} className="flex-1">Next: {isSaveToOwn ? 'Review' : 'Payment Terms'}</Button>
                 </div>
               </div>
             )}
@@ -478,6 +513,19 @@ export default function ContractsPage() {
                   <p className="text-xs font-medium text-blue-900">Customer</p>
                   <p className="text-sm text-blue-900">{selectedCustomer?.firstName} {selectedCustomer?.lastName} &middot; {selectedCustomer?.membershipId}</p>
                 </div>
+                {isSaveToOwn ? (
+                  <>
+                    <div className="bg-green-50 p-3">
+                      <p className="text-xs font-medium text-green-900">Save to Own</p>
+                      <p className="text-sm text-green-900">Open-ended savings — no product, no target amount, no term. The customer deposits any amount, any time.</p>
+                    </div>
+                    <div>
+                      <Label>Start Date</Label>
+                      <Input type="date" className="mt-1.5" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                    </div>
+                  </>
+                ) : (
+                <>
                 <div className="bg-green-50 p-3">
                   <p className="text-xs font-medium text-green-900">{isDeviceLoan ? 'Product' : 'Product & Unit'}</p>
                   <p className="text-sm text-green-900">
@@ -668,7 +716,7 @@ export default function ContractsPage() {
                   )}
                 </div>
 
-                {contractType !== 'SAVE_TO_OWN' && selectedEntry && (
+                {selectedEntry && (
                   <div>
                     <Button type="button" variant="outline" className="w-full" onClick={() => setShowSchedulePreview((v) => !v)}>
                       {showSchedulePreview ? 'Hide' : 'Preview'} Installment Schedule
@@ -692,6 +740,8 @@ export default function ContractsPage() {
                       </div>
                     )}
                   </div>
+                )}
+                </>
                 )}
 
                 <div className="flex gap-2 pt-1">
@@ -752,10 +802,14 @@ export default function ContractsPage() {
                       <Link href={`/contracts/${c.id}`} className="font-mono text-xs text-blue-700 hover:underline">{c.contractNumber}</Link>
                     </TableCell>
                     <TableCell>{c.customer.firstName} {c.customer.lastName}</TableCell>
-                    <TableCell>{c.product.name}</TableCell>
+                    <TableCell>{c.product?.name ?? '—'}</TableCell>
                     <TableCell>{contractTypeLabel(c.contractType)}</TableCell>
                     <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
-                    <TableCell>{formatCurrency(c.balanceMinor)} / {formatCurrency(c.totalPayableMinor)}</TableCell>
+                    <TableCell>
+                      {c.contractType === 'SAVE_TO_OWN'
+                        ? `Saved: ${formatCurrency(c.totalPaidMinor)}`
+                        : `${formatCurrency(c.balanceMinor ?? 0)} / ${formatCurrency(c.totalPayableMinor ?? 0)}`}
+                    </TableCell>
                     <TableCell>
                       <Link href={`/contracts/${c.id}`}><ChevronRight className="h-4 w-4 text-gray-300" /></Link>
                     </TableCell>

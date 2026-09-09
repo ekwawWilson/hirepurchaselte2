@@ -35,7 +35,6 @@ describe('Schedule generation: month-end date rollover', () => {
 
 describe('Contract creation: number-collision retry', () => {
   let branchId: string;
-  let productId: string;
   let adminUserId: string;
 
   beforeAll(async () => {
@@ -43,36 +42,24 @@ describe('Contract creation: number-collision retry', () => {
     branchId = branch.id;
     const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
     adminUserId = admin.id;
-
-    const product = await prisma.product.create({
-      data: { sku: `EDGE-SKU-${runId}`, name: 'Edge Case Phone', cashPriceMinor: 200000 },
-    });
-    productId = product.id;
-
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0,
-        totalPayableMinor: 180000, instalmentAmountMinor: 30000, createdById: adminUserId,
-      },
-    });
   });
 
-  async function makeCustomerAndItem(label: string) {
+  // SAVE_TO_OWN needs no product/price chart entry/inventory item at all
+  // (contractService.ts) — the simplest vehicle for a test that's only about
+  // generateContractNumber's own retry logic, not contract-type specifics.
+  async function makeCustomer(label: string) {
     const customer = await prisma.customer.create({
       data: {
         membershipId: `EDGE-MEM-${label}-${runId}`, firstName: 'Edge', lastName: label,
         phone: `028${runId}${label}`, branchId, createdById: adminUserId,
       },
     });
-    const item = await prisma.inventoryItem.create({
-      data: { productId, branchId, serialNumber: `IMEI-EDGE-${label}-${runId}` },
-    });
-    return { customerId: customer.id, inventoryItemId: item.id };
+    return customer.id;
   }
 
   it('retries with a fresh number when two attempts race to the same generated contractNumber, instead of throwing a raw Prisma error', async () => {
-    const a = await makeCustomerAndItem('A');
-    const b = await makeCustomerAndItem('B');
+    const customerIdA = await makeCustomer('A');
+    const customerIdB = await makeCustomer('B');
 
     const forcedNumber = `HP-CON-COLLIDE-${runId}`;
     const spy = vi.spyOn(idGenerators, 'generateContractNumber');
@@ -81,15 +68,13 @@ describe('Contract creation: number-collision retry', () => {
     // third call (B's retry) falls through to the real implementation, spied but not overridden
 
     const contractA = await createContract({
-      contractType: 'SAVE_TO_OWN', customerId: a.customerId, inventoryItemId: a.inventoryItemId,
-      termMonths: 6, branchId, createdById: adminUserId,
+      contractType: 'SAVE_TO_OWN', customerId: customerIdA, branchId, createdById: adminUserId,
     });
     expect(contractA.contractNumber).toBe(forcedNumber);
 
     // Without the retry fix, this would throw an unhandled PrismaClientKnownRequestError (P2002).
     const contractB = await createContract({
-      contractType: 'SAVE_TO_OWN', customerId: b.customerId, inventoryItemId: b.inventoryItemId,
-      termMonths: 6, branchId, createdById: adminUserId,
+      contractType: 'SAVE_TO_OWN', customerId: customerIdB, branchId, createdById: adminUserId,
     });
     expect(contractB.contractNumber).not.toBe(forcedNumber);
     expect(contractB.id).not.toBe(contractA.id);

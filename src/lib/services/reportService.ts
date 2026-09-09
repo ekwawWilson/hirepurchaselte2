@@ -74,21 +74,24 @@ export async function contractsCreatedReport(scope: Scope, from?: string, to?: s
   const byUser = new Map<string, { name: string; count: number; totalMinor: number }>();
 
   for (const c of contracts) {
+    // null for SAVE_TO_OWN — open-ended savings has no target total (see
+    // paymentService.recomputeContract) — counted, but contributes 0 here.
+    const totalPayableMinor = c.totalPayableMinor ?? 0;
     const t = byType.get(c.contractType) ?? { count: 0, totalMinor: 0 };
     t.count += 1;
-    t.totalMinor += c.totalPayableMinor;
+    t.totalMinor += totalPayableMinor;
     byType.set(c.contractType, t);
 
     const u = byUser.get(c.createdById) ?? { name: `${c.createdBy.firstName} ${c.createdBy.lastName}`, count: 0, totalMinor: 0 };
     u.count += 1;
-    u.totalMinor += c.totalPayableMinor;
+    u.totalMinor += totalPayableMinor;
     byUser.set(c.createdById, u);
   }
 
   return {
     range: { start, end },
     count: contracts.length,
-    totalMinor: contracts.reduce((s, c) => s + c.totalPayableMinor, 0),
+    totalMinor: contracts.reduce((s, c) => s + (c.totalPayableMinor ?? 0), 0),
     byType: Array.from(byType.entries()).map(([contractType, v]) => ({ contractType, ...v })),
     byUser: Array.from(byUser.entries()).map(([userId, v]) => ({ userId, ...v })),
   };
@@ -118,15 +121,21 @@ export async function paymentsRegisterReport(scope: Scope, from?: string, to?: s
   return { range: { start, end }, payments };
 }
 
-// 5. Outstanding balances / portfolio.
+// 5. Outstanding balances / portfolio. SAVE_TO_OWN is excluded — it's
+// open-ended savings with no target, so it has no balanceMinor to speak of
+// (see paymentService.recomputeContract) and isn't "outstanding" debt at all.
 export async function outstandingBalancesReport(scope: Scope) {
   const contracts = await prisma.contract.findMany({
-    where: { status: { in: ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'] }, ...(scope.branchId && { branchId: scope.branchId }) },
+    where: {
+      status: { in: ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'] },
+      contractType: { not: 'SAVE_TO_OWN' },
+      ...(scope.branchId && { branchId: scope.branchId }),
+    },
     include: { customer: true },
     orderBy: { balanceMinor: 'desc' },
   });
   return {
-    totalOutstandingMinor: contracts.reduce((s, c) => s + c.balanceMinor, 0),
+    totalOutstandingMinor: contracts.reduce((s, c) => s + (c.balanceMinor ?? 0), 0),
     contracts: contracts.map((c) => ({
       contractId: c.id, contractNumber: c.contractNumber, customerName: `${c.customer.firstName} ${c.customer.lastName}`,
       contractType: c.contractType, balanceMinor: c.balanceMinor, totalPayableMinor: c.totalPayableMinor,
@@ -163,7 +172,7 @@ export async function contractStatusSummaryReport(scope: Scope) {
   for (const c of contracts) {
     const s = byStatus.get(c.status) ?? { count: 0, totalMinor: 0 };
     s.count += 1;
-    s.totalMinor += c.totalPayableMinor;
+    s.totalMinor += c.totalPayableMinor ?? 0; // null for SAVE_TO_OWN — open-ended savings has no target total
     byStatus.set(c.status, s);
   }
   return Array.from(byStatus.entries()).map(([status, v]) => ({ status, ...v }));

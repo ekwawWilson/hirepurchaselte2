@@ -48,12 +48,10 @@ describe('Reports', () => {
     }));
     productId = (await product.json()).product.id;
 
-    await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
-    }));
-    // SAVE_TO_OWN has no instalment schedule (free-form savings — see contractService.ts) —
-    // the arrears test below needs a real Instalment row to backdate, so it uses this
-    // DEPOSIT_INSTALMENT entry instead (0% deposit keeps its finance amount identical).
+    // SAVE_TO_OWN has no price chart entry to speak of (open-ended savings —
+    // see contractService.ts). The arrears test below needs a real
+    // Instalment row to backdate, so it uses this DEPOSIT_INSTALMENT entry
+    // instead (0% deposit keeps its finance amount identical).
     await priceChartPOST(makeRequest('POST', '/api/price-chart', {
       token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
     }));
@@ -65,6 +63,15 @@ describe('Reports', () => {
       token: cashier, body: { firstName: 'Report', lastName: label, phone },
     }));
     const custId = (await customer.json()).customer.id;
+
+    // SAVE_TO_OWN needs no product/inventory item/term at all.
+    if (contractType === 'SAVE_TO_OWN') {
+      const contract = await contractsPOST(makeRequest('POST', '/api/contracts', {
+        token: cashier, body: { contractType, customerId: custId },
+      }));
+      return (await contract.json()).contract;
+    }
+
     const item = await inventoryPOST(makeRequest('POST', '/api/inventory', {
       token: admin, body: { productId, serialNumber: `IMEI-RPT-${label}-${runId}`, branchId },
     }));

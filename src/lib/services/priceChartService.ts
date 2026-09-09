@@ -5,6 +5,12 @@ import { PAYMENT_FREQUENCIES, PRICE_CHART_TERM_MONTHS, numberOfInstalmentsForTer
 export const CONTRACT_TYPES = ['SAVE_TO_OWN', 'DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] as const;
 export type ContractTypeName = (typeof CONTRACT_TYPES)[number];
 
+// SAVE_TO_OWN is open-ended savings with no payment terms at all — no term,
+// no target amount, no price chart entry (contractService.ts). Only these two
+// are ever priced, so this is what "a product's price chart is complete"
+// (missingContractTypesForProduct) and every pricing entry point check against.
+export const PRICEABLE_CONTRACT_TYPES = ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] as const;
+
 export class PriceChartError extends Error {}
 
 export type Tx = Prisma.TransactionClient;
@@ -157,14 +163,16 @@ export async function missingContractTypesForProduct(productId: string): Promise
     distinct: ['contractType'],
   });
   const priced = new Set(active.map((e) => e.contractType));
-  return CONTRACT_TYPES.filter((t) => !priced.has(t));
+  return PRICEABLE_CONTRACT_TYPES.filter((t) => !priced.has(t));
 }
 
 export function validateEntryBody(body: Record<string, unknown>): string | null {
   const { productId, contractType, termMonths, paymentFrequency, depositAmountMinor, totalPayableMinor, interestRateBps } = body;
   if (!productId) return 'productId is required';
-  if (!(CONTRACT_TYPES as readonly string[]).includes(contractType as string)) {
-    return `contractType must be one of: ${CONTRACT_TYPES.join(', ')}`;
+  if (!(PRICEABLE_CONTRACT_TYPES as readonly string[]).includes(contractType as string)) {
+    return contractType === 'SAVE_TO_OWN'
+      ? 'SAVE_TO_OWN accounts have no payment terms to price — deposits are open-ended, with no target amount or term'
+      : `contractType must be one of: ${PRICEABLE_CONTRACT_TYPES.join(', ')}`;
   }
   if (typeof termMonths !== 'number' || !(PRICE_CHART_TERM_MONTHS as readonly number[]).includes(termMonths)) {
     return `termMonths must be one of: ${PRICE_CHART_TERM_MONTHS.join(', ')}`;
@@ -182,9 +190,9 @@ export function validateEntryBody(body: Record<string, unknown>): string | null 
   if (contractType === 'DEVICE_LOAN' && (typeof interestRateBps !== 'number' || interestRateBps < 0)) {
     return 'interestRateBps is required for DEVICE_LOAN entries';
   }
-  // SAVE_TO_OWN has no deposit (pays from zero); DEVICE_LOAN's optional down payment is
-  // deferred (docs/02-loan-maths.md §1) — both must be 0 until that's implemented.
-  if ((contractType === 'SAVE_TO_OWN' || contractType === 'DEVICE_LOAN') && depositAmountMinor !== 0) {
+  // DEVICE_LOAN's optional down payment is deferred (docs/02-loan-maths.md §1) —
+  // must be 0 until that's implemented. (SAVE_TO_OWN never reaches here — rejected above.)
+  if (contractType === 'DEVICE_LOAN' && depositAmountMinor !== 0) {
     return `depositAmountMinor must be 0 for ${contractType}`;
   }
   return null;

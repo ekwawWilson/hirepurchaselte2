@@ -301,10 +301,10 @@ export default function ProductsPage() {
                     <TableCell>{formatCurrency(p.cashPriceMinor)}</TableCell>
                     <TableCell>
                       {p.missingContractTypes.length === 0 ? (
-                        <Badge variant="success">3/3 types priced</Badge>
+                        <Badge variant="success">2/2 types priced</Badge>
                       ) : (
                         <Badge variant="destructive" title={`Missing: ${p.missingContractTypes.map(contractTypeLabel).join(', ')}`}>
-                          {3 - p.missingContractTypes.length}/3 types priced
+                          {2 - p.missingContractTypes.length}/2 types priced
                         </Badge>
                       )}
                     </TableCell>

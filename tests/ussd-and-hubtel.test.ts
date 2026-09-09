@@ -3,11 +3,8 @@ import { makeRequest } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
-import { GET as branchesGET } from '@/app/api/branches/route';
 import { POST as productsPOST } from '@/app/api/products/route';
-import { POST as priceChartPOST } from '@/app/api/price-chart/route';
 import { POST as customersPOST } from '@/app/api/customers/route';
-import { POST as inventoryPOST } from '@/app/api/inventory/route';
 import { POST as contractsPOST } from '@/app/api/contracts/route';
 import { GET as contractGET } from '@/app/api/contracts/[id]/route';
 import { POST as ussdPOST } from '@/app/api/ussd/route';
@@ -37,29 +34,18 @@ async function login(email: string): Promise<string> {
 describe('USSD + Hubtel payments', () => {
   let admin: string;
   let cashier: string;
-  let branchId: string;
-  let productId: string;
   let adminUserId: string;
 
   beforeAll(async () => {
     admin = await login('admin@zple.test');
     cashier = await login('cashier@zple.test');
-
-    const branchesRes = await branchesGET(makeRequest('GET', '/api/branches', { token: admin }));
-    branchId = (await branchesRes.json()).branches[0].id;
     adminUserId = (await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } })).id;
-
-    const productRes = await productsPOST(makeRequest('POST', '/api/products', {
-      token: admin, body: { sku: `USSD-SKU-${runId}`, name: 'USSD Test Phone', cashPriceMinor: 240000 },
-    }));
-    productId = (await productRes.json()).product.id;
-
-    await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'SAVE_TO_OWN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
-    }));
   });
 
-  async function setupContract(phone: string, opts: { customerId?: string; serialSuffix?: string } = {}) {
+  // SAVE_TO_OWN needs no product/price chart entry/inventory item/branch at
+  // all (contractService.ts) — the DEVICE_LOAN test further down creates its
+  // own product separately, since it's the only type here that needs one.
+  async function setupContract(phone: string, opts: { customerId?: string } = {}) {
     let custId = opts.customerId;
     if (!custId) {
       const customer = await customersPOST(makeRequest('POST', '/api/customers', {
@@ -68,13 +54,8 @@ describe('USSD + Hubtel payments', () => {
       custId = (await customer.json()).customer.id;
     }
 
-    const item = await inventoryPOST(makeRequest('POST', '/api/inventory', {
-      token: admin, body: { productId, serialNumber: `IMEI-USSD-${phone}${opts.serialSuffix ?? ''}`, branchId },
-    }));
-    const itemId = (await item.json()).item.id;
-
     const contract = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
+      token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId },
     }));
     return (await contract.json()).contract;
   }
@@ -124,7 +105,7 @@ describe('USSD + Hubtel payments', () => {
   it('a customer with multiple contracts is shown a selection menu and pays the one they pick', async () => {
     const phone = uniquePhone();
     const contractA = await setupContract(phone);
-    const contractB = await setupContract(phone, { customerId: contractA.customerId, serialSuffix: '-B' });
+    const contractB = await setupContract(phone, { customerId: contractA.customerId });
     const sessionId = `sess-${runId}-multi`;
 
     const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
@@ -158,7 +139,7 @@ describe('USSD + Hubtel payments', () => {
   it('an invalid selection index ends the session cleanly instead of crashing', async () => {
     const phone = uniquePhone();
     const first = await setupContract(phone);
-    await setupContract(phone, { customerId: first.customerId, serialSuffix: '-B' });
+    await setupContract(phone, { customerId: first.customerId });
     const sessionId = `sess-${runId}-badselect`;
 
     await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });

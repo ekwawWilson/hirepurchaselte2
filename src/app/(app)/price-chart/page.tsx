@@ -29,7 +29,10 @@ interface PriceChartEntry {
   effectiveTo: string | null;
 }
 
-const CONTRACT_TYPES = ['SAVE_TO_OWN', 'DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] as const;
+// SAVE_TO_OWN is open-ended savings with no payment terms — it's never priced
+// (priceChartService.ts rejects it), so this bundle form only ever offers
+// the two types that actually have terms to price.
+const CONTRACT_TYPES = ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] as const;
 const PAYMENT_FREQUENCIES = ['MONTHLY', 'WEEKLY', 'DAILY'];
 // Matches the legacy hirepurchase app's fixed pricing tiers exactly (its
 // ProductPricing model only ever offers 3/4/6-month terms) — see constants/contracts.ts.
@@ -56,7 +59,6 @@ export default function PriceChartPage() {
   const [termMonths, setTermMonths] = useState('6');
   const [paymentFrequency, setPaymentFrequency] = useState('MONTHLY');
   const [typeForms, setTypeForms] = useState<Record<string, TypeFormState>>({
-    SAVE_TO_OWN: { ...emptyTypeForm },
     DEPOSIT_INSTALMENT: { ...emptyTypeForm },
     DEVICE_LOAN: { ...emptyTypeForm },
   });
@@ -104,7 +106,7 @@ export default function PriceChartPage() {
     setProductId('');
     setTermMonths('6');
     setPaymentFrequency('MONTHLY');
-    setTypeForms({ SAVE_TO_OWN: { ...emptyTypeForm }, DEPOSIT_INSTALMENT: { ...emptyTypeForm }, DEVICE_LOAN: { ...emptyTypeForm } });
+    setTypeForms({ DEPOSIT_INSTALMENT: { ...emptyTypeForm }, DEVICE_LOAN: { ...emptyTypeForm } });
   }
 
   function openEdit(entry: PriceChartEntry) {
@@ -174,7 +176,7 @@ export default function PriceChartPage() {
       <div className="space-y-5 max-w-3xl">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Price a Product</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Every product needs pricing for all three contract types — fill in whichever are missing for this term</p>
+          <p className="text-sm text-gray-500 mt-0.5">Every product needs pricing for both contract types with terms — fill in whichever is missing for this term. Save to Own has no payment terms and is never priced.</p>
         </div>
         <Card>
           <CardHeader><CardTitle>Product &amp; term</CardTitle></CardHeader>
@@ -319,7 +321,9 @@ export default function PriceChartPage() {
                       {e.effectiveTo ? <Badge variant="secondary">Superseded</Badge> : <Badge variant="success">Active</Badge>}
                     </TableCell>
                     <TableCell>
-                      {canEdit && !e.effectiveTo && (
+                      {/* SAVE_TO_OWN entries are historical only — new ones are rejected
+                          (priceChartService.ts), so an old one can't be re-priced either. */}
+                      {canEdit && !e.effectiveTo && e.contractType !== 'SAVE_TO_OWN' && (
                         <button className="text-xs text-primary hover:underline" onClick={() => openEdit(e)}>Edit</button>
                       )}
                     </TableCell>

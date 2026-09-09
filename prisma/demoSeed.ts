@@ -69,12 +69,10 @@ async function main() {
           categoryId: categoryByName.get(p.category) ?? null,
         },
       });
-      // One 6-month tier across all three contract types — enough for a
-      // contract of each type to actually price and create successfully.
-      await createPriceChartEntry({
-        productId: product.id, contractType: 'SAVE_TO_OWN', termMonths: 6, paymentFrequency: 'MONTHLY',
-        depositAmountMinor: 0, totalPayableMinor: Math.round(p.cashPriceMinor * 1.15), createdById: admin.id,
-      });
+      // One 6-month tier for both priceable contract types — enough for a
+      // contract of each to actually price and create successfully.
+      // SAVE_TO_OWN is never priced — it's open-ended savings with no term
+      // (contractService.ts/priceChartService.ts).
       await createPriceChartEntry({
         productId: product.id, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, paymentFrequency: 'MONTHLY',
         depositAmountMinor: Math.round(p.cashPriceMinor * 0.2), totalPayableMinor: Math.round(p.cashPriceMinor * 1.15),
@@ -104,12 +102,13 @@ async function main() {
     customers.push({ id: customer.id, name: `${c.firstName} ${c.lastName}` });
   }
 
-  // One contract of each type per the first two customers, against the first
-  // two (store-carried) products — DEVICE_LOAN disburses cash, no unit
-  // reserved, so it's the one type that doesn't need an inventory item.
-  const contractPlans: Array<{ contractType: 'SAVE_TO_OWN' | 'DEPOSIT_INSTALMENT' | 'DEVICE_LOAN'; customerIdx: number; productIdx: number }> = [
-    { contractType: 'SAVE_TO_OWN', customerIdx: 0, productIdx: 0 },
-    { contractType: 'SAVE_TO_OWN', customerIdx: 1, productIdx: 1 },
+  // One contract of each type per the first two customers. SAVE_TO_OWN has no
+  // productIdx — it's open-ended savings, not linked to any product; DEVICE_LOAN
+  // disburses cash, no unit reserved, so it's the only product-linked type that
+  // doesn't need an inventory item.
+  const contractPlans: Array<{ contractType: 'SAVE_TO_OWN' | 'DEPOSIT_INSTALMENT' | 'DEVICE_LOAN'; customerIdx: number; productIdx?: number }> = [
+    { contractType: 'SAVE_TO_OWN', customerIdx: 0 },
+    { contractType: 'SAVE_TO_OWN', customerIdx: 1 },
     { contractType: 'DEPOSIT_INSTALMENT', customerIdx: 2, productIdx: 0 },
     { contractType: 'DEPOSIT_INSTALMENT', customerIdx: 3, productIdx: 1 },
     { contractType: 'DEVICE_LOAN', customerIdx: 4, productIdx: 2 },
@@ -120,48 +119,63 @@ async function main() {
   let paymentsPosted = 0;
   for (const [i, plan] of contractPlans.entries()) {
     const customer = customers[plan.customerIdx];
-    const product = products[plan.productIdx];
+    const product = plan.productIdx !== undefined ? products[plan.productIdx] : undefined;
 
     const existing = await prisma.contract.findFirst({
-      where: { customerId: customer.id, productId: product.id, contractType: plan.contractType },
+      where: { customerId: customer.id, contractType: plan.contractType, ...(product && { productId: product.id }) },
     });
     if (existing) continue;
 
-    let inventoryItemId: string | undefined;
-    if (plan.contractType !== 'DEVICE_LOAN') {
-      const item = await receiveInventoryItem({
-        productId: product.id, branchId: branch.id, serialNumber: `DEMO-${product.id.slice(0, 8)}-${i}`, createdById: admin.id,
+    let contract: Awaited<ReturnType<typeof createContract>>;
+    if (plan.contractType === 'SAVE_TO_OWN') {
+      contract = await createContract({
+        contractType: 'SAVE_TO_OWN',
+        customerId: customer.id,
+        branchId: branch.id,
+        createdById: admin.id,
       });
-      inventoryItemId = item.id;
+    } else {
+      if (!product) continue; // defensive — every non-SAVE_TO_OWN plan above has a productIdx
+      let inventoryItemId: string | undefined;
+      if (plan.contractType !== 'DEVICE_LOAN') {
+        const item = await receiveInventoryItem({
+          productId: product.id, branchId: branch.id, serialNumber: `DEMO-${product.id.slice(0, 8)}-${i}`, createdById: admin.id,
+        });
+        inventoryItemId = item.id;
+      }
+      contract = await createContract({
+        contractType: plan.contractType,
+        customerId: customer.id,
+        inventoryItemId,
+        productId: plan.contractType === 'DEVICE_LOAN' ? product.id : undefined,
+        termMonths: 6,
+        branchId: branch.id,
+        createdById: admin.id,
+      });
     }
-
-    const contract = await createContract({
-      contractType: plan.contractType,
-      customerId: customer.id,
-      inventoryItemId,
-      productId: plan.contractType === 'DEVICE_LOAN' ? product.id : undefined,
-      termMonths: 6,
-      branchId: branch.id,
-      createdById: admin.id,
-    });
     contractsCreated += 1;
 
     // Give most contracts a bit of payment history — leave one of each pair
-    // untouched (PENDING_DEPOSIT / freshly ACTIVE) so statuses look realistic
-    // rather than everything being mid-payment.
+    // untouched (PENDING_DEPOSIT / freshly ACTIVE / a fresh savings account)
+    // so statuses look realistic rather than everything being mid-payment.
     if (i % 2 === 0) {
       const entryType = plan.contractType === 'DEPOSIT_INSTALMENT' ? 'DEPOSIT' : 'INSTALMENT_PAYMENT';
       const amountMinor = plan.contractType === 'DEPOSIT_INSTALMENT'
         ? contract.depositAmountMinor
-        : Math.round(contract.totalPayableMinor * 0.3);
+        : plan.contractType === 'SAVE_TO_OWN'
+          ? 5000 // a flat demo deposit — SAVE_TO_OWN has no target to derive a fraction from
+          : Math.round((contract.totalPayableMinor ?? 0) * 0.3);
       if (amountMinor > 0) {
-        await postPayment({ contractId: contract.id, amountMinor, entryType, channel: 'CASH', createdById: admin.id });
+        await postPayment({
+          contractId: contract.id, amountMinor, entryType, channel: 'CASH', createdById: admin.id,
+          notes: plan.contractType === 'SAVE_TO_OWN' ? 'Counter cash deposit' : undefined,
+        });
         paymentsPosted += 1;
       }
     }
   }
 
-  console.log(`\nSeeded ${categoryByName.size} categories, ${products.length} products (each priced for all 3 contract types),`);
+  console.log(`\nSeeded ${categoryByName.size} categories, ${products.length} products (each priced for both DEPOSIT_INSTALMENT and DEVICE_LOAN),`);
   console.log(`${customers.length} customers, ${contractsCreated} new contract(s), ${paymentsPosted} payment(s).`);
 }
 

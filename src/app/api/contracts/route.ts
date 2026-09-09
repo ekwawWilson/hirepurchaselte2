@@ -50,16 +50,28 @@ export async function POST(req: NextRequest) {
   if (!(CONTRACT_TYPES as readonly string[]).includes(contractType as string)) {
     return NextResponse.json({ error: `contractType must be one of: ${CONTRACT_TYPES.join(', ')}` }, { status: 400 });
   }
-  if (!customerId || typeof termMonths !== 'number' || termMonths < 1) {
-    return NextResponse.json({ error: 'customerId and a positive termMonths are required' }, { status: 400 });
+  if (!customerId) {
+    return NextResponse.json({ error: 'customerId is required' }, { status: 400 });
   }
-  // DEVICE_LOAN disburses cash for the customer to buy a device outside the store —
-  // no specific stock unit is ever reserved for it, so it's priced against a Product
-  // directly rather than an available InventoryItem (docs/01-plan.md §20).
-  if (contractType === 'DEVICE_LOAN') {
-    if (!productId) return NextResponse.json({ error: 'productId is required for a DEVICE_LOAN contract' }, { status: 400 });
-  } else if (!inventoryItemId) {
-    return NextResponse.json({ error: 'inventoryItemId is required for this contract type' }, { status: 400 });
+  if (contractType === 'SAVE_TO_OWN') {
+    // Open-ended savings — no product, no price chart entry, no term at all
+    // (contractService.ts). Rejected rather than silently ignored: neither
+    // should ever be sent for this type, live-form wizard included.
+    if (inventoryItemId || productId) {
+      return NextResponse.json({ error: 'SAVE_TO_OWN accounts are not linked to a product' }, { status: 400 });
+    }
+  } else {
+    if (typeof termMonths !== 'number' || termMonths < 1) {
+      return NextResponse.json({ error: 'a positive termMonths is required for this contract type' }, { status: 400 });
+    }
+    // DEVICE_LOAN disburses cash for the customer to buy a device outside the store —
+    // no specific stock unit is ever reserved for it, so it's priced against a Product
+    // directly rather than an available InventoryItem (docs/01-plan.md §20).
+    if (contractType === 'DEVICE_LOAN') {
+      if (!productId) return NextResponse.json({ error: 'productId is required for a DEVICE_LOAN contract' }, { status: 400 });
+    } else if (!inventoryItemId) {
+      return NextResponse.json({ error: 'inventoryItemId is required for this contract type' }, { status: 400 });
+    }
   }
   if (paymentFrequency !== undefined && !(PAYMENT_FREQUENCIES as readonly string[]).includes(paymentFrequency as string)) {
     return NextResponse.json({ error: `paymentFrequency must be one of: ${PAYMENT_FREQUENCIES.join(', ')}` }, { status: 400 });
@@ -114,7 +126,7 @@ export async function POST(req: NextRequest) {
       customerId: customerId as string,
       inventoryItemId: inventoryItemId as string | undefined,
       productId: productId as string | undefined,
-      termMonths,
+      termMonths: termMonths as number | undefined,
       paymentFrequency: paymentFrequency as PaymentFrequencyName | undefined,
       startDate: startDate ? new Date(startDate as string) : undefined,
       gracePeriodDays: gracePeriodDays as number | undefined,

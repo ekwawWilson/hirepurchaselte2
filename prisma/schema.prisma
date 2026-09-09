@@ -271,7 +271,10 @@ model Contract {
   contractNumber      String  @unique
   contractType        String
   customerId          String
-  productId           String
+  // Null for SAVE_TO_OWN — free-form savings with no target item, so nothing
+  // to link at creation (docs/01-plan.md). Required for DEPOSIT_INSTALMENT/
+  // DEVICE_LOAN, which are always priced against a specific product.
+  productId           String?
   inventoryItemId     String?
   branchId            String
   priceChartEntryId   String?
@@ -297,11 +300,13 @@ model Contract {
   paymentMethod String @default("CUSTOMER_INITIATED")
 
   // Snapshotted pricing terms — never re-read from priceChartEntries after creation.
-  totalPriceMinor       Int
+  // All null for SAVE_TO_OWN: it has no price chart entry, no term, and no
+  // instalment amount — the customer deposits any amount, any time.
+  totalPriceMinor       Int?
   depositAmountMinor    Int    @default(0)
-  termMonths            Int
+  termMonths            Int?
   paymentFrequency      String @default("MONTHLY")
-  instalmentAmountMinor Int
+  instalmentAmountMinor Int?
 
   // DEVICE_LOAN only
   principalMinor  Int?
@@ -317,9 +322,12 @@ model Contract {
 
   status String @default("ACTIVE")
 
-  totalPayableMinor Int
+  // Both null for SAVE_TO_OWN — there's no savings target to measure a
+  // balance against, only totalPaidMinor (what's actually been deposited).
+  // See paymentService.recomputeContract/advanceContractStatus.
+  totalPayableMinor Int?
   totalPaidMinor    Int @default(0)
-  balanceMinor      Int
+  balanceMinor      Int?
 
   startDate      DateTime
   activatedAt    DateTime?
@@ -337,7 +345,7 @@ model Contract {
   updatedAt   DateTime @updatedAt
 
   customer          Customer           @relation(fields: [customerId], references: [id])
-  product           Product            @relation(fields: [productId], references: [id])
+  product           Product?           @relation(fields: [productId], references: [id])
   inventoryItem     InventoryItem?     @relation(fields: [inventoryItemId], references: [id])
   branch            Branch             @relation(fields: [branchId], references: [id])
   priceChartEntry   PriceChartEntry?   @relation(fields: [priceChartEntryId], references: [id])

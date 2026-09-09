@@ -81,7 +81,12 @@ async function recomputeContract(tx: Tx, contractId: string) {
     }
   }
 
-  const balanceMinor = Math.max(0, contract.totalPayableMinor - totalPaidMinor);
+  // SAVE_TO_OWN has no savings target to measure a balance against — it's
+  // open-ended, so balanceMinor stays null and totalPaidMinor (what's actually
+  // been deposited, net of withdrawals) is the only figure that moves.
+  const balanceMinor = contract.contractType === 'SAVE_TO_OWN' || contract.totalPayableMinor === null
+    ? null
+    : Math.max(0, contract.totalPayableMinor - totalPaidMinor);
   if (totalPaidMinor !== contract.totalPaidMinor || balanceMinor !== contract.balanceMinor) {
     await tx.contract.update({ where: { id: contractId }, data: { totalPaidMinor, balanceMinor } });
   }
@@ -155,7 +160,11 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<Advanc
     }
   }
 
-  if (effectiveStatus === 'ACTIVE' && contract.balanceMinor <= 0) {
+  // SAVE_TO_OWN never auto-completes — there's no savings target to reach
+  // (balanceMinor is always null for it, see recomputeContract), so it just
+  // stays ACTIVE until the customer withdraws or the balance is put toward a
+  // purchase, both handled entirely outside this status machine.
+  if (effectiveStatus === 'ACTIVE' && contract.contractType !== 'SAVE_TO_OWN' && contract.balanceMinor !== null && contract.balanceMinor <= 0) {
     await tx.contract.update({ where: { id: contractId }, data: { status: 'COMPLETED', completedAt: now } });
   }
   return { queuedSmsIds };

@@ -193,7 +193,11 @@ export async function chargeDirectDebit(params: { contractId: string; amountMino
   if (contract.status !== 'ACTIVE') {
     throw new PreapprovalError(`Direct debit can only charge an ACTIVE contract (currently ${contract.status})`);
   }
-  if (params.amountMinor <= 0 || params.amountMinor > contract.balanceMinor) {
+  // balanceMinor is only ever null for SAVE_TO_OWN (open-ended savings), which
+  // can never reach here — it's excluded from DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
+  // so no mandate can exist for one. The ?? 0 fallback is defensive only: it
+  // would reject the charge, never silently allow an unbounded one.
+  if (params.amountMinor <= 0 || params.amountMinor > (contract.balanceMinor ?? 0)) {
     throw new PreapprovalError('Charge amount must be positive and not exceed the outstanding balance');
   }
 

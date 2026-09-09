@@ -18,14 +18,15 @@ import {
 } from '@/components/ui/alert-dialog';
 
 interface Instalment { id: string; instalmentNo: number; dueDate: string; amountDueMinor: number; principalPortionMinor: number; interestPortionMinor: number; amountPaidMinor: number; status: string; daysPastDue?: number }
-interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
+interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; notes: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
 interface Preapproval { id: string; status: string; network: string; customerMsisdn: string; verificationType: string | null }
 interface ContractDetail {
   id: string; contractNumber: string; contractType: string; status: string; paymentFrequency: string;
-  totalPayableMinor: number; totalPaidMinor: number; balanceMinor: number; creditMinor: number;
+  // Null for SAVE_TO_OWN — open-ended savings has no target/product (contractService.ts).
+  totalPayableMinor: number | null; totalPaidMinor: number; balanceMinor: number | null; creditMinor: number;
   depositAmountMinor: number; principalMinor: number | null; interestRateBps: number | null;
   customer: { firstName: string; lastName: string; phone: string | null; phone2: string | null; phone3: string | null };
-  product: { name: string };
+  product: { name: string } | null;
   instalments: Instalment[];
   payments: Payment[];
   hubtelPreapprovalId: string | null;
@@ -43,9 +44,11 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [contract, setContract] = useState<ContractDetail | null>(null);
   const [amount, setAmount] = useState('');
   const [entryType, setEntryType] = useState<'DEPOSIT' | 'INSTALMENT_PAYMENT'>('INSTALMENT_PAYMENT');
+  const [paymentNotes, setPaymentNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
   const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawNotes, setWithdrawNotes] = useState('');
   const [withdrawing, setWithdrawing] = useState(false);
 
   const [reverseTarget, setReverseTarget] = useState<Payment | null>(null);
@@ -88,9 +91,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     setSaving(true);
     try {
       const amountMinor = Math.round(parseFloat(amount) * 100);
-      await api.post('/payments/cash', { contractId: id, amountMinor, entryType });
+      await api.post('/payments/cash', { contractId: id, amountMinor, entryType, notes: paymentNotes.trim() || undefined });
       toast({ title: 'Payment recorded', description: formatCurrency(amountMinor) });
       setAmount('');
+      setPaymentNotes('');
       await load();
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to record payment', variant: 'destructive' });
@@ -104,9 +108,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     setWithdrawing(true);
     try {
       const amountMinor = Math.round(parseFloat(withdrawAmount) * 100);
-      await api.post('/payments/withdraw', { contractId: id, amountMinor });
+      await api.post('/payments/withdraw', { contractId: id, amountMinor, notes: withdrawNotes.trim() || undefined });
       toast({ title: 'Withdrawal recorded', description: formatCurrency(amountMinor) });
       setWithdrawAmount('');
+      setWithdrawNotes('');
       await load();
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to record withdrawal', variant: 'destructive' });
@@ -219,23 +224,31 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{contract.contractNumber}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone ?? contract.customer.phone2 ?? contract.customer.phone3} &middot; {contract.product.name} &middot; {contractTypeLabel(contract.contractType)} &middot; {contract.paymentFrequency.charAt(0) + contract.paymentFrequency.slice(1).toLowerCase()}
+            {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone ?? contract.customer.phone2 ?? contract.customer.phone3}
+            {contract.product && <> &middot; {contract.product.name}</>} &middot; {contractTypeLabel(contract.contractType)}
+            {contract.contractType !== 'SAVE_TO_OWN' && <> &middot; {contract.paymentFrequency.charAt(0) + contract.paymentFrequency.slice(1).toLowerCase()}</>}
           </p>
         </div>
         <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${getStatusColor(contract.status)}`}>{contract.status}</span>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total payable</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPayableMinor)}</p></CardContent></Card>
-        <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total paid</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPaidMinor)}</p></CardContent></Card>
-        <Card className="min-w-0">
-          <CardContent className="p-4">
-            <p className="text-xs text-gray-500">Balance</p>
-            <p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.balanceMinor)}</p>
-            {contract.creditMinor > 0 && <p className="text-xs text-green-700 mt-0.5 break-words">Credit: {formatCurrency(contract.creditMinor)}</p>}
-          </CardContent>
-        </Card>
-      </div>
+      {contract.contractType === 'SAVE_TO_OWN' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total saved</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPaidMinor)}</p></CardContent></Card>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-4">
+          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total payable</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPayableMinor ?? 0)}</p></CardContent></Card>
+          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total paid</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPaidMinor)}</p></CardContent></Card>
+          <Card className="min-w-0">
+            <CardContent className="p-4">
+              <p className="text-xs text-gray-500">Balance</p>
+              <p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.balanceMinor ?? 0)}</p>
+              {contract.creditMinor > 0 && <p className="text-xs text-green-700 mt-0.5 break-words">Credit: {formatCurrency(contract.creditMinor)}</p>}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {canPay && !terminal && (
         <Card>
@@ -258,6 +271,15 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               <div>
                 <Label>Amount (GHS)</Label>
                 <Input required type="number" step="0.01" className="mt-1.5 w-40" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              </div>
+              <div className="flex-1 min-w-[10rem]">
+                <Label>Description</Label>
+                <Input
+                  placeholder="e.g. counter cash deposit"
+                  className="mt-1.5"
+                  value={paymentNotes}
+                  onChange={(e) => setPaymentNotes(e.target.value)}
+                />
               </div>
               <Button type="submit" disabled={saving}>{saving ? 'Recording...' : 'Record payment'}</Button>
             </form>
@@ -361,11 +383,12 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           <CardHeader><CardTitle>Savings progress</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-gray-500">
-              Save to Own has no fixed schedule — the customer deposits any amount, any time, toward the total
-              above. The device is released once the balance reaches zero.
+              {contract.product
+                ? `Save to Own has no fixed schedule — the customer deposits any amount, any time, toward ${contract.product.name}. The device is released once staff decide the saved amount is enough.`
+                : 'Save to Own has no fixed schedule, no target, and no linked product — the customer deposits any amount, any time, until they withdraw or the saved amount is put toward a purchase.'}
             </p>
             {canReverse && contract.status === 'ACTIVE' && contract.totalPaidMinor > 0 && (
-              <form className="flex items-end gap-3 border-t border-gray-100 pt-4" onSubmit={recordWithdrawal}>
+              <form className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-4" onSubmit={recordWithdrawal}>
                 <div>
                   <Label>Withdraw savings (GHS)</Label>
                   <Input
@@ -373,8 +396,17 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                     className="mt-1.5 w-40" value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)}
                   />
                 </div>
+                <div className="flex-1 min-w-[10rem]">
+                  <Label>Reason</Label>
+                  <Input
+                    placeholder="e.g. emergency withdrawal"
+                    className="mt-1.5"
+                    value={withdrawNotes}
+                    onChange={(e) => setWithdrawNotes(e.target.value)}
+                  />
+                </div>
                 <Button type="submit" variant="outline" disabled={withdrawing}>{withdrawing ? 'Withdrawing...' : 'Withdraw'}</Button>
-                <p className="text-xs text-gray-400 pb-2.5">Up to {formatCurrency(contract.totalPaidMinor)} saved so far</p>
+                <p className="text-xs text-gray-400 pb-2.5 w-full sm:w-auto">Up to {formatCurrency(contract.totalPaidMinor)} saved so far</p>
               </form>
             )}
           </CardContent>
@@ -424,7 +456,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Channel</TableHead><TableHead>Amount</TableHead><TableHead>Receipt</TableHead><TableHead />
+                <TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Channel</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Receipt</TableHead><TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -436,6 +468,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   <TableCell className={p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? 'text-red-600' : undefined}>
                     {p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? '-' : ''}{formatCurrency(p.amountMinor)}
                   </TableCell>
+                  <TableCell className="text-gray-500 max-w-[14rem] truncate" title={p.notes ?? undefined}>{p.notes ?? '—'}</TableCell>
                   <TableCell className="font-mono text-xs">{p.receiptNumber ?? '—'}</TableCell>
                   <TableCell>
                     {canReverse && !p.reversesPaymentId && !p.reversedById && (
@@ -446,7 +479,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                 </TableRow>
               ))}
               {contract.payments.length === 0 && (
-                <TableRow><TableCell colSpan={6} className="text-center py-6 text-gray-400">No payments yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-6 text-gray-400">No payments yet.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>

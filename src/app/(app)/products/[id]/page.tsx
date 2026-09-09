@@ -25,7 +25,9 @@ interface Product {
 }
 
 const frequencyLabel = (f: string) => f.charAt(0) + f.slice(1).toLowerCase();
-const ALL_CONTRACT_TYPES = ['SAVE_TO_OWN', 'DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
+// SAVE_TO_OWN is open-ended savings with no payment terms — it's never priced
+// (priceChartService.ts rejects it), so only these two count toward "fully priced".
+const ALL_CONTRACT_TYPES = ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
 const TERM_MONTHS = [3, 4, 6] as const;
 type TermPricingForm = { totalPayable: string; deposit: string };
 const emptyTermPricing: Record<number, TermPricingForm> = { 3: { totalPayable: '', deposit: '' }, 4: { totalPayable: '', deposit: '' }, 6: { totalPayable: '', deposit: '' } };
@@ -265,7 +267,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             const priced = new Set(product.priceChartEntries.filter((e) => !e.effectiveTo).map((e) => e.contractType));
             const missing = ALL_CONTRACT_TYPES.filter((t) => !priced.has(t));
             return missing.length === 0 ? (
-              <Badge variant="success">All 3 contract types priced</Badge>
+              <Badge variant="success">Both contract types priced</Badge>
             ) : (
               <Badge variant="destructive">Missing: {missing.map(contractTypeLabel).join(', ')}</Badge>
             );
