@@ -203,6 +203,14 @@ describe('Hubtel Direct Debit', () => {
 
       const stored = await prisma.hubtelPreapproval.findUniqueOrThrow({ where: { id: preapproval.id } });
       expect(stored.verificationType).toBe('OTP');
+
+      // Settings > Hubtel Diagnostics sources its outbound "sample payloads"
+      // straight from the real call this server sent Hubtel — captured at the
+      // single choke point (hubtelClient.ts), not fabricated.
+      const sample = await prisma.hubtelSampleLog.findUnique({ where: { kind: 'PREAPPROVAL_INITIATE' } });
+      expect(sample).not.toBeNull();
+      expect(JSON.parse(sample!.requestPayload as string)).toMatchObject({ channel: 'mtn-gh-direct-debit' });
+      expect(JSON.parse(sample!.responsePayload as string)).toMatchObject({ responseCode: '2000' });
     } finally {
       globalThis.fetch = guardedFetch;
       process.env.HUBTEL_PAYMENTS_MODE = originalMode;

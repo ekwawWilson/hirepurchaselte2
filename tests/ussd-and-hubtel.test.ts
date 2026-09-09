@@ -445,6 +445,44 @@ describe('USSD + Hubtel payments', () => {
     }
   });
 
+  it('a live Receive-Money call is captured for Hubtel Diagnostics\' sample-payloads panel, request and response alike', async () => {
+    const phone = uniquePhone();
+    const contract = await setupContract(phone);
+    const originalMode = process.env.HUBTEL_PAYMENTS_MODE;
+    const originalSalesId = process.env.HUBTEL_POS_SALES_ID;
+    const originalKey = process.env.HUBTEL_API_KEY;
+    const originalSecret = process.env.HUBTEL_API_SECRET;
+    process.env.HUBTEL_PAYMENTS_MODE = 'live';
+    process.env.HUBTEL_POS_SALES_ID = 'TEST-SALES-ID';
+    process.env.HUBTEL_API_KEY = 'test-key';
+    process.env.HUBTEL_API_SECRET = 'test-secret';
+
+    const guardedFetch = globalThis.fetch;
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
+      Message: 'Accepted', ResponseCode: '0001',
+      Data: { TransactionId: 'HTX-1', ClientReference: 'whatever', Amount: 10, Charges: 0, AmountCharged: 10 },
+    }), { status: 200 }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const txn = await initiateHubtelPayment({ contractId: contract.id, msisdn: phone, amountMinor: 1000 });
+      expect(txn.status).toBe('PENDING');
+
+      // captured at the single choke point every outbound Receive-Money call
+      // goes through (hubtelClient.ts) — real data, not a fabricated example.
+      const sample = await prisma.hubtelSampleLog.findUnique({ where: { kind: 'RECEIVE_MONEY_INITIATE' } });
+      expect(sample).not.toBeNull();
+      expect(JSON.parse(sample!.requestPayload as string)).toMatchObject({ Channel: 'mtn-gh', Amount: 10 });
+      expect(JSON.parse(sample!.responsePayload as string)).toMatchObject({ ResponseCode: '0001' });
+    } finally {
+      globalThis.fetch = guardedFetch;
+      process.env.HUBTEL_PAYMENTS_MODE = originalMode;
+      process.env.HUBTEL_POS_SALES_ID = originalSalesId;
+      process.env.HUBTEL_API_KEY = originalKey;
+      process.env.HUBTEL_API_SECRET = originalSecret;
+    }
+  });
+
   it('SAVE_TO_OWN\'s payment prompt shows only the running total paid — no due schedule to report', async () => {
     const phone = uniquePhone();
     const contract = await setupContract(phone);

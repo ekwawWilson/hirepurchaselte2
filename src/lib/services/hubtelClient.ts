@@ -5,7 +5,21 @@
  * hubtelStatusCheckService.ts so auth/phone-formatting/channel-mapping can't
  * drift between them.
  */
+import { recordHubtelSample } from './hubtelSampleLogService';
+
 export class HubtelApiError extends Error {}
+
+/** Falls back to the raw text (an HTML error page from a gateway/proxy in
+ *  front of Hubtel, for instance) instead of throwing on a non-JSON body, so
+ *  a failure response is still captured/returned rather than lost. */
+async function parseHubtelResponse(res: Response): Promise<unknown> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
 
 export function isHubtelLiveMode(): boolean {
   return process.env.HUBTEL_PAYMENTS_MODE === 'live';
@@ -130,7 +144,12 @@ export async function callHubtelReceiveMoney(params: {
     headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const body = (await res.json()) as ReceiveMoneyResponse;
+  const parsed = await parseHubtelResponse(res);
+  // A genuine outbound call captured for Settings > Hubtel Diagnostics's
+  // sample-payloads panel — both the request this app actually sent and
+  // Hubtel's actual response, success or failure alike.
+  await recordHubtelSample(params.isDirectDebit ? 'DIRECT_DEBIT_CHARGE' : 'RECEIVE_MONEY_INITIATE', payload, parsed);
+  const body = parsed as ReceiveMoneyResponse;
   if (!res.ok) throw new HubtelApiError(body?.Message || `Hubtel receive-money call failed with HTTP ${res.status}`);
 
   return {
@@ -172,7 +191,12 @@ export async function callHubtelPreapprovalInitiate(params: {
     headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const body = (await res.json()) as PreapprovalInitiateResponse;
+  const parsed = await parseHubtelResponse(res);
+  // A genuine outbound call captured for Settings > Hubtel Diagnostics's
+  // sample-payloads panel — both the request this app actually sent and
+  // Hubtel's actual response, success or failure alike.
+  await recordHubtelSample('PREAPPROVAL_INITIATE', payload, parsed);
+  const body = parsed as PreapprovalInitiateResponse;
   if (!res.ok) throw new HubtelApiError(body?.message || `Hubtel preapproval initiate failed with HTTP ${res.status}`);
 
   return {
@@ -214,14 +238,7 @@ export async function testPreapprovalInitiateRaw(params: {
     headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const rawText = await res.text();
-  let responseBody: unknown = rawText;
-  try {
-    responseBody = JSON.parse(rawText);
-  } catch {
-    // Not JSON (an HTML error page from a gateway/proxy in front of Hubtel,
-    // for instance) — leave it as the raw text so it's still visible, not lost.
-  }
+  const responseBody = await parseHubtelResponse(res);
 
   return { requestUrl, requestPayload: payload, httpStatus: res.status, responseBody };
 }

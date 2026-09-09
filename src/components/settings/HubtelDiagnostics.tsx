@@ -26,10 +26,13 @@ interface SamplePayload {
 }
 
 const SAMPLE_SECTIONS: { key: keyof DiagnosticsSamples; title: string; emptyHint: string }[] = [
+  { key: 'receiveMoneyInitiate', title: 'Receive-Money (customer payment) — outbound', emptyHint: 'Only fires in live mode, when a customer pays and this server calls Hubtel to charge them.' },
+  { key: 'directDebitCharge', title: 'Direct-debit charge — outbound', emptyHint: 'Only fires in live mode, when this server charges an approved mandate.' },
+  { key: 'preapprovalInitiate', title: 'Preapproval initiate (mandate request) — outbound', emptyHint: 'Only fires in live mode, when a direct-debit mandate is requested for a customer.' },
+  { key: 'statusCheck', title: 'Transaction status check — outbound', emptyHint: 'Only fires in live mode, when the reconcile sweep checks a pending transaction.' },
+  { key: 'paymentCallback', title: 'Payment callback — inbound', emptyHint: 'Take (or simulate) a payment to capture one.' },
+  { key: 'preapprovalCallback', title: 'Preapproval callback — inbound', emptyHint: 'Only fires in live mode, once a customer completes a real direct-debit mandate prompt.' },
   { key: 'ussd', title: 'USSD — Service Flow Interaction', emptyHint: 'Dial into the USSD simulator below, or wait for a real dial-in, to capture one.' },
-  { key: 'paymentCallback', title: 'Payment callback', emptyHint: 'Take (or simulate) a payment to capture one.' },
-  { key: 'preapprovalCallback', title: 'Preapproval callback', emptyHint: 'Only fires in live mode, once a customer completes a real direct-debit mandate prompt.' },
-  { key: 'statusCheck', title: 'Transaction status check', emptyHint: 'Only fires in live mode, when the reconcile sweep checks a pending transaction.' },
 ];
 
 function formatSamplesForCopy(samples: DiagnosticsSamples): string {
@@ -59,6 +62,9 @@ interface DiagnosticsSamples {
   paymentCallback: SamplePayload | null;
   preapprovalCallback: SamplePayload | null;
   statusCheck: SamplePayload | null;
+  receiveMoneyInitiate: SamplePayload | null;
+  directDebitCharge: SamplePayload | null;
+  preapprovalInitiate: SamplePayload | null;
 }
 
 interface Diagnostics {

@@ -109,7 +109,10 @@ function safeJsonParse(text: string | null): unknown {
  * kind means nothing has gone through that path on this server yet.
  */
 async function loadSamplePayloads(): Promise<Record<string, SamplePayload | null>> {
-  const kinds: HubtelSampleKind[] = ['USSD', 'PREAPPROVAL_CALLBACK', 'STATUS_CHECK'];
+  const kinds: HubtelSampleKind[] = [
+    'USSD', 'PREAPPROVAL_CALLBACK', 'STATUS_CHECK',
+    'RECEIVE_MONEY_INITIATE', 'DIRECT_DEBIT_CHARGE', 'PREAPPROVAL_INITIATE',
+  ];
   const [logs, latestPaymentTxn] = await Promise.all([
     prisma.hubtelSampleLog.findMany({ where: { kind: { in: kinds } } }),
     prisma.hubtelTransaction.findFirst({
@@ -146,6 +149,9 @@ async function loadSamplePayloads(): Promise<Record<string, SamplePayload | null
     paymentCallback,
     preapprovalCallback: fromLog('PREAPPROVAL_CALLBACK', 'A real mandate-status callback Hubtel sent this server (this path never runs in mock mode).'),
     statusCheck: fromLog('STATUS_CHECK', 'A real response from Hubtel’s Transaction Status Check API (this path never runs in mock mode).'),
+    receiveMoneyInitiate: fromLog('RECEIVE_MONEY_INITIATE', 'The most recent Receive-Money call this server actually sent Hubtel for a customer-initiated payment (this path never runs in mock mode).'),
+    directDebitCharge: fromLog('DIRECT_DEBIT_CHARGE', 'The most recent Receive-Money call this server actually sent Hubtel to charge an approved direct-debit mandate (this path never runs in mock mode).'),
+    preapprovalInitiate: fromLog('PREAPPROVAL_INITIATE', 'The most recent mandate-request call this server actually sent Hubtel (this path never runs in mock mode).'),
   };
 }
 

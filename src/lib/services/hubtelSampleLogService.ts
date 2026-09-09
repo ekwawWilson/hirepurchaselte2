@@ -1,6 +1,15 @@
 import { prisma } from '../db/prisma';
 
-export type HubtelSampleKind = 'USSD' | 'PREAPPROVAL_CALLBACK' | 'STATUS_CHECK';
+export type HubtelSampleKind =
+  | 'USSD'
+  | 'PREAPPROVAL_CALLBACK'
+  | 'STATUS_CHECK'
+  // Outbound — this server calling Hubtel — captured in hubtelClient.ts, the
+  // single choke point every one of these calls goes through regardless of
+  // which service initiated it.
+  | 'RECEIVE_MONEY_INITIATE'
+  | 'DIRECT_DEBIT_CHARGE'
+  | 'PREAPPROVAL_INITIATE';
 
 /**
  * Captures the most recent real request/response for a Hubtel integration
