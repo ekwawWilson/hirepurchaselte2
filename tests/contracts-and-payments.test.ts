@@ -428,9 +428,14 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(detail.deviceLoanState.principalOutstanding).toBe(false);
     expect(detail.status).toBe('COMPLETED'); // principal paid AND no unpaid interest left
 
-    // Once fully paid, the accrual sweep skips it — there's no more "loan" to charge 1% of.
-    const accrualCount = await accrueDailyLoanInterest();
-    expect(accrualCount).toBe(0);
+    // Once fully paid, the accrual sweep skips it — there's no more "loan" to charge
+    // 1% of. Scoped to this contract's own penalty rows, not the sweep's total return
+    // count — other tests in this shared DB leave their own ACTIVE DEVICE_LOAN
+    // contracts around, which the same sweep call also (correctly) accrues against.
+    const penaltiesBefore = await prisma.penalty.count({ where: { contractId: contract.id, reason: 'DAILY_LOAN_INTEREST' } });
+    await accrueDailyLoanInterest();
+    const penaltiesAfter = await prisma.penalty.count({ where: { contractId: contract.id, reason: 'DAILY_LOAN_INTEREST' } });
+    expect(penaltiesAfter).toBe(penaltiesBefore);
   });
 
   it('DEVICE_LOAN: paying off the full loan amount does not forgive interest already accrued at that point', async () => {
@@ -466,8 +471,17 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     const itemId = await receiveItem('OVP');
     const created = await makeDepositInstalment(cashier, custId, itemId, { totalPayableMinor: 240000, depositAmountMinor: 0 });
     const contract = (await created.json()).contract;
-    expect(contract.status).toBe('ACTIVE'); // no deposit required — starts active immediately
+    expect(contract.status).toBe('PENDING_DEPOSIT'); // every DEPOSIT_INSTALMENT starts here, even at 0% deposit
     expect(contract.totalPayableMinor).toBe(240000);
+
+    // 0% deposit — any payment at all (even a token amount) clears the gate and
+    // activates the contract; it deliberately doesn't also check for completion
+    // in that same pass (advanceContractStatus), so a second payment does that part.
+    await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
+      token: cashier, body: { contractId: contract.id, amountMinor: 1, entryType: 'DEPOSIT' },
+    }));
+    const active = await getContract(contract.id, cashier);
+    expect(active.status).toBe('ACTIVE');
 
     const over = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
       token: cashier, body: { contractId: contract.id, amountMinor: 250000, entryType: 'INSTALMENT_PAYMENT' },
@@ -476,7 +490,8 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
     const detail = await getContract(contract.id, cashier);
     expect(detail.status).toBe('COMPLETED');
-    expect(detail.creditMinor).toBe(10000);
+    expect(detail.totalPaidMinor).toBe(250001); // the 1-pesewa deposit plus the overpayment
+    expect(detail.creditMinor).toBe(10001);
   });
 
   it('RBAC: SALES cannot record cash payments (403), CASHIER can', async () => {

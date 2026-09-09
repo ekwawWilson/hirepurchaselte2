@@ -385,11 +385,13 @@ export async function cancelContract(params: { contractId: string; reason: strin
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: params.reason, updatedById: params.userId },
     });
 
-    // Whether the device was ever actually handed over is what decides how cancellation
-    // handles the money — not the contract type. SAVE_TO_OWN never issues until COMPLETED,
-    // so it's always still RESERVED here; DEPOSIT_INSTALMENT can be cancelled either before
-    // the deposit clears (RESERVED) or after (ISSUED, device already with the customer).
-    let deviceWasNeverHandedOver = false;
+    // Whether anything physical was ever handed over is what decides how cancellation
+    // handles the money — not the contract type. SAVE_TO_OWN is never linked to a
+    // product/item at all (open-ended savings, contractService.ts), so there's
+    // trivially nothing that could have gone out — always a full withdrawal.
+    // DEPOSIT_INSTALMENT can be cancelled either before the deposit clears
+    // (item RESERVED) or after (ISSUED, device already with the customer).
+    let deviceWasNeverHandedOver = contract.contractType === 'SAVE_TO_OWN';
     if (contract.inventoryItemId) {
       const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: contract.inventoryItemId } });
       if (item.status === 'RESERVED') {
