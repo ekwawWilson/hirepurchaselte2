@@ -259,7 +259,9 @@ async function runContractTransaction(
     // cascades correctly with no separate branch per figure.
     const totalPayableMinor = params.totalPayableMinorOverride ?? chartEntry.totalPayableMinor;
     let scheduleFinanceAmount: number;
-    let scheduleKind: 'STRAIGHT_LINE' | 'LOAN' | 'NONE';
+    // Only ever STRAIGHT_LINE/LOAN here — SAVE_TO_OWN (the one 'NONE'/no-schedule
+    // case) never reaches this function at all (see runSaveToOwnTransaction above).
+    let scheduleKind: 'STRAIGHT_LINE' | 'LOAN';
 
     switch (params.contractType) {
       case 'SAVE_TO_OWN':
@@ -330,23 +332,21 @@ async function runContractTransaction(
       },
     });
 
-    if (scheduleKind !== 'NONE') {
-      const scheduleFrequency = chartEntry.paymentFrequency as PaymentFrequencyName;
-      const schedule = scheduleKind === 'LOAN'
-        ? generateLoanSchedule(principalMinor as number, interestRateBps as number, effectiveTermMonths, startDate, scheduleFrequency, instalmentCount)
-        : generateStraightLineSchedule(scheduleFinanceAmount, effectiveTermMonths, startDate, scheduleFrequency, instalmentCount);
+    const scheduleFrequency = chartEntry.paymentFrequency as PaymentFrequencyName;
+    const schedule = scheduleKind === 'LOAN'
+      ? generateLoanSchedule(principalMinor as number, interestRateBps as number, effectiveTermMonths, startDate, scheduleFrequency, instalmentCount)
+      : generateStraightLineSchedule(scheduleFinanceAmount, effectiveTermMonths, startDate, scheduleFrequency, instalmentCount);
 
-      await tx.instalment.createMany({
-        data: schedule.map((s) => ({
-          contractId: contract.id,
-          instalmentNo: s.instalmentNo,
-          dueDate: s.dueDate,
-          amountDueMinor: s.amountDueMinor,
-          principalPortionMinor: s.principalPortionMinor,
-          interestPortionMinor: s.interestPortionMinor,
-        })),
-      });
-    }
+    await tx.instalment.createMany({
+      data: schedule.map((s) => ({
+        contractId: contract.id,
+        instalmentNo: s.instalmentNo,
+        dueDate: s.dueDate,
+        amountDueMinor: s.amountDueMinor,
+        principalPortionMinor: s.principalPortionMinor,
+        interestPortionMinor: s.interestPortionMinor,
+      })),
+    });
 
     // DEPOSIT_INSTALMENT reserves the unit until the deposit clears (see
     // paymentService.advanceContractStatus). DEVICE_LOAN has no `item` at all —
