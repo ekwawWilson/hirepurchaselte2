@@ -21,6 +21,7 @@ export async function register() {
   const { pruneExpiredUssdSessions } = await import('@/lib/services/ussdService');
   const { retryFailedDirectDebits } = await import('@/lib/services/hubtelPreapprovalService');
   const { runDirectDebitCollections } = await import('@/lib/services/collectionsService');
+  const { accrueDailyLoanInterest } = await import('@/lib/services/loanService');
 
   // Daily at 08:00 — matches the legacy app's own schedule.
   cron.schedule('0 8 * * *', async () => {
@@ -55,6 +56,12 @@ export async function register() {
       if (count > 0) console.log(`[cron] retried ${count} failed direct debit charge(s)`);
     } catch (e) {
       console.error('[cron] retryFailedDirectDebits failed:', e);
+    }
+    try {
+      const count = await accrueDailyLoanInterest();
+      if (count > 0) console.log(`[cron] accrued daily interest on ${count} DEVICE_LOAN contract(s)`);
+    } catch (e) {
+      console.error('[cron] accrueDailyLoanInterest failed:', e);
     }
   });
 

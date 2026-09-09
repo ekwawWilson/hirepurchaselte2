@@ -1,10 +1,11 @@
 /**
- * Coverage for payment frequency (DAILY/WEEKLY/MONTHLY): each contract type
- * pays "based on the number of months (period) selected and payment
- * frequency" — the admin prices each (product, contractType, termMonths,
- * paymentFrequency) combo separately (docs/01-plan.md), and the schedule's
- * instalment count/spacing follows the fixed 30-days/4-weeks-per-month
- * convention (constants/contracts.ts numberOfInstalmentsForTerm).
+ * Coverage for payment frequency (DAILY/WEEKLY/MONTHLY). generateStraightLineSchedule/
+ * generateLoanSchedule still follow the fixed 30-days/4-weeks-per-month convention
+ * (constants/contracts.ts numberOfInstalmentsForTerm) when called with a termMonths-based
+ * count. DEPOSIT_INSTALMENT contract creation itself no longer goes through that path —
+ * its term is entered directly in weeks (1-24), and WEEKLY/DAILY frequency (no MONTHLY)
+ * maps it straight to an instalment count (termWeeks, or termWeeks * 7) — see
+ * contractService.ts's runDepositInstalmentTransaction.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { prisma } from '@/lib/db/prisma';
@@ -73,70 +74,51 @@ describe('Payment frequency: DAILY/WEEKLY/MONTHLY schedules', () => {
     return { customerId: customer.id, inventoryItemId: item.id };
   }
 
-  it('a WEEKLY-priced DEPOSIT_INSTALMENT contract creates 4x weekly instalments and is stored with paymentFrequency=WEEKLY', async () => {
+  it('a WEEKLY DEPOSIT_INSTALMENT contract creates one instalment per term week and is stored with paymentFrequency=WEEKLY', async () => {
     const productId = await makeProduct('DEP-WEEKLY');
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 3, paymentFrequency: 'WEEKLY', depositAmountMinor: 30000,
-        totalPayableMinor: 60000, instalmentAmountMinor: 2500, createdById: adminUserId,
-      },
-    });
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'A');
     const contract = await createContract({
-      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 3, paymentFrequency: 'WEEKLY',
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
+      totalPayableMinor: 60000, depositAmountMinor: 30000, termWeeks: 12, paymentFrequency: 'WEEKLY',
       branchId, createdById: adminUserId,
     });
     expect(contract.paymentFrequency).toBe('WEEKLY');
+    expect(contract.termWeeks).toBe(12);
 
     const instalments = await prisma.instalment.findMany({ where: { contractId: contract.id } });
-    expect(instalments).toHaveLength(12); // 3 months * 4 weeks
+    expect(instalments).toHaveLength(12);
   });
 
-  it('a distinct MONTHLY entry for the same product/type/term is unaffected by the WEEKLY one (frequency is part of the price chart key)', async () => {
+  it('the same termWeeks produces 7x as many instalments under DAILY as under WEEKLY', async () => {
     const productId = await makeProduct('DEP-BOTH');
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, paymentFrequency: 'DAILY', depositAmountMinor: 0,
-        totalPayableMinor: 40000, instalmentAmountMinor: 700, createdById: adminUserId,
-      },
-    });
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, paymentFrequency: 'MONTHLY', depositAmountMinor: 0,
-        totalPayableMinor: 40000, instalmentAmountMinor: 20000, createdById: adminUserId,
-      },
-    });
 
     const daily = await makeCustomerAndItem(productId, 'B');
     const dailyContract = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId: daily.customerId, inventoryItemId: daily.inventoryItemId,
-      termMonths: 2, paymentFrequency: 'DAILY', branchId, createdById: adminUserId,
+      totalPayableMinor: 40000, depositAmountMinor: 0, termWeeks: 2, paymentFrequency: 'DAILY',
+      branchId, createdById: adminUserId,
     });
     const dailyInstalments = await prisma.instalment.findMany({ where: { contractId: dailyContract.id } });
-    expect(dailyInstalments).toHaveLength(60); // 2 months * 30 days
+    expect(dailyInstalments).toHaveLength(14); // 2 weeks * 7
 
-    const monthly = await makeCustomerAndItem(productId, 'C');
-    const monthlyContract = await createContract({
-      contractType: 'DEPOSIT_INSTALMENT', customerId: monthly.customerId, inventoryItemId: monthly.inventoryItemId,
-      termMonths: 2, paymentFrequency: 'MONTHLY', branchId, createdById: adminUserId,
+    const weekly = await makeCustomerAndItem(productId, 'C');
+    const weeklyContract = await createContract({
+      contractType: 'DEPOSIT_INSTALMENT', customerId: weekly.customerId, inventoryItemId: weekly.inventoryItemId,
+      totalPayableMinor: 40000, depositAmountMinor: 0, termWeeks: 2, paymentFrequency: 'WEEKLY',
+      branchId, createdById: adminUserId,
     });
-    const monthlyInstalments = await prisma.instalment.findMany({ where: { contractId: monthlyContract.id } });
-    expect(monthlyInstalments).toHaveLength(2);
+    const weeklyInstalments = await prisma.instalment.findMany({ where: { contractId: weeklyContract.id } });
+    expect(weeklyInstalments).toHaveLength(2);
   });
 
-  it('creating a contract fails clearly when no price chart entry exists for the requested frequency', async () => {
-    const productId = await makeProduct('NO-ENTRY');
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 4, paymentFrequency: 'MONTHLY', depositAmountMinor: 0,
-        totalPayableMinor: 80000, instalmentAmountMinor: 20000, createdById: adminUserId,
-      },
-    });
+  it('creating a DEPOSIT_INSTALMENT contract fails clearly for a frequency other than DAILY/WEEKLY (no MONTHLY cadence for this type)', async () => {
+    const productId = await makeProduct('NO-MONTHLY');
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'D');
 
     await expect(createContract({
-      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 4, paymentFrequency: 'WEEKLY',
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
+      totalPayableMinor: 80000, depositAmountMinor: 0, termWeeks: 4, paymentFrequency: 'MONTHLY',
       branchId, createdById: adminUserId,
-    })).rejects.toThrow(/No active price chart entry/);
+    })).rejects.toThrow(/paymentFrequency must be one of/);
   });
 });

@@ -1,4 +1,5 @@
 import { prisma } from '../db/prisma';
+import { getDeviceLoanState } from './paymentService';
 
 /** Optional branch scoping (server-applied only, per RBAC — never client-trusted beyond what the caller already resolved). */
 type Scope = { branchId?: string };
@@ -121,14 +122,16 @@ export async function paymentsRegisterReport(scope: Scope, from?: string, to?: s
   return { range: { start, end }, payments };
 }
 
-// 5. Outstanding balances / portfolio. SAVE_TO_OWN is excluded — it's
-// open-ended savings with no target, so it has no balanceMinor to speak of
-// (see paymentService.recomputeContract) and isn't "outstanding" debt at all.
+// 5. Outstanding balances / portfolio. DEPOSIT_INSTALMENT only — SAVE_TO_OWN
+// is open-ended savings with no target, and DEVICE_LOAN is an open-ended
+// daily-interest loan with no fixed target either (both null balanceMinor,
+// see paymentService.recomputeContract) — DEVICE_LOAN's own outstanding
+// amount (principal + accrued interest) is covered by loanBookReport instead.
 export async function outstandingBalancesReport(scope: Scope) {
   const contracts = await prisma.contract.findMany({
     where: {
       status: { in: ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'] },
-      contractType: { not: 'SAVE_TO_OWN' },
+      contractType: 'DEPOSIT_INSTALMENT',
       ...(scope.branchId && { branchId: scope.branchId }),
     },
     include: { customer: true },
@@ -205,33 +208,30 @@ export async function devicesPendingReleaseReport(scope: Scope) {
 }
 
 // 10. Loan book report — Type C only.
+// DEVICE_LOAN has no instalment schedule at all under the daily-simple-interest
+// model (contractService.ts) — every figure here comes from
+// paymentService.getDeviceLoanState instead, the same ledger-derived view
+// postDeviceLoanPayment validates against.
 export async function loanBookReport(scope: Scope) {
   const contracts = await prisma.contract.findMany({
     where: { contractType: 'DEVICE_LOAN', ...(scope.branchId && { branchId: scope.branchId }) },
-    include: { instalments: true, customer: true },
+    include: { customer: true },
   });
 
-  const rows = contracts.map((c) => {
-    let interestEarned = 0;
-    let principalPaid = 0;
-    for (const inst of c.instalments) {
-      const paidInterest = Math.min(inst.amountPaidMinor, inst.interestPortionMinor);
-      interestEarned += paidInterest;
-      principalPaid += inst.amountPaidMinor - paidInterest;
-    }
-    const totalInterest = c.instalments.reduce((s, i) => s + i.interestPortionMinor, 0);
+  const rows = await Promise.all(contracts.map(async (c) => {
+    const state = await getDeviceLoanState(c.id);
     return {
       contractId: c.id, contractNumber: c.contractNumber, customerName: `${c.customer.firstName} ${c.customer.lastName}`,
-      status: c.status, principalMinor: c.principalMinor ?? 0,
+      status: c.status, principalMinor: state.principalMinor,
       // DEVICE_LOAN is ACTIVE (and cash disbursed) immediately at creation — activatedAt
       // is the disbursement timestamp, the one point this report tracks money leaving
       // the till rather than coming in (docs/01-plan.md §20).
       disbursedAt: c.activatedAt,
-      principalOutstandingMinor: (c.principalMinor ?? 0) - principalPaid,
-      interestEarnedMinor: interestEarned,
-      interestOutstandingMinor: totalInterest - interestEarned,
+      principalOutstandingMinor: state.principalOutstanding ? state.principalMinor : 0,
+      interestEarnedMinor: state.interestPaidMinor,
+      interestOutstandingMinor: state.accruedInterestMinor,
     };
-  });
+  }));
 
   return {
     rows,

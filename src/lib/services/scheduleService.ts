@@ -57,11 +57,13 @@ export function generateStraightLineSchedule(
   termMonths: number,
   startDate: Date,
   paymentFrequency: PaymentFrequencyName = 'MONTHLY',
-  // A negotiated instalment count that overrides the frequency-derived default
-  // below — the caller (contractService.ts) is responsible for authorizing it.
+  // The actual instalment count — DEPOSIT_INSTALMENT is priced directly in
+  // weeks now (contractService.ts), not looked up from termMonths, so this is
+  // always supplied and termMonths itself goes unused whenever it is (kept
+  // only so the signature stays uniform with generateLoanSchedule).
   instalmentCountOverride?: number,
 ): GeneratedInstalment[] {
-  if (termMonths < 1) throw new Error('termMonths must be at least 1');
+  if (instalmentCountOverride === undefined && termMonths < 1) throw new Error('termMonths must be at least 1');
   if (financeAmountMinor < 0) throw new Error('financeAmountMinor cannot be negative');
 
   const count = instalmentCountOverride ?? numberOfInstalmentsForTerm(termMonths, paymentFrequency);

@@ -8,15 +8,10 @@ import { makeRequest, makeParams } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
-import { GET as productsGET, POST as productsPOST } from '@/app/api/products/route';
+import { POST as productsPOST } from '@/app/api/products/route';
 import { GET as productGET, PATCH as productPATCH } from '@/app/api/products/[id]/route';
 import { POST as priceChartPOST } from '@/app/api/price-chart/route';
 import { POST as priceChartBundlePOST } from '@/app/api/price-chart/bundle/route';
-import { POST as customersPOST } from '@/app/api/customers/route';
-import { POST as inventoryPOST } from '@/app/api/inventory/route';
-import { POST as contractsPOST } from '@/app/api/contracts/route';
-import { GET as branchesGET } from '@/app/api/branches/route';
-
 const PASSWORD = 'Passw0rd!123';
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
 let counter = 0;
@@ -32,14 +27,10 @@ async function login(email: string): Promise<string> {
 
 describe('Price chart: legacy-matching pricing model', () => {
   let admin: string;
-  let cashier: string;
-  let branchId: string;
   let productId: string;
 
   beforeAll(async () => {
     admin = await login('admin@zple.test');
-    cashier = await login('cashier@zple.test');
-    branchId = (await (await branchesGET(makeRequest('GET', '/api/branches', { token: admin }))).json()).branches[0].id;
 
     const product = await productsPOST(makeRequest('POST', '/api/products', {
       token: admin, body: { sku: `PC-SKU-${runId}`, name: 'Price Chart Test Phone', cashPriceMinor: 200000 },
@@ -81,54 +72,18 @@ describe('Price chart: legacy-matching pricing model', () => {
     expect(body.error).toMatch(/less than totalPayableMinor/i);
   });
 
-  it('a contract snapshots the exact admin-entered absolute deposit amount, not a derived percentage', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 4, depositAmountMinor: 75000, totalPayableMinor: 200000 },
-    }));
-    expect(entry.status).toBe(201);
-
-    const customer = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Price', lastName: 'Chart', phone: uniquePhone() },
-    }));
-    const customerId = (await customer.json()).customer.id;
-    const item = await inventoryPOST(makeRequest('POST', '/api/inventory', {
-      token: admin, body: { productId, serialNumber: `IMEI-PC-${runId}`, branchId },
-    }));
-    const inventoryItemId = (await item.json()).item.id;
-
-    const contractRes = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 4 },
-    }));
-    expect(contractRes.status).toBe(201);
-    const contract = (await contractRes.json()).contract;
-    expect(contract.depositAmountMinor).toBe(75000); // exact figure admin typed, no percentage math involved
-  });
-
-  it('editing a price (resubmitting the same product/type/term/frequency) supersedes the old entry without touching contracts already snapshotted from it', async () => {
+  // The standalone Price Chart page/entries are legacy-only now — no contract
+  // type reads a PriceChartEntry at creation any more (contractService.ts).
+  // DEPOSIT_INSTALMENT's total/deposit/term are entered directly at contract
+  // creation instead — covered by tests/contracts-and-payments.test.ts and
+  // tests/payment-frequency.test.ts, not here.
+  it('editing a price (resubmitting the same product/type/term/frequency) supersedes the old entry — a Price Chart page mechanic, independent of contract creation', async () => {
     const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
       token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 3, depositAmountMinor: 50000, totalPayableMinor: 200000 },
     }));
     expect(entry.status).toBe(201);
     const original = (await entry.json()).entry;
 
-    const customer = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Reprice', lastName: 'Test', phone: uniquePhone() },
-    }));
-    const customerId = (await customer.json()).customer.id;
-    const item = await inventoryPOST(makeRequest('POST', '/api/inventory', {
-      token: admin, body: { productId, serialNumber: `IMEI-REPRICE-${runId}`, branchId },
-    }));
-    const inventoryItemId = (await item.json()).item.id;
-    const contractRes = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 3 },
-    }));
-    expect(contractRes.status).toBe(201);
-    const contract = (await contractRes.json()).contract;
-    expect(contract.totalPayableMinor).toBe(200000); // snapshotted from the original price
-
-    // "Editing" the price — the Edit action in the UI resubmits this same
-    // combo with new figures — versions out the original instead of
-    // overwriting it in place.
     const reprice = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
       token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 3, depositAmountMinor: 60000, totalPayableMinor: 240000 },
     }));
@@ -139,22 +94,6 @@ describe('Price chart: legacy-matching pricing model', () => {
 
     const supersededOriginal = await prisma.priceChartEntry.findUniqueOrThrow({ where: { id: original.id } });
     expect(supersededOriginal.effectiveTo).not.toBeNull();
-
-    // The contract created under the old price is completely unaffected —
-    // its own totalPayableMinor is a permanent snapshot, never re-read live.
-    const stillContract = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
-    expect(stillContract.totalPayableMinor).toBe(200000);
-
-    // A new contract now picks up the edited price.
-    const item2 = await inventoryPOST(makeRequest('POST', '/api/inventory', {
-      token: admin, body: { productId, serialNumber: `IMEI-REPRICE2-${runId}`, branchId },
-    }));
-    const inventoryItemId2 = (await item2.json()).item.id;
-    const contractRes2 = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId: inventoryItemId2, termMonths: 3 },
-    }));
-    expect(contractRes2.status).toBe(201);
-    expect((await contractRes2.json()).contract.totalPayableMinor).toBe(240000);
   });
 });
 
@@ -170,11 +109,10 @@ describe('Price chart: bundle creation across all contract types', () => {
     productId = (await product.json()).product.id;
   });
 
-  it('flags a freshly created product as missing pricing for both priceable contract types (SAVE_TO_OWN is never priced)', async () => {
-    const res = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
-    const { products } = await res.json();
-    const product = products.find((p: { id: string }) => p.id === productId);
-    expect(product.missingContractTypes.sort()).toEqual(['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'].sort());
+  it('a freshly created product has no price chart entries yet', async () => {
+    const res = await productGET(makeRequest('GET', `/api/products/${productId}`, { token: admin }), makeParams({ id: productId }));
+    const { product } = await res.json();
+    expect(product.priceChartEntries).toEqual([]);
   });
 
   it('creates entries for multiple contract types atomically in one request', async () => {
@@ -192,10 +130,9 @@ describe('Price chart: bundle creation across all contract types', () => {
     const body = await res.json();
     expect(Object.keys(body.entries).sort()).toEqual(['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'].sort());
 
-    const productRes = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
-    const { products } = await productRes.json();
-    const product = products.find((p: { id: string }) => p.id === productId);
-    expect(product.missingContractTypes).toEqual([]);
+    const productRes = await productGET(makeRequest('GET', `/api/products/${productId}`, { token: admin }), makeParams({ id: productId }));
+    const { product } = await productRes.json();
+    expect(product.priceChartEntries.map((e: { contractType: string }) => e.contractType).sort()).toEqual(['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'].sort());
   });
 
   it('rejects a bundle where every submitted type is already priced for that exact combo', async () => {
@@ -256,47 +193,24 @@ describe('Product creation: SKU auto-generation and the term-pricing shortcut', 
     expect(dupe.status).toBe(409);
   });
 
-  it('creates the product plus DEPOSIT_INSTALMENT pricing for whichever terms were filled in, skipping blank ones', async () => {
+  it('creates just the base-price product — a termPricing payload from an old client is silently ignored, not parsed into pricing tiers', async () => {
     const res = await productsPOST(makeRequest('POST', '/api/products', {
       token: admin,
       body: {
-        name: `Bundled Pricing Phone ${runId}`, cashPriceMinor: 250000,
-        termPricing: {
-          3: { totalPayableMinor: 280000, depositAmountMinor: 50000 },
-          // 4 deliberately left out — should be skipped, not defaulted
-          6: { totalPayableMinor: 320000, depositAmountMinor: 40000 },
-        },
+        name: `No Tier Pricing Phone ${runId}`, cashPriceMinor: 250000,
+        // Deal terms are entered per contract now, never at product creation
+        // (contractService.ts) — a stale client still sending this shape must
+        // not resurrect the old bundle-parsing behavior, even one shaped to
+        // fail the old validator (deposit == total would have been rejected).
+        termPricing: { 3: { totalPayableMinor: 100000, depositAmountMinor: 100000 } },
       },
     }));
     expect(res.status).toBe(201);
     const { product } = await res.json();
+    expect(product.cashPriceMinor).toBe(250000);
 
-    const entries = await prisma.priceChartEntry.findMany({ where: { productId: product.id }, orderBy: { termMonths: 'asc' } });
-    expect(entries.map((e) => e.termMonths)).toEqual([3, 6]);
-    expect(entries.every((e) => e.contractType === 'DEPOSIT_INSTALMENT')).toBe(true);
-    expect(entries.find((e) => e.termMonths === 3)?.depositAmountMinor).toBe(50000);
-
-    // Device Loan is untouched by this shortcut — still missing. (SAVE_TO_OWN
-    // is never priced at all, so it never appears in missingContractTypes.)
-    const productsRes = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
-    const { products } = await productsRes.json();
-    const listed = products.find((p: { id: string }) => p.id === product.id);
-    expect(listed.missingContractTypes).toEqual(['DEVICE_LOAN']);
-  });
-
-  it('rejects the whole creation if any filled-in period is invalid, without creating the product at all', async () => {
-    const name = `Should Not Exist Phone ${runId}`;
-    const res = await productsPOST(makeRequest('POST', '/api/products', {
-      token: admin,
-      body: {
-        name, cashPriceMinor: 250000,
-        termPricing: { 3: { totalPayableMinor: 100000, depositAmountMinor: 100000 } }, // deposit == total, invalid
-      },
-    }));
-    expect(res.status).toBe(400);
-
-    const existing = await prisma.product.findFirst({ where: { name } });
-    expect(existing).toBeNull();
+    const entries = await prisma.priceChartEntry.findMany({ where: { productId: product.id } });
+    expect(entries).toEqual([]);
   });
 });
 
@@ -305,32 +219,6 @@ describe('Product setup/edit can also close a Device Loan pricing gap', () => {
 
   beforeAll(async () => {
     admin = await login('admin@zple.test');
-  });
-
-  it('POST /api/products accepts a deviceLoanPricing bundle alongside termPricing', async () => {
-    const res = await productsPOST(makeRequest('POST', '/api/products', {
-      token: admin,
-      body: {
-        name: `Device Loan At Creation ${runId}`, cashPriceMinor: 250000,
-        termPricing: { 3: { totalPayableMinor: 280000, depositAmountMinor: 50000 } },
-        deviceLoanPricing: { 6: { totalPayableMinor: 320000, interestRateBps: 2400 } },
-      },
-    }));
-    expect(res.status).toBe(201);
-    const { product } = await res.json();
-
-    const entries = await prisma.priceChartEntry.findMany({ where: { productId: product.id }, orderBy: { termMonths: 'asc' } });
-    expect(entries.map((e) => `${e.contractType}:${e.termMonths}`).sort()).toEqual(['DEPOSIT_INSTALMENT:3', 'DEVICE_LOAN:6'].sort());
-    const loanEntry = entries.find((e) => e.contractType === 'DEVICE_LOAN');
-    expect(loanEntry?.interestRateBps).toBe(2400);
-    expect(loanEntry?.depositAmountMinor).toBe(0);
-
-    // Both priceable types are now covered — SAVE_TO_OWN never counts (it's
-    // never priced at all), so nothing is left missing.
-    const productsRes = await productsGET(makeRequest('GET', '/api/products', { token: admin }));
-    const { products } = await productsRes.json();
-    const listed = products.find((p: { id: string }) => p.id === product.id);
-    expect(listed.missingContractTypes).toEqual([]);
   });
 
   it('PATCH /api/products/[id] adds missing Deposit + Instalment pricing without touching existing entries', async () => {
@@ -360,13 +248,15 @@ describe('Product setup/edit can also close a Device Loan pricing gap', () => {
 
   it('a re-submitted PATCH does not version-out (overwrite) an already-priced Deposit + Instalment term', async () => {
     const created = await productsPOST(makeRequest('POST', '/api/products', {
-      token: admin,
-      body: {
-        name: `Skip Already Priced Deposit ${runId}`, cashPriceMinor: 250000,
-        termPricing: { 3: { totalPayableMinor: 280000, depositAmountMinor: 50000 } },
-      },
+      token: admin, body: { name: `Skip Already Priced Deposit ${runId}`, cashPriceMinor: 250000 },
     }));
     const productId = (await created.json()).product.id;
+    await productPATCH(
+      makeRequest('PATCH', `/api/products/${productId}`, {
+        token: admin, body: { termPricing: { 3: { totalPayableMinor: 280000, depositAmountMinor: 50000 } } },
+      }),
+      makeParams({ id: productId }),
+    );
     const original = await prisma.priceChartEntry.findFirstOrThrow({ where: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 3 } });
 
     // Resubmit the same 3-month term (already priced) plus a genuinely new 6-month term.
@@ -414,13 +304,15 @@ describe('Product setup/edit can also close a Device Loan pricing gap', () => {
 
   it('a re-submitted PATCH does not version-out (overwrite) an already-priced Device Loan term', async () => {
     const created = await productsPOST(makeRequest('POST', '/api/products', {
-      token: admin,
-      body: {
-        name: `Skip Already Priced ${runId}`, cashPriceMinor: 250000,
-        deviceLoanPricing: { 3: { totalPayableMinor: 300000, interestRateBps: 2000 } },
-      },
+      token: admin, body: { name: `Skip Already Priced ${runId}`, cashPriceMinor: 250000 },
     }));
     const productId = (await created.json()).product.id;
+    await productPATCH(
+      makeRequest('PATCH', `/api/products/${productId}`, {
+        token: admin, body: { deviceLoanPricing: { 3: { totalPayableMinor: 300000, interestRateBps: 2000 } } },
+      }),
+      makeParams({ id: productId }),
+    );
     const original = await prisma.priceChartEntry.findFirstOrThrow({ where: { productId, contractType: 'DEVICE_LOAN', termMonths: 3 } });
 
     // Resubmit the same 3-month term (already priced) plus a genuinely new 6-month term.

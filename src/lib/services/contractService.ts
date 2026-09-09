@@ -1,62 +1,52 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { generateContractNumber } from '../utils/idGenerators';
-import { getActivePriceChartEntry } from './priceChartService';
 import { applyStockMovement } from './inventoryService';
-import { generateStraightLineSchedule, generateLoanSchedule, derivePrincipalFromTotalPayable } from './scheduleService';
+import { generateStraightLineSchedule } from './scheduleService';
 import { queueSms, deliverQueuedSms } from './smsService';
 import { reverseAllPaymentsForContract } from './paymentService';
 import { initiatePreapproval, enableDirectDebit } from './hubtelPreapprovalService';
-import { CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, numberOfInstalmentsForTerm, type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName } from '../constants/contracts';
+import { getLoanSettings } from './loanSettingsService';
+import {
+  CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
+  DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
+  type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName,
+} from '../constants/contracts';
 
 export class ContractError extends Error {}
 
 export interface CreateContractParams {
   contractType: ContractTypeName;
   customerId: string;
-  // Required for DEPOSIT_INSTALMENT — a specific serialized unit is
-  // reserved/issued from this branch's stock. DEVICE_LOAN disburses cash for the
-  // customer to buy a device outside the store, so it has no unit to reserve —
-  // pass productId instead (docs/01-plan.md). Neither is accepted for
-  // SAVE_TO_OWN: it's open-ended savings with no linked product at all.
-  inventoryItemId?: string;
-  productId?: string;
-  // The reference tier used to look up a price chart entry (interestRateBps
-  // for DEVICE_LOAN, and the default total/deposit when those aren't
-  // themselves overridden below) — stays exactly what it always was. Not
-  // required for SAVE_TO_OWN, which has no price chart entry or term to speak of.
-  termMonths?: number;
-  paymentFrequency?: PaymentFrequencyName;
+  branchId: string;
+  createdById: string;
   startDate?: Date;
-  gracePeriodDays?: number;
-  penaltyRateBps?: number;
-  // A negotiated deal that differs from the standard price chart tier — the
-  // API route only ever forwards these for a SUPER_ADMIN/ADMIN caller
-  // (contracts/route.ts), never trusting a client-asserted role, so by the
-  // time they reach here they're already authorized; this layer just
-  // validates the values themselves are sane.
-  totalPayableMinorOverride?: number;
-  depositAmountMinorOverride?: number;
-  // The actual contract term, when it differs from the price chart tier used
-  // to source it above — e.g. a customer negotiates 5 months off a product
-  // only priced at 3/4/6. Decoupled from `termMonths` (the lookup key)
-  // rather than replacing it, since a price chart entry still has to exist
-  // for *some* term to source interestRateBps/base pricing from.
-  termMonthsOverride?: number;
-  // A negotiated instalment count that overrides the frequency-derived default
-  // (numberOfInstalmentsForTerm) — e.g. a customer negotiates 8 instalments
-  // instead of the 6 a monthly/6-month tier would otherwise produce. Doesn't
-  // change termMonths itself (still drives DEVICE_LOAN's interest calc), only
-  // how many instalments the finance amount (and interest, for a loan) is split
-  // across, and their per-instalment size.
-  instalmentCountOverride?: number;
   // DIRECT_DEBIT/BOTH require directDebitNetwork+directDebitMsisdn (validated below);
-  // CUSTOMER_INITIATED (the default) needs neither.
+  // CUSTOMER_INITIATED (the default) needs neither. Only DEPOSIT_INSTALMENT is
+  // eligible at all now — see DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.
   paymentMethod?: PaymentMethodName;
   directDebitNetwork?: string;
   directDebitMsisdn?: string;
-  branchId: string;
-  createdById: string;
+
+  // DEPOSIT_INSTALMENT only — a specific serialized unit is reserved from this
+  // branch's stock, and every deal term is entered directly here, never looked
+  // up from a price chart (no contract type reads PriceChartEntry anymore).
+  inventoryItemId?: string;
+  totalPayableMinor?: number;
+  depositAmountMinor?: number;
+  // The instalment period, in weeks (1-24) — WEEKLY frequency collects one
+  // instalment per week (instalment count == termWeeks); DAILY collects one
+  // per day across that same span (instalment count == termWeeks * 7).
+  termWeeks?: number;
+  paymentFrequency?: PaymentFrequencyName; // DAILY | WEEKLY only for this type
+  gracePeriodDays?: number;
+  penaltyRateBps?: number;
+
+  // DEVICE_LOAN only — not linked to a product at all. The loan amount is
+  // entered directly; the daily interest rate and the grace period before
+  // interest starts accruing come from LoanSettings, snapshotted onto the
+  // contract at creation (see runDeviceLoanTransaction).
+  loanAmountMinor?: number;
 }
 
 /**
@@ -97,7 +87,7 @@ export async function createContract(params: CreateContractParams) {
     params.paymentMethod ?? (params.directDebitNetwork && params.directDebitMsisdn ? 'DIRECT_DEBIT' : 'CUSTOMER_INITIATED');
   if (paymentMethod !== 'CUSTOMER_INITIATED') {
     if (!DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.includes(params.contractType)) {
-      throw new ContractError(`${params.contractType} contracts have no due schedule — direct debit isn't available for them`);
+      throw new ContractError(`${params.contractType} contracts have no due schedule to auto-charge — direct debit isn't available for them`);
     }
     if (!params.directDebitNetwork || !params.directDebitMsisdn) {
       throw new ContractError('directDebitNetwork and directDebitMsisdn are required for DIRECT_DEBIT/BOTH');
@@ -125,7 +115,7 @@ export async function createContract(params: CreateContractParams) {
     // customer deposits any amount, any time, until they withdraw or the
     // saved balance goes toward a purchase (handled entirely outside contract
     // creation — see postWithdrawal in paymentService.ts).
-    if (params.inventoryItemId || params.productId) {
+    if (params.inventoryItemId) {
       throw new ContractError('SAVE_TO_OWN accounts are not linked to a product');
     }
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -139,56 +129,56 @@ export async function createContract(params: CreateContractParams) {
     throw new ContractError('Could not create contract after multiple attempts, please retry');
   }
 
-  let item: { id: string; productId: string } | null = null;
-  let productId: string;
-
   if (params.contractType === 'DEVICE_LOAN') {
-    if (!params.productId) {
-      throw new ContractError('productId is required for a DEVICE_LOAN contract — cash is disbursed against a priced product, not a specific stock unit');
+    // Also not linked to a product — a daily-simple-interest loan, the amount
+    // entered directly. See runDeviceLoanTransaction/loanService.ts.
+    if (params.inventoryItemId) {
+      throw new ContractError('DEVICE_LOAN accounts are not linked to a product');
     }
-    const product = await prisma.product.findUnique({ where: { id: params.productId } });
-    if (!product) throw new ContractError('Product not found');
-    productId = product.id;
-  } else {
-    if (!params.inventoryItemId) throw new ContractError('inventoryItemId is required for this contract type');
-    const found = await prisma.inventoryItem.findUnique({ where: { id: params.inventoryItemId } });
-    if (!found) throw new ContractError('Inventory item not found');
-    if (found.status !== 'AVAILABLE') throw new ContractError(`Inventory item is not available (status: ${found.status})`);
-    if (found.branchId !== params.branchId) throw new ContractError('Inventory item does not belong to this branch');
-    item = found;
-    productId = found.productId;
+    if (params.loanAmountMinor === undefined || !Number.isInteger(params.loanAmountMinor) || params.loanAmountMinor <= 0) {
+      throw new ContractError('loanAmountMinor must be a positive integer');
+    }
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return await runDeviceLoanTransaction(params, startDate);
+      } catch (e) {
+        if (isContractNumberCollision(e) && attempt < MAX_ATTEMPTS) continue;
+        throw e;
+      }
+    }
+    throw new ContractError('Could not create contract after multiple attempts, please retry');
   }
 
-  if (params.termMonths === undefined) throw new ContractError('termMonths is required for this contract type');
-  const termMonths = params.termMonths;
-  const paymentFrequency = params.paymentFrequency ?? 'MONTHLY';
-  const chartEntry = await getActivePriceChartEntry(productId, params.contractType, termMonths, paymentFrequency);
-  if (!chartEntry) {
-    throw new ContractError(
-      `No active price chart entry for this product, ${params.contractType}, ${termMonths} months, ${paymentFrequency} — configure one first`,
-    );
-  }
+  // DEPOSIT_INSTALMENT — the one type still linked to a specific reserved unit.
+  if (!params.inventoryItemId) throw new ContractError('inventoryItemId is required for this contract type');
+  const item = await prisma.inventoryItem.findUnique({ where: { id: params.inventoryItemId } });
+  if (!item) throw new ContractError('Inventory item not found');
+  if (item.status !== 'AVAILABLE') throw new ContractError(`Inventory item is not available (status: ${item.status})`);
+  if (item.branchId !== params.branchId) throw new ContractError('Inventory item does not belong to this branch');
 
-  if (params.totalPayableMinorOverride !== undefined && (!Number.isInteger(params.totalPayableMinorOverride) || params.totalPayableMinorOverride <= 0)) {
-    throw new ContractError('totalPayableMinorOverride must be a positive integer');
+  if (params.totalPayableMinor === undefined || !Number.isInteger(params.totalPayableMinor) || params.totalPayableMinor <= 0) {
+    throw new ContractError('totalPayableMinor must be a positive integer');
   }
-  if (params.depositAmountMinorOverride !== undefined && (!Number.isInteger(params.depositAmountMinorOverride) || params.depositAmountMinorOverride < 0)) {
-    throw new ContractError('depositAmountMinorOverride must be a non-negative integer');
+  if (params.depositAmountMinor === undefined || !Number.isInteger(params.depositAmountMinor) || params.depositAmountMinor < 0) {
+    throw new ContractError('depositAmountMinor must be a non-negative integer');
   }
-  const effectiveTotalPayableMinor = params.totalPayableMinorOverride ?? chartEntry.totalPayableMinor;
-  if (params.depositAmountMinorOverride !== undefined && params.depositAmountMinorOverride >= effectiveTotalPayableMinor) {
-    throw new ContractError('depositAmountMinorOverride must be less than the total payable amount');
+  if (params.depositAmountMinor >= params.totalPayableMinor) {
+    throw new ContractError('depositAmountMinor must be less than totalPayableMinor — there has to be something left to finance');
   }
-  if (params.termMonthsOverride !== undefined && (!Number.isInteger(params.termMonthsOverride) || params.termMonthsOverride <= 0)) {
-    throw new ContractError('termMonthsOverride must be a positive integer');
+  if (
+    params.termWeeks === undefined || !Number.isInteger(params.termWeeks) ||
+    params.termWeeks < DEPOSIT_INSTALMENT_MIN_TERM_WEEKS || params.termWeeks > DEPOSIT_INSTALMENT_MAX_TERM_WEEKS
+  ) {
+    throw new ContractError(`termWeeks must be an integer between ${DEPOSIT_INSTALMENT_MIN_TERM_WEEKS} and ${DEPOSIT_INSTALMENT_MAX_TERM_WEEKS}`);
   }
-  if (params.instalmentCountOverride !== undefined && (!Number.isInteger(params.instalmentCountOverride) || params.instalmentCountOverride <= 0)) {
-    throw new ContractError('instalmentCountOverride must be a positive integer');
+  const frequency = params.paymentFrequency ?? 'WEEKLY';
+  if (!(DEPOSIT_INSTALMENT_FREQUENCIES as readonly string[]).includes(frequency)) {
+    throw new ContractError(`paymentFrequency must be one of: ${DEPOSIT_INSTALMENT_FREQUENCIES.join(', ')}`);
   }
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      return await runContractTransaction(params, item, productId, termMonths, chartEntry, startDate, paymentMethod);
+      return await runDepositInstalmentTransaction(params, item, startDate, paymentMethod);
     } catch (e) {
       if (isContractNumberCollision(e) && attempt < MAX_ATTEMPTS) continue;
       throw e;
@@ -198,10 +188,10 @@ export async function createContract(params: CreateContractParams) {
 }
 
 /**
- * SAVE_TO_OWN's own creation path, entirely separate from runContractTransaction:
- * no product/inventory item, no price chart entry, no term, no schedule, no
- * stock movement. Just an ACTIVE savings account the customer deposits into
- * (postPayment) and can withdraw from (postWithdrawal) — see paymentService.ts.
+ * SAVE_TO_OWN's own creation path: no product/inventory item, no price chart
+ * entry, no term, no schedule, no stock movement. Just an ACTIVE savings
+ * account the customer deposits into (postPayment) and can withdraw from
+ * (postWithdrawal) — see paymentService.ts.
  */
 async function runSaveToOwnTransaction(params: CreateContractParams, startDate: Date) {
   const contractNumber = await generateContractNumber();
@@ -229,114 +219,105 @@ async function runSaveToOwnTransaction(params: CreateContractParams, startDate: 
   });
 }
 
-/** Only ever called for DEPOSIT_INSTALMENT/DEVICE_LOAN — SAVE_TO_OWN has its
- *  own creation path (runSaveToOwnTransaction) with no chart entry to speak of. */
-async function runContractTransaction(
-  params: CreateContractParams,
-  item: { id: string; productId: string } | null,
-  productId: string,
-  termMonths: number,
-  chartEntry: NonNullable<Awaited<ReturnType<typeof getActivePriceChartEntry>>>,
-  startDate: Date,
-  paymentMethod: PaymentMethodName,
-) {
+/**
+ * DEVICE_LOAN's own creation path: no product/inventory item, no schedule —
+ * a daily-simple-interest loan (loanService.accrueDailyLoanInterest charges
+ * 1%/weekday against principalMinor until it's paid off; see
+ * paymentService.postDeviceLoanPayment for how it's repaid). interestRateBps
+ * and gracePeriodDays are snapshotted from the current LoanSettings — later
+ * changes to those global settings never reprice a loan already created.
+ */
+async function runDeviceLoanTransaction(params: CreateContractParams, startDate: Date) {
   const contractNumber = await generateContractNumber();
-  // The real contract term — everything about the SCHEDULE (its length,
-  // per-instalment amounts, DEVICE_LOAN's principal) uses this, never
-  // termMonths directly, which stays purely a price-chart lookup key.
-  const effectiveTermMonths = params.termMonthsOverride ?? termMonths;
+  const loanAmountMinor = params.loanAmountMinor as number;
 
   return prisma.$transaction(async (tx) => {
-    let status: string;
-    let depositAmountMinor = 0;
-    let principalMinor: number | null = null;
-    let interestRateBps: number | null = null;
-    // A negotiated deal overrides the price chart's own figures (validated in
-    // createContract, and only ever forwarded by contracts/route.ts for a
-    // SUPER_ADMIN/ADMIN caller) — every downstream calculation (schedule,
-    // principal derivation, the contract's own stored totals) reads from
-    // these two local variables, never chartEntry directly, so an override
-    // cascades correctly with no separate branch per figure.
-    const totalPayableMinor = params.totalPayableMinorOverride ?? chartEntry.totalPayableMinor;
-    let scheduleFinanceAmount: number;
-    // Only ever STRAIGHT_LINE/LOAN here — SAVE_TO_OWN (the one 'NONE'/no-schedule
-    // case) never reaches this function at all (see runSaveToOwnTransaction above).
-    let scheduleKind: 'STRAIGHT_LINE' | 'LOAN';
-
-    switch (params.contractType) {
-      case 'SAVE_TO_OWN':
-        // Defensive only — createContract routes SAVE_TO_OWN to
-        // runSaveToOwnTransaction instead, which never calls this function.
-        throw new ContractError('SAVE_TO_OWN contracts are created via runSaveToOwnTransaction, not this path');
-
-      case 'DEPOSIT_INSTALMENT':
-        status = 'PENDING_DEPOSIT';
-        depositAmountMinor = params.depositAmountMinorOverride ?? chartEntry.depositAmountMinor;
-        scheduleFinanceAmount = totalPayableMinor - depositAmountMinor;
-        scheduleKind = 'STRAIGHT_LINE';
-        break;
-
-      case 'DEVICE_LOAN':
-        status = 'ACTIVE'; // cash disbursed unconditionally, no down-payment gate (docs/01-plan.md §5) — no device/unit involved at all (§20)
-        interestRateBps = chartEntry.interestRateBps;
-        if (interestRateBps === null) throw new ContractError('Price chart entry is missing interestRateBps for a DEVICE_LOAN');
-        principalMinor = derivePrincipalFromTotalPayable(totalPayableMinor, interestRateBps, effectiveTermMonths);
-        scheduleFinanceAmount = principalMinor; // unused directly — loan schedule uses principal+rate below
-        scheduleKind = 'LOAN';
-        break;
-    }
-
-    const directDebitEligible = DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.includes(params.contractType);
-
-    // Recomputed from the effective (possibly overridden) total/deposit, same
-    // formula createPriceChartEntryInTx uses for the price chart's own figure
-    // (priceChartService.ts) — chartEntry.instalmentAmountMinor is only correct
-    // when nothing was overridden; recomputing unconditionally means this is
-    // never stale, at the cost of a no-op recompute in the common case.
-    // A negotiated instalment count overrides the frequency-derived default —
-    // termMonths (effectiveTermMonths) still drives DEVICE_LOAN's interest calc
-    // below regardless, only how many instalments the amount is split across changes.
-    const instalmentCount = params.instalmentCountOverride
-      ?? numberOfInstalmentsForTerm(effectiveTermMonths, chartEntry.paymentFrequency as PaymentFrequencyName);
-    const instalmentAmountMinor = Math.ceil((totalPayableMinor - depositAmountMinor) / instalmentCount);
+    const loanSettings = await getLoanSettings(tx);
 
     const contract = await tx.contract.create({
       data: {
         contractNumber,
-        contractType: params.contractType,
+        contractType: 'DEVICE_LOAN',
         customerId: params.customerId,
-        productId,
-        inventoryItemId: item?.id ?? null,
         branchId: params.branchId,
-        priceChartEntryId: chartEntry.id,
-        totalPriceMinor: totalPayableMinor,
-        depositAmountMinor,
-        termMonths: effectiveTermMonths,
-        paymentFrequency: chartEntry.paymentFrequency,
-        instalmentAmountMinor,
-        principalMinor,
-        interestRateBps,
-        rateBasis: params.contractType === 'DEVICE_LOAN' ? 'FLAT' : null,
-        gracePeriodDays: params.gracePeriodDays ?? 7,
-        penaltyRateBps: params.penaltyRateBps ?? 0,
-        pendingDirectDebitNetwork: directDebitEligible ? (params.directDebitNetwork ?? null) : null,
-        pendingDirectDebitMsisdn: directDebitEligible ? (params.directDebitMsisdn ?? null) : null,
-        paymentMethod: directDebitEligible ? paymentMethod : 'CUSTOMER_INITIATED',
-        status,
-        totalPayableMinor,
+        principalMinor: loanAmountMinor,
+        interestRateBps: loanSettings.dailyInterestRateBps,
+        rateBasis: 'DAILY_SIMPLE',
+        gracePeriodDays: loanSettings.interestGraceDays,
+        paymentMethod: 'CUSTOMER_INITIATED', // never direct-debit eligible — no single "amount due" to auto-charge
+        status: 'ACTIVE', // cash disbursed unconditionally, no down-payment gate (docs/01-plan.md §5)
         totalPaidMinor: 0,
-        balanceMinor: totalPayableMinor,
         startDate,
-        activatedAt: status === 'ACTIVE' ? new Date() : null,
+        activatedAt: new Date(),
         createdById: params.createdById,
       },
     });
 
-    const scheduleFrequency = chartEntry.paymentFrequency as PaymentFrequencyName;
-    const schedule = scheduleKind === 'LOAN'
-      ? generateLoanSchedule(principalMinor as number, interestRateBps as number, effectiveTermMonths, startDate, scheduleFrequency, instalmentCount)
-      : generateStraightLineSchedule(scheduleFinanceAmount, effectiveTermMonths, startDate, scheduleFrequency, instalmentCount);
+    const sms = await queueSms({ contractId: contract.id, templateKey: 'contract.activated', tx });
+    return { contract, queuedSmsId: sms?.id ?? null };
+  }).then(async ({ contract, queuedSmsId }) => {
+    if (queuedSmsId) void deliverQueuedSms(queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
+    return contract;
+  });
+}
 
+/**
+ * DEPOSIT_INSTALMENT's own creation path — the one type still linked to a
+ * reserved stock unit, still on a fixed schedule with a real target
+ * (totalPayableMinor/balanceMinor). Every deal term (total price, deposit,
+ * term in weeks, frequency) is entered directly here now, never looked up
+ * from a price chart.
+ */
+async function runDepositInstalmentTransaction(
+  params: CreateContractParams,
+  item: { id: string; productId: string },
+  startDate: Date,
+  paymentMethod: PaymentMethodName,
+) {
+  const contractNumber = await generateContractNumber();
+  const totalPayableMinor = params.totalPayableMinor as number;
+  const depositAmountMinor = params.depositAmountMinor as number;
+  const termWeeks = params.termWeeks as number;
+  const frequency = (params.paymentFrequency ?? 'WEEKLY') as PaymentFrequencyName;
+  const financeAmountMinor = totalPayableMinor - depositAmountMinor;
+  // WEEKLY collects one instalment per week (count == termWeeks); DAILY
+  // collects one per day across that same span (count == termWeeks * 7).
+  const instalmentCount = frequency === 'DAILY' ? termWeeks * 7 : termWeeks;
+  const instalmentAmountMinor = Math.ceil(financeAmountMinor / instalmentCount);
+
+  return prisma.$transaction(async (tx) => {
+    const contract = await tx.contract.create({
+      data: {
+        contractNumber,
+        contractType: 'DEPOSIT_INSTALMENT',
+        customerId: params.customerId,
+        productId: item.productId,
+        inventoryItemId: item.id,
+        branchId: params.branchId,
+        totalPriceMinor: totalPayableMinor,
+        depositAmountMinor,
+        termWeeks,
+        paymentFrequency: frequency,
+        instalmentAmountMinor,
+        gracePeriodDays: params.gracePeriodDays ?? 7,
+        penaltyRateBps: params.penaltyRateBps ?? 0,
+        pendingDirectDebitNetwork: params.directDebitNetwork ?? null,
+        pendingDirectDebitMsisdn: params.directDebitMsisdn ?? null,
+        paymentMethod,
+        status: 'PENDING_DEPOSIT',
+        totalPayableMinor,
+        totalPaidMinor: 0,
+        balanceMinor: totalPayableMinor,
+        startDate,
+        activatedAt: null,
+        createdById: params.createdById,
+      },
+    });
+
+    // termMonths passed here is irrelevant — instalmentCount is always
+    // explicit for this weeks-based term (scheduleService.ts's guard is
+    // relaxed accordingly whenever an explicit count is given).
+    const schedule = generateStraightLineSchedule(financeAmountMinor, 1, startDate, frequency, instalmentCount);
     await tx.instalment.createMany({
       data: schedule.map((s) => ({
         contractId: contract.id,
@@ -348,40 +329,28 @@ async function runContractTransaction(
       })),
     });
 
-    // DEPOSIT_INSTALMENT reserves the unit until the deposit clears (see
-    // paymentService.advanceContractStatus). DEVICE_LOAN has no `item` at all —
-    // it disburses cash for the customer to buy a device outside the store, so
-    // there's no stock unit to touch (§20).
-    if (item) {
-      await applyStockMovement({
-        inventoryItemId: item.id,
-        type: 'RESERVE',
-        referenceType: 'CONTRACT',
-        referenceId: contract.id,
-        reason: `Contract ${contractNumber} created`,
-        createdById: params.createdById,
-        tx,
-      });
-    }
+    // Reserved until the deposit clears (see paymentService.advanceContractStatus).
+    await applyStockMovement({
+      inventoryItemId: item.id,
+      type: 'RESERVE',
+      referenceType: 'CONTRACT',
+      referenceId: contract.id,
+      reason: `Contract ${contractNumber} created`,
+      createdById: params.createdById,
+      tx,
+    });
 
-    let queuedSmsId: string | null = null;
-    if (status === 'ACTIVE') {
-      const sms = await queueSms({ contractId: contract.id, templateKey: 'contract.activated', tx });
-      queuedSmsId = sms?.id ?? null;
-    }
-
-    return { contract, queuedSmsId };
+    return { contract, queuedSmsId: null as string | null }; // PENDING_DEPOSIT — no activation SMS yet
   }).then(async ({ contract, queuedSmsId }) => {
     if (queuedSmsId) void deliverQueuedSms(queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
-    // Tried right away, at creation — DEVICE_LOAN is ACTIVE immediately; a
-    // DEPOSIT_INSTALMENT contract is still PENDING_DEPOSIT here but
-    // enableDirectDebit now accepts that status too (hubtelPreapprovalService.ts),
-    // specifically so the customer gets the USSD/OTP mandate prompt while
-    // still at the counter, not only after the deposit clears (which may be a
-    // separate visit). If this fails or was never requested, postPayment's
-    // own pendingDirectDebit fallback (paymentService.advanceContractStatus)
-    // still catches it the moment the deposit clears and activates the
-    // contract, unchanged.
+    // Tried right away, at creation, even though the contract is still
+    // PENDING_DEPOSIT here — enableDirectDebit accepts that status too
+    // (hubtelPreapprovalService.ts), specifically so the customer gets the
+    // USSD/OTP mandate prompt while still at the counter, not only after the
+    // deposit clears (which may be a separate visit). If this fails or was
+    // never requested, postPayment's own pendingDirectDebit fallback
+    // (paymentService.advanceContractStatus) still catches it the moment the
+    // deposit clears and activates the contract, unchanged.
     if (contract.pendingDirectDebitNetwork && contract.pendingDirectDebitMsisdn) {
       const updated = await initiateDirectDebitIfRequested({
         contractId: contract.id, customerId: contract.customerId,

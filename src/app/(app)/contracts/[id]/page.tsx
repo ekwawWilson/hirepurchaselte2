@@ -20,11 +20,18 @@ import {
 interface Instalment { id: string; instalmentNo: number; dueDate: string; amountDueMinor: number; principalPortionMinor: number; interestPortionMinor: number; amountPaidMinor: number; status: string; daysPastDue?: number }
 interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; notes: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
 interface Preapproval { id: string; status: string; network: string; customerMsisdn: string; verificationType: string | null }
+interface DeviceLoanState {
+  principalMinor: number; principalOutstanding: boolean;
+  accruedInterestMinor: number; interestPaidMinor: number; totalOwedMinor: number;
+}
 interface ContractDetail {
   id: string; contractNumber: string; contractType: string; status: string; paymentFrequency: string;
-  // Null for SAVE_TO_OWN — open-ended savings has no target/product (contractService.ts).
+  // Null for SAVE_TO_OWN/DEVICE_LOAN — neither has a fixed target/product (contractService.ts).
   totalPayableMinor: number | null; totalPaidMinor: number; balanceMinor: number | null; creditMinor: number;
   depositAmountMinor: number; principalMinor: number | null; interestRateBps: number | null;
+  // Only populated for DEVICE_LOAN — derived from Penalty/PaymentAllocation rows,
+  // never stored directly (paymentService.ts's getDeviceLoanState).
+  deviceLoanState: DeviceLoanState | null;
   customer: { firstName: string; lastName: string; phone: string | null; phone2: string | null; phone3: string | null };
   product: { name: string } | null;
   instalments: Instalment[];
@@ -34,7 +41,9 @@ interface ContractDetail {
   paymentMethod: string;
 }
 
-const DIRECT_DEBIT_ELIGIBLE_TYPES = ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
+// DEVICE_LOAN's self-directed two-option payment model has no "auto-charge the
+// due amount" equivalent, so it's no longer direct-debit eligible (constants/contracts.ts).
+const DIRECT_DEBIT_ELIGIBLE_TYPES = ['DEPOSIT_INSTALMENT'];
 const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'];
 
 export default function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -50,6 +59,8 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawNotes, setWithdrawNotes] = useState('');
   const [withdrawing, setWithdrawing] = useState(false);
+
+  const [loanPaying, setLoanPaying] = useState<'INTEREST' | 'PRINCIPAL' | null>(null);
 
   const [reverseTarget, setReverseTarget] = useState<Payment | null>(null);
   const [reverseReason, setReverseReason] = useState('');
@@ -117,6 +128,19 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to record withdrawal', variant: 'destructive' });
     } finally {
       setWithdrawing(false);
+    }
+  }
+
+  async function payLoan(option: 'INTEREST' | 'PRINCIPAL', amountMinor: number) {
+    setLoanPaying(option);
+    try {
+      await api.post('/payments/device-loan', { contractId: id, amountMinor, option });
+      toast({ title: option === 'INTEREST' ? 'Interest paid' : 'Loan amount paid', description: formatCurrency(amountMinor) });
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to record payment', variant: 'destructive' });
+    } finally {
+      setLoanPaying(null);
     }
   }
 
@@ -236,6 +260,13 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total saved</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPaidMinor)}</p></CardContent></Card>
         </div>
+      ) : contract.contractType === 'DEVICE_LOAN' ? (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Loan amount</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.deviceLoanState?.principalMinor ?? contract.principalMinor ?? 0)}</p></CardContent></Card>
+          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Principal</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{contract.deviceLoanState?.principalOutstanding ? 'Outstanding' : 'Paid'}</p></CardContent></Card>
+          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Interest owed</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.deviceLoanState?.accruedInterestMinor ?? 0)}</p></CardContent></Card>
+          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total owed</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.deviceLoanState?.totalOwedMinor ?? 0)}</p></CardContent></Card>
+        </div>
       ) : (
         <div className="grid grid-cols-3 gap-4">
           <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total payable</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPayableMinor ?? 0)}</p></CardContent></Card>
@@ -250,7 +281,29 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </div>
       )}
 
-      {canPay && !terminal && (
+      {canPay && !terminal && contract.contractType === 'DEVICE_LOAN' && (
+        <Card>
+          <CardHeader><CardTitle>Record a payment</CardTitle></CardHeader>
+          <CardContent className="flex flex-wrap gap-3">
+            <Button
+              onClick={() => contract.deviceLoanState && payLoan('INTEREST', contract.deviceLoanState.accruedInterestMinor)}
+              disabled={!contract.deviceLoanState || contract.deviceLoanState.accruedInterestMinor <= 0 || loanPaying !== null}
+            >
+              {loanPaying === 'INTEREST' ? 'Paying...' : `Pay interest (${formatCurrency(contract.deviceLoanState?.accruedInterestMinor ?? 0)})`}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => contract.deviceLoanState && payLoan('PRINCIPAL', contract.deviceLoanState.principalMinor)}
+              disabled={!contract.deviceLoanState || !contract.deviceLoanState.principalOutstanding || loanPaying !== null}
+            >
+              {loanPaying === 'PRINCIPAL' ? 'Paying...' : `Pay full loan amount (${formatCurrency(contract.deviceLoanState?.principalMinor ?? 0)})`}
+            </Button>
+            <p className="text-xs text-gray-400 w-full">Paying the full loan amount clears the principal only — any interest already accrued at that point is still owed separately.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {canPay && !terminal && contract.contractType !== 'DEVICE_LOAN' && (
         <Card>
           <CardHeader><CardTitle>Record a cash payment</CardTitle></CardHeader>
           <CardContent>
@@ -411,6 +464,16 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
             )}
           </CardContent>
         </Card>
+      ) : contract.contractType === 'DEVICE_LOAN' ? (
+        <Card>
+          <CardHeader><CardTitle>Daily interest</CardTitle></CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-500">
+              No fixed instalment schedule — 1% of the loan amount accrues each weekday (after the grace period) until
+              the customer pays it off, either as accrued interest or the full loan amount at once.
+            </p>
+          </CardContent>
+        </Card>
       ) : (
       <Card>
         <CardHeader><CardTitle>Instalment schedule</CardTitle></CardHeader>
@@ -419,7 +482,6 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
             <TableHeader>
               <TableRow>
                 <TableHead>#</TableHead><TableHead>Due date</TableHead><TableHead>Amount due</TableHead>
-                {contract.contractType === 'DEVICE_LOAN' && <><TableHead>Interest</TableHead><TableHead>Principal</TableHead></>}
                 <TableHead>Paid</TableHead><TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -429,12 +491,6 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   <TableCell>{i.instalmentNo}</TableCell>
                   <TableCell>{formatDate(i.dueDate)}</TableCell>
                   <TableCell>{formatCurrency(i.amountDueMinor)}</TableCell>
-                  {contract.contractType === 'DEVICE_LOAN' && (
-                    <>
-                      <TableCell>{formatCurrency(i.interestPortionMinor)}</TableCell>
-                      <TableCell>{formatCurrency(i.principalPortionMinor)}</TableCell>
-                    </>
-                  )}
                   <TableCell>{formatCurrency(i.amountPaidMinor)}</TableCell>
                   <TableCell>
                     <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${getStatusColor(i.status)}`}>{i.status}</span>

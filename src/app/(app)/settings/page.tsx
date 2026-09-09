@@ -22,6 +22,20 @@ export default function SettingsPage() {
   const [form, setForm] = useState({ companyName: '', address: '', phone: '', email: '', logoUrl: '' });
   const [saving, setSaving] = useState(false);
 
+  const [loanForm, setLoanForm] = useState({ dailyInterestPercent: '1', interestGraceDays: '0' });
+  const [loanSaving, setLoanSaving] = useState(false);
+
+  useEffect(() => {
+    if (!canManage) return;
+    api.get<{ settings: { dailyInterestRateBps: number; interestGraceDays: number } }>('/settings/loan-terms')
+      .then((r) => setLoanForm({
+        dailyInterestPercent: (r.settings.dailyInterestRateBps / 100).toString(),
+        interestGraceDays: r.settings.interestGraceDays.toString(),
+      }))
+      .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load loan terms', variant: 'destructive' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManage]);
+
   useEffect(() => {
     setForm({
       companyName: settings.companyName,
@@ -43,6 +57,21 @@ export default function SettingsPage() {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save settings', variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function onSaveLoanTerms(e: React.FormEvent) {
+    e.preventDefault();
+    setLoanSaving(true);
+    try {
+      const dailyInterestRateBps = Math.round(parseFloat(loanForm.dailyInterestPercent) * 100);
+      const interestGraceDays = parseInt(loanForm.interestGraceDays, 10);
+      await api.patch('/settings/loan-terms', { dailyInterestRateBps, interestGraceDays });
+      toast({ title: 'Loan payment terms saved', description: 'Applies to device loans created from now on — existing loans keep the rate they were disbursed at.' });
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save loan terms', variant: 'destructive' });
+    } finally {
+      setLoanSaving(false);
     }
   }
 
@@ -131,6 +160,35 @@ export default function SettingsPage() {
             </div>
           </div>
           <p className="text-xs text-gray-400 mt-3">This is how the navbar will look. The browser tab title and report headers update the same way.</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Loan payment terms</CardTitle></CardHeader>
+        <CardContent>
+          <form className="grid grid-cols-2 gap-4" onSubmit={onSaveLoanTerms}>
+            <div>
+              <Label>Daily interest rate (%)</Label>
+              <Input
+                required type="number" step="0.01" min="0.01" className="mt-1.5"
+                value={loanForm.dailyInterestPercent}
+                onChange={(e) => setLoanForm({ ...loanForm, dailyInterestPercent: e.target.value })}
+              />
+              <p className="text-xs text-gray-400 mt-1">Flat percentage of the original loan amount, charged each weekday the loan is unpaid.</p>
+            </div>
+            <div>
+              <Label>Grace period (days)</Label>
+              <Input
+                required type="number" step="1" min="0" className="mt-1.5"
+                value={loanForm.interestGraceDays}
+                onChange={(e) => setLoanForm({ ...loanForm, interestGraceDays: e.target.value })}
+              />
+              <p className="text-xs text-gray-400 mt-1">Days after the loan date before interest starts accruing.</p>
+            </div>
+            <div className="col-span-2">
+              <Button type="submit" disabled={loanSaving}>{loanSaving ? 'Saving...' : 'Save loan terms'}</Button>
+            </div>
+          </form>
         </CardContent>
       </Card>
 

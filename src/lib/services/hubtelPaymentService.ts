@@ -1,6 +1,6 @@
 import { prisma } from '../db/prisma';
 import { generateTransactionRef } from '../utils/idGenerators';
-import { postPayment } from './paymentService';
+import { postPayment, postDeviceLoanPayment, getDeviceLoanState } from './paymentService';
 import { appendWebhookToken } from '../auth/webhookSecurity';
 import { isHubtelLiveMode, callHubtelReceiveMoney, resolveHubtelStatus, HubtelApiError } from './hubtelClient';
 
@@ -106,24 +106,56 @@ export async function processHubtelCallback(params: {
 
   if (params.status === 'SUCCESS') {
     const contract = await prisma.contract.findUniqueOrThrow({ where: { id: txn.contractId } });
-    const entryType = contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT'
-      ? 'DEPOSIT'
-      : 'INSTALMENT_PAYMENT';
+    const initiatedByCustomerId = (await prisma.customer.findFirst({
+      where: { OR: [{ phone: txn.msisdn }, { phone2: txn.msisdn }, { phone3: txn.msisdn }] },
+    }))?.id;
 
-    const result = await postPayment({
-      contractId: txn.contractId,
-      amountMinor: txn.amountMinor,
-      entryType,
-      channel: 'USSD',
-      transactionRef: txn.clientReference,
-      externalRef: txn.clientReference,
-      rawGatewayPayload: params.rawPayload,
-      initiatedByCustomerId: (await prisma.customer.findFirst({
-        where: { OR: [{ phone: txn.msisdn }, { phone2: txn.msisdn }, { phone3: txn.msisdn }] },
-      }))?.id,
-    });
+    if (contract.contractType === 'DEVICE_LOAN') {
+      // DEVICE_LOAN has no free-form entryType — the USSD prompt only ever
+      // offers two exact amounts (ussdService.ts), so the charged amount
+      // itself identifies which one was chosen.
+      const state = await getDeviceLoanState(contract.id);
+      const option: 'PRINCIPAL' | 'INTEREST' | null =
+        state.principalOutstanding && txn.amountMinor === state.principalMinor ? 'PRINCIPAL'
+          : state.accruedInterestMinor > 0 && txn.amountMinor === state.accruedInterestMinor ? 'INTEREST'
+            : null;
+      if (!option) {
+        // The amount owed shifted between the customer confirming it and
+        // Hubtel actually charging it (e.g. a day's interest accrued in
+        // between) — fail loudly rather than silently misrecord a real charge.
+        throw new HubtelError(
+          `Hubtel charged GHS${(txn.amountMinor / 100).toFixed(2)} for a DEVICE_LOAN payment that no longer matches ` +
+          `either the accrued interest or the full loan amount — refusing to record it automatically`,
+        );
+      }
+      const result = await postDeviceLoanPayment({
+        contractId: txn.contractId,
+        option,
+        amountMinor: txn.amountMinor,
+        channel: 'USSD',
+        transactionRef: txn.clientReference,
+        rawGatewayPayload: params.rawPayload,
+        initiatedByCustomerId,
+      });
+      await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { paymentId: result.payment.id } });
+    } else {
+      const entryType = contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT'
+        ? 'DEPOSIT'
+        : 'INSTALMENT_PAYMENT';
 
-    await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { paymentId: result.payment.id } });
+      const result = await postPayment({
+        contractId: txn.contractId,
+        amountMinor: txn.amountMinor,
+        entryType,
+        channel: 'USSD',
+        transactionRef: txn.clientReference,
+        externalRef: txn.clientReference,
+        rawGatewayPayload: params.rawPayload,
+        initiatedByCustomerId,
+      });
+
+      await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { paymentId: result.payment.id } });
+    }
   }
 
   return prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: txn.id } });

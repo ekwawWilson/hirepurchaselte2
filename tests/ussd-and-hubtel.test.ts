@@ -3,7 +3,6 @@ import { makeRequest } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
-import { POST as productsPOST } from '@/app/api/products/route';
 import { POST as customersPOST } from '@/app/api/customers/route';
 import { POST as contractsPOST } from '@/app/api/contracts/route';
 import { GET as contractGET } from '@/app/api/contracts/[id]/route';
@@ -34,12 +33,10 @@ async function login(email: string): Promise<string> {
 describe('USSD + Hubtel payments', () => {
   let admin: string;
   let cashier: string;
-  let adminUserId: string;
 
   beforeAll(async () => {
     admin = await login('admin@zple.test');
     cashier = await login('cashier@zple.test');
-    adminUserId = (await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } })).id;
   });
 
   // SAVE_TO_OWN needs no product/price chart entry/inventory item/branch at
@@ -480,43 +477,67 @@ describe('USSD + Hubtel payments', () => {
     expect(step1.message).not.toContain('OVERDUE');
   });
 
-  it('a scheduled contract\'s prompt shows paid/balance and the next due instalment', async () => {
-    const scheduledProductId = (await (await productsPOST(makeRequest('POST', '/api/products', {
-      token: admin, body: { sku: `USSD-DL-SKU-${runId}`, name: 'USSD Device Loan Phone', cashPriceMinor: 120000 },
-    }))).json()).product.id;
-    await prisma.priceChartEntry.create({
-      data: {
-        productId: scheduledProductId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
-        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
-      },
-    });
+  it('DEVICE_LOAN\'s prompt offers only the currently-owed option(s) — no schedule, no free-typed amount', async () => {
     const phone = uniquePhone();
     const customer = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Ussd', lastName: 'Scheduled', phone },
+      token: cashier, body: { firstName: 'Ussd', lastName: 'Loan', phone },
     }));
     const customerId = (await customer.json()).customer.id;
-    // DEVICE_LOAN disburses cash and is priced against a Product directly —
-    // no InventoryItem is reserved for it (src/app/api/contracts/route.ts).
+    // DEVICE_LOAN disburses cash directly — not linked to a product or
+    // inventory item at all (src/app/api/contracts/route.ts).
     const contractRes = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId, productId: scheduledProductId, termMonths: 6 },
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId, loanAmountMinor: 100000 },
     }));
     const contract = (await contractRes.json()).contract;
 
+    // Fresh loan, nothing accrued yet — only "pay full loan" is offered, no interest option.
     const step1 = await handleUssdInput({ sessionId: `sess-${runId}-dl1`, msisdn: phone, input: '', isNewSession: true });
-    expect(step1.message).toContain('Paid GHS0.00');
-    expect(step1.message).toContain('Bal GHS1200.00');
-    expect(step1.message).toContain('Due GHS');
-    expect(step1.message).not.toContain('OVERDUE');
+    expect(step1.continueSession).toBe(true);
+    expect(step1.message).not.toContain('Pay interest');
+    expect(step1.message).toContain('Pay full loan GHS1000.00');
+    expect(step1.message).toContain('Reply with option:');
 
-    // Force the first instalment overdue — same simulate-a-missed-payment
-    // pattern tests/direct-debit-and-phones.test.ts uses for the collections run.
-    await prisma.instalment.updateMany({
-      where: { contractId: contract.id, instalmentNo: 1 },
-      data: { dueDate: new Date(Date.now() - 24 * 60 * 60_000), status: 'OVERDUE' },
+    // Simulate a day of accrued interest (loanService.accrueDailyLoanInterest's
+    // own row shape) so both options are on offer.
+    await prisma.penalty.create({
+      data: { contractId: contract.id, amountMinor: 1000, reason: 'DAILY_LOAN_INTEREST', appliedDate: new Date() },
     });
 
     const step2 = await handleUssdInput({ sessionId: `sess-${runId}-dl2`, msisdn: phone, input: '', isNewSession: true });
-    expect(step2.message).toContain('OVERDUE GHS');
-    expect(step2.message).toContain('Next GHS');
+    expect(step2.message).toContain('1. Pay interest GHS10.00');
+    expect(step2.message).toContain('2. Pay full loan GHS1000.00');
+
+    // Picking option 1 (interest) goes straight to a confirm screen for the
+    // exact accrued amount — no free-typed amount is ever possible here.
+    const chooseInterest = await handleUssdInput({ sessionId: `sess-${runId}-dl2`, msisdn: phone, input: '1', isNewSession: false });
+    expect(chooseInterest.continueSession).toBe(true);
+    expect(chooseInterest.message).toContain('Confirm payment of GHS10.00');
+
+    const confirmed = await handleUssdInput({ sessionId: `sess-${runId}-dl2`, msisdn: phone, input: '1', isNewSession: false });
+    expect(confirmed.continueSession).toBe(false);
+    expect(confirmed.message).toMatch(/successful/i);
+
+    const detail = await contractGET(makeRequest('GET', `/api/contracts/${contract.id}`, { token: cashier }), makeParams({ id: contract.id }));
+    const state = (await detail.json()).contract.deviceLoanState;
+    expect(state.accruedInterestMinor).toBe(0);
+    expect(state.interestPaidMinor).toBe(1000);
+    expect(state.principalOutstanding).toBe(true); // paying interest never touches the principal
+  });
+
+  it('an invalid DEVICE_LOAN option is rejected instead of accepted as a free-typed amount', async () => {
+    const phone = uniquePhone();
+    const customer = await customersPOST(makeRequest('POST', '/api/customers', {
+      token: cashier, body: { firstName: 'Ussd', lastName: 'BadOption', phone },
+    }));
+    const customerId = (await customer.json()).customer.id;
+    await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId, loanAmountMinor: 50000 },
+    }));
+
+    await handleUssdInput({ sessionId: `sess-${runId}-dlbad`, msisdn: phone, input: '', isNewSession: true });
+    // Option 1 (pay interest) isn't valid yet — nothing has accrued.
+    const result = await handleUssdInput({ sessionId: `sess-${runId}-dlbad`, msisdn: phone, input: '1', isNewSession: false });
+    expect(result.continueSession).toBe(true);
+    expect(result.message).toMatch(/invalid option/i);
   });
 });

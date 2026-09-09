@@ -55,7 +55,7 @@ async function main() {
     categoryByName.set(name, category.id);
   }
 
-  const products: Array<{ id: string; name: string }> = [];
+  const products: Array<{ id: string; name: string; cashPriceMinor: number }> = [];
   for (const p of PRODUCTS) {
     let product = await prisma.product.findFirst({ where: { name: p.name } });
     if (!product) {
@@ -69,22 +69,17 @@ async function main() {
           categoryId: categoryByName.get(p.category) ?? null,
         },
       });
-      // One 6-month tier for both priceable contract types — enough for a
-      // contract of each to actually price and create successfully.
-      // SAVE_TO_OWN is never priced — it's open-ended savings with no term
-      // (contractService.ts/priceChartService.ts).
+      // A single legacy price chart tier, purely to demo the standalone Price
+      // Chart page — DEPOSIT_INSTALMENT contracts no longer look this up at
+      // creation, and DEVICE_LOAN isn't linked to a product at all any more
+      // (contractService.ts). Neither is required for the contracts seeded below.
       await createPriceChartEntry({
         productId: product.id, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, paymentFrequency: 'MONTHLY',
         depositAmountMinor: Math.round(p.cashPriceMinor * 0.2), totalPayableMinor: Math.round(p.cashPriceMinor * 1.15),
         createdById: admin.id,
       });
-      await createPriceChartEntry({
-        productId: product.id, contractType: 'DEVICE_LOAN', termMonths: 6, paymentFrequency: 'MONTHLY',
-        depositAmountMinor: 0, totalPayableMinor: Math.round(p.cashPriceMinor * 1.24), interestRateBps: 2400,
-        createdById: admin.id,
-      });
     }
-    products.push({ id: product.id, name: product.name });
+    products.push({ id: product.id, name: product.name, cashPriceMinor: product.cashPriceMinor });
   }
 
   const customers: Array<{ id: string; name: string }> = [];
@@ -102,17 +97,16 @@ async function main() {
     customers.push({ id: customer.id, name: `${c.firstName} ${c.lastName}` });
   }
 
-  // One contract of each type per the first two customers. SAVE_TO_OWN has no
-  // productIdx — it's open-ended savings, not linked to any product; DEVICE_LOAN
-  // disburses cash, no unit reserved, so it's the only product-linked type that
-  // doesn't need an inventory item.
+  // One contract of each type per the first two customers. SAVE_TO_OWN and
+  // DEVICE_LOAN have no productIdx — neither is linked to a product at all any
+  // more (contractService.ts); only DEPOSIT_INSTALMENT reserves an inventory unit.
   const contractPlans: Array<{ contractType: 'SAVE_TO_OWN' | 'DEPOSIT_INSTALMENT' | 'DEVICE_LOAN'; customerIdx: number; productIdx?: number }> = [
     { contractType: 'SAVE_TO_OWN', customerIdx: 0 },
     { contractType: 'SAVE_TO_OWN', customerIdx: 1 },
     { contractType: 'DEPOSIT_INSTALMENT', customerIdx: 2, productIdx: 0 },
     { contractType: 'DEPOSIT_INSTALMENT', customerIdx: 3, productIdx: 1 },
-    { contractType: 'DEVICE_LOAN', customerIdx: 4, productIdx: 2 },
-    { contractType: 'DEVICE_LOAN', customerIdx: 5, productIdx: 2 },
+    { contractType: 'DEVICE_LOAN', customerIdx: 4 },
+    { contractType: 'DEVICE_LOAN', customerIdx: 5 },
   ];
 
   let contractsCreated = 0;
@@ -134,21 +128,29 @@ async function main() {
         branchId: branch.id,
         createdById: admin.id,
       });
-    } else {
-      if (!product) continue; // defensive — every non-SAVE_TO_OWN plan above has a productIdx
-      let inventoryItemId: string | undefined;
-      if (plan.contractType !== 'DEVICE_LOAN') {
-        const item = await receiveInventoryItem({
-          productId: product.id, branchId: branch.id, serialNumber: `DEMO-${product.id.slice(0, 8)}-${i}`, createdById: admin.id,
-        });
-        inventoryItemId = item.id;
-      }
+    } else if (plan.contractType === 'DEVICE_LOAN') {
       contract = await createContract({
-        contractType: plan.contractType,
+        contractType: 'DEVICE_LOAN',
         customerId: customer.id,
-        inventoryItemId,
-        productId: plan.contractType === 'DEVICE_LOAN' ? product.id : undefined,
-        termMonths: 6,
+        loanAmountMinor: 100000, // GHS 1,000 demo loan — 1%/day accrues per the global loan settings
+        branchId: branch.id,
+        createdById: admin.id,
+      });
+    } else {
+      if (!product) continue; // defensive — every DEPOSIT_INSTALMENT plan above has a productIdx
+      const item = await receiveInventoryItem({
+        productId: product.id, branchId: branch.id, serialNumber: `DEMO-${product.id.slice(0, 8)}-${i}`, createdById: admin.id,
+      });
+      const totalPayableMinor = Math.round(product.cashPriceMinor * 1.15);
+      const depositAmountMinor = Math.round(product.cashPriceMinor * 0.2);
+      contract = await createContract({
+        contractType: 'DEPOSIT_INSTALMENT',
+        customerId: customer.id,
+        inventoryItemId: item.id,
+        totalPayableMinor,
+        depositAmountMinor,
+        termWeeks: 12,
+        paymentFrequency: 'WEEKLY',
         branchId: branch.id,
         createdById: admin.id,
       });
@@ -158,13 +160,14 @@ async function main() {
     // Give most contracts a bit of payment history — leave one of each pair
     // untouched (PENDING_DEPOSIT / freshly ACTIVE / a fresh savings account)
     // so statuses look realistic rather than everything being mid-payment.
-    if (i % 2 === 0) {
+    // DEVICE_LOAN is skipped here — there's no interest accrued yet to pay
+    // right after creation (accrual runs on the daily cron, loanService.ts),
+    // and paying off the principal immediately wouldn't make for a useful demo.
+    if (i % 2 === 0 && plan.contractType !== 'DEVICE_LOAN') {
       const entryType = plan.contractType === 'DEPOSIT_INSTALMENT' ? 'DEPOSIT' : 'INSTALMENT_PAYMENT';
       const amountMinor = plan.contractType === 'DEPOSIT_INSTALMENT'
         ? contract.depositAmountMinor
-        : plan.contractType === 'SAVE_TO_OWN'
-          ? 5000 // a flat demo deposit — SAVE_TO_OWN has no target to derive a fraction from
-          : Math.round((contract.totalPayableMinor ?? 0) * 0.3);
+        : 5000; // a flat demo deposit — SAVE_TO_OWN has no target to derive a fraction from
       if (amountMinor > 0) {
         await postPayment({
           contractId: contract.id, amountMinor, entryType, channel: 'CASH', createdById: admin.id,
@@ -175,7 +178,7 @@ async function main() {
     }
   }
 
-  console.log(`\nSeeded ${categoryByName.size} categories, ${products.length} products (each priced for both DEPOSIT_INSTALMENT and DEVICE_LOAN),`);
+  console.log(`\nSeeded ${categoryByName.size} categories, ${products.length} products,`);
   console.log(`${customers.length} customers, ${contractsCreated} new contract(s), ${paymentsPosted} payment(s).`);
 }
 

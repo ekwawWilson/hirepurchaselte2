@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
-import { CONTRACT_TYPES, PAYMENT_FREQUENCIES, DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, PAYMENT_METHODS, type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName } from '@/lib/constants/contracts';
+import {
+  CONTRACT_TYPES, DEPOSIT_INSTALMENT_FREQUENCIES, DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, PAYMENT_METHODS,
+  type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName,
+} from '@/lib/constants/contracts';
 import { createContract, ContractError } from '@/lib/services/contractService';
 import { logAudit } from '@/lib/services/auditService';
 
@@ -42,9 +45,9 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json()) as Record<string, unknown>;
   const {
-    contractType, customerId, inventoryItemId, productId, termMonths, paymentFrequency, startDate,
+    contractType, customerId, inventoryItemId, startDate,
     gracePeriodDays, penaltyRateBps, paymentMethod, directDebitNetwork, directDebitMsisdn,
-    totalPayableMinorOverride, depositAmountMinorOverride, termMonthsOverride, instalmentCountOverride,
+    totalPayableMinor, depositAmountMinor, termWeeks, paymentFrequency, loanAmountMinor,
   } = body;
 
   if (!(CONTRACT_TYPES as readonly string[]).includes(contractType as string)) {
@@ -53,29 +56,44 @@ export async function POST(req: NextRequest) {
   if (!customerId) {
     return NextResponse.json({ error: 'customerId is required' }, { status: 400 });
   }
+
   if (contractType === 'SAVE_TO_OWN') {
     // Open-ended savings — no product, no price chart entry, no term at all
-    // (contractService.ts). Rejected rather than silently ignored: neither
-    // should ever be sent for this type, live-form wizard included.
-    if (inventoryItemId || productId) {
+    // (contractService.ts). Rejected rather than silently ignored: it should
+    // never be sent for this type, live-form wizard included.
+    if (inventoryItemId) {
       return NextResponse.json({ error: 'SAVE_TO_OWN accounts are not linked to a product' }, { status: 400 });
     }
-  } else {
-    if (typeof termMonths !== 'number' || termMonths < 1) {
-      return NextResponse.json({ error: 'a positive termMonths is required for this contract type' }, { status: 400 });
+  } else if (contractType === 'DEVICE_LOAN') {
+    // Also not linked to a product — a daily-simple-interest loan, the
+    // amount entered directly (contractService.ts/loanService.ts).
+    if (inventoryItemId) {
+      return NextResponse.json({ error: 'DEVICE_LOAN accounts are not linked to a product' }, { status: 400 });
     }
-    // DEVICE_LOAN disburses cash for the customer to buy a device outside the store —
-    // no specific stock unit is ever reserved for it, so it's priced against a Product
-    // directly rather than an available InventoryItem (docs/01-plan.md §20).
-    if (contractType === 'DEVICE_LOAN') {
-      if (!productId) return NextResponse.json({ error: 'productId is required for a DEVICE_LOAN contract' }, { status: 400 });
-    } else if (!inventoryItemId) {
+    if (typeof loanAmountMinor !== 'number' || loanAmountMinor <= 0) {
+      return NextResponse.json({ error: 'a positive loanAmountMinor is required for a DEVICE_LOAN contract' }, { status: 400 });
+    }
+  } else {
+    // DEPOSIT_INSTALMENT — still the one type linked to a reserved unit, and
+    // every deal term is entered directly here now, never looked up from a
+    // price chart.
+    if (!inventoryItemId) {
       return NextResponse.json({ error: 'inventoryItemId is required for this contract type' }, { status: 400 });
     }
+    if (typeof totalPayableMinor !== 'number' || totalPayableMinor <= 0) {
+      return NextResponse.json({ error: 'a positive totalPayableMinor is required for this contract type' }, { status: 400 });
+    }
+    if (typeof depositAmountMinor !== 'number' || depositAmountMinor < 0) {
+      return NextResponse.json({ error: 'a non-negative depositAmountMinor is required for this contract type' }, { status: 400 });
+    }
+    if (typeof termWeeks !== 'number') {
+      return NextResponse.json({ error: 'termWeeks is required for this contract type' }, { status: 400 });
+    }
+    if (paymentFrequency !== undefined && !(DEPOSIT_INSTALMENT_FREQUENCIES as readonly string[]).includes(paymentFrequency as string)) {
+      return NextResponse.json({ error: `paymentFrequency must be one of: ${DEPOSIT_INSTALMENT_FREQUENCIES.join(', ')}` }, { status: 400 });
+    }
   }
-  if (paymentFrequency !== undefined && !(PAYMENT_FREQUENCIES as readonly string[]).includes(paymentFrequency as string)) {
-    return NextResponse.json({ error: `paymentFrequency must be one of: ${PAYMENT_FREQUENCIES.join(', ')}` }, { status: 400 });
-  }
+
   if (gracePeriodDays !== undefined && (typeof gracePeriodDays !== 'number' || gracePeriodDays < 0)) {
     return NextResponse.json({ error: 'gracePeriodDays must be a non-negative integer' }, { status: 400 });
   }
@@ -88,7 +106,7 @@ export async function POST(req: NextRequest) {
   const wantsDirectDebit = paymentMethod === 'DIRECT_DEBIT' || paymentMethod === 'BOTH';
   if (wantsDirectDebit) {
     if (!DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.includes(contractType as ContractTypeName)) {
-      return NextResponse.json({ error: `${contractType} contracts have no due schedule — direct debit isn't available for them` }, { status: 400 });
+      return NextResponse.json({ error: `${contractType} contracts have no due schedule to auto-charge — direct debit isn't available for them` }, { status: 400 });
     }
     if (!directDebitNetwork || !directDebitMsisdn) {
       return NextResponse.json({ error: 'directDebitNetwork and directDebitMsisdn are required for DIRECT_DEBIT/BOTH' }, { status: 400 });
@@ -101,43 +119,22 @@ export async function POST(req: NextRequest) {
   const branchId = user.branchId ?? (body.branchId as string);
   if (!branchId) return NextResponse.json({ error: 'branchId is required for an all-branch user' }, { status: 400 });
 
-  if (totalPayableMinorOverride !== undefined && typeof totalPayableMinorOverride !== 'number') {
-    return NextResponse.json({ error: 'totalPayableMinorOverride must be a number' }, { status: 400 });
-  }
-  if (depositAmountMinorOverride !== undefined && typeof depositAmountMinorOverride !== 'number') {
-    return NextResponse.json({ error: 'depositAmountMinorOverride must be a number' }, { status: 400 });
-  }
-  if (termMonthsOverride !== undefined && typeof termMonthsOverride !== 'number') {
-    return NextResponse.json({ error: 'termMonthsOverride must be a number' }, { status: 400 });
-  }
-  if (instalmentCountOverride !== undefined && typeof instalmentCountOverride !== 'number') {
-    return NextResponse.json({ error: 'instalmentCountOverride must be a number' }, { status: 400 });
-  }
-  // A negotiated price differing from the standard price chart tier — reserved
-  // for the two most-trusted roles. Silently ignored (not rejected) for anyone
-  // else: the UI never shows these fields as editable outside those roles in
-  // the first place, so a non-admin sending them is either a stale form state
-  // or a direct API call, neither of which should be able to move the price.
-  const canOverridePricing = user.roleName === 'SUPER_ADMIN' || user.roleName === 'ADMIN';
-
   try {
     const contract = await createContract({
       contractType: contractType as never,
       customerId: customerId as string,
       inventoryItemId: inventoryItemId as string | undefined,
-      productId: productId as string | undefined,
-      termMonths: termMonths as number | undefined,
+      totalPayableMinor: totalPayableMinor as number | undefined,
+      depositAmountMinor: depositAmountMinor as number | undefined,
+      termWeeks: termWeeks as number | undefined,
       paymentFrequency: paymentFrequency as PaymentFrequencyName | undefined,
+      loanAmountMinor: loanAmountMinor as number | undefined,
       startDate: startDate ? new Date(startDate as string) : undefined,
       gracePeriodDays: gracePeriodDays as number | undefined,
       penaltyRateBps: penaltyRateBps as number | undefined,
       paymentMethod: paymentMethod as PaymentMethodName | undefined,
       directDebitNetwork: directDebitNetwork as string | undefined,
       directDebitMsisdn: directDebitMsisdn as string | undefined,
-      totalPayableMinorOverride: canOverridePricing ? (totalPayableMinorOverride as number | undefined) : undefined,
-      depositAmountMinorOverride: canOverridePricing ? (depositAmountMinorOverride as number | undefined) : undefined,
-      termMonthsOverride: canOverridePricing ? (termMonthsOverride as number | undefined) : undefined,
-      instalmentCountOverride: canOverridePricing ? (instalmentCountOverride as number | undefined) : undefined,
       branchId,
       createdById: user.id,
     });
@@ -148,7 +145,7 @@ export async function POST(req: NextRequest) {
     if (contractType === 'DEVICE_LOAN') {
       await logAudit({
         userId: user.id, action: 'DEVICE_LOAN_DISBURSEMENT', entityType: 'Contract', entityId: contract.id,
-        newValues: { principalMinor: contract.principalMinor, customerId: contract.customerId, productId: contract.productId },
+        newValues: { principalMinor: contract.principalMinor, customerId: contract.customerId },
       });
     }
     return NextResponse.json({ contract }, { status: 201 });

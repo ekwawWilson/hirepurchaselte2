@@ -54,16 +54,9 @@ describe('Contract-type-specific business rules', () => {
   }
 
   it('DEVICE_LOAN contracts cannot be cancelled — CANCELLED is not in that type\'s state list', async () => {
-    const productId = await makeProduct('LOAN-CANCEL');
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0,
-        totalPayableMinor: 120000, instalmentAmountMinor: 20000, interestRateBps: 2400, createdById: adminUserId,
-      },
-    });
-    const { customerId } = await makeCustomerAndItem(productId, 'A');
+    const customerId = await makeCustomer('A');
     const contract = await createContract({
-      contractType: 'DEVICE_LOAN', customerId, productId, termMonths: 6, branchId, createdById: adminUserId,
+      contractType: 'DEVICE_LOAN', customerId, loanAmountMinor: 120000, branchId, createdById: adminUserId,
     });
 
     await expect(cancelContract({ contractId: contract.id, reason: 'changed mind', userId: adminUserId }))
@@ -100,15 +93,10 @@ describe('Contract-type-specific business rules', () => {
 
   it('cancelling a DEPOSIT_INSTALMENT contract that already issued the device does NOT auto-reverse payments — the customer keeps the device, so the refund figure needs a human, not an automatic full unwind', async () => {
     const productId = await makeProduct('DEP-ISSUED-CANCEL');
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 50000,
-        totalPayableMinor: 100000, instalmentAmountMinor: 8333, createdById: adminUserId,
-      },
-    });
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'ISSUED');
     const contract = await createContract({
-      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 6, branchId, createdById: adminUserId,
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
+      totalPayableMinor: 100000, depositAmountMinor: 50000, termWeeks: 6, branchId, createdById: adminUserId,
     });
 
     // Clears the deposit gate: device gets ISSUED, contract goes ACTIVE.
@@ -129,15 +117,10 @@ describe('Contract-type-specific business rules', () => {
 
   it('a DEPOSIT payment is rejected once the deposit gate has already cleared', async () => {
     const productId = await makeProduct('DEP-GATE');
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, depositAmountMinor: 50000,
-        totalPayableMinor: 100000, instalmentAmountMinor: 25000, createdById: adminUserId,
-      },
-    });
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'C');
     const contract = await createContract({
-      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 2, branchId, createdById: adminUserId,
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
+      totalPayableMinor: 100000, depositAmountMinor: 50000, termWeeks: 2, branchId, createdById: adminUserId,
     });
     expect(contract.status).toBe('PENDING_DEPOSIT');
 
@@ -154,16 +137,10 @@ describe('Contract-type-specific business rules', () => {
 
   it('markDefaultedContracts flips an ACTIVE DEPOSIT_INSTALMENT contract with a deeply overdue instalment, and leaves SAVE_TO_OWN untouched', async () => {
     const depositProductId = await makeProduct('DEFAULT-DEP');
-    await prisma.priceChartEntry.create({
-      data: {
-        productId: depositProductId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, depositAmountMinor: 50000,
-        totalPayableMinor: 100000, instalmentAmountMinor: 25000, createdById: adminUserId,
-      },
-    });
     const dep = await makeCustomerAndItem(depositProductId, 'D');
     const depositContract = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId: dep.customerId, inventoryItemId: dep.inventoryItemId,
-      termMonths: 2, branchId, createdById: adminUserId,
+      totalPayableMinor: 100000, depositAmountMinor: 50000, termWeeks: 2, branchId, createdById: adminUserId,
     });
     await postPayment({ contractId: depositContract.id, amountMinor: 50000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
 
@@ -198,15 +175,10 @@ describe('Contract-type-specific business rules', () => {
 
   it('paying off arrears cures a DEFAULTED contract, completing it outright if the payment also clears the balance', async () => {
     const productId = await makeProduct('CURE');
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 2, depositAmountMinor: 50000,
-        totalPayableMinor: 100000, instalmentAmountMinor: 25000, createdById: adminUserId,
-      },
-    });
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'F');
     const contract = await createContract({
-      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, termMonths: 2, branchId, createdById: adminUserId,
+      contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
+      totalPayableMinor: 100000, depositAmountMinor: 50000, termWeeks: 2, branchId, createdById: adminUserId,
     });
     await postPayment({ contractId: contract.id, amountMinor: 50000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
 

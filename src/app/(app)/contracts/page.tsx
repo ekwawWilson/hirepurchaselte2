@@ -7,8 +7,11 @@ import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, contractTypeLabel, getStatusColor } from '@/lib/utils';
-import { PRICE_CHART_TERM_MONTHS, PAYMENT_FREQUENCIES, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, DIRECT_DEBIT_NETWORKS, numberOfInstalmentsForTerm, type PaymentFrequencyName } from '@/lib/constants/contracts';
-import { generateStraightLineSchedule, generateLoanSchedule, derivePrincipalFromTotalPayable, type GeneratedInstalment } from '@/lib/services/scheduleService';
+import {
+  DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
+  DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, DIRECT_DEBIT_NETWORKS, type PaymentFrequencyName,
+} from '@/lib/constants/contracts';
+import { generateStraightLineSchedule, type GeneratedInstalment } from '@/lib/services/scheduleService';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,20 +29,12 @@ interface InventoryItem {
   id: string; serialNumber: string; productId: string;
   product: { id: string; name: string; cashPriceMinor: number; category?: { name: string } | null };
 }
-interface Product {
-  id: string; name: string; sku: string; cashPriceMinor: number;
-  category?: { name: string } | null; missingContractTypes: string[];
-}
-interface PriceChartEntry {
-  id: string; termMonths: number; paymentFrequency: string; contractType: string;
-  totalPayableMinor: number; depositAmountMinor: number; instalmentAmountMinor: number; interestRateBps: number | null;
-}
 const frequencyLabel = (f: string) => f.charAt(0) + f.slice(1).toLowerCase();
 const initials = (first: string, last: string) => `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
 
 interface Contract {
   id: string; contractNumber: string; contractType: string; status: string;
-  // Null for SAVE_TO_OWN — open-ended savings has no target/product (contractService.ts).
+  // Null for SAVE_TO_OWN/DEVICE_LOAN — neither has a fixed target/product (contractService.ts).
   totalPayableMinor: number | null; balanceMinor: number | null; totalPaidMinor: number;
   customer: { firstName: string; lastName: string }; product: { name: string } | null;
 }
@@ -52,42 +47,28 @@ const CONTRACT_TYPE_OPTIONS = [
 
 export default function ContractsPage() {
   const canCreate = useAuthStore((s) => s.hasPermission('contract.create'));
-  // A negotiated deal that differs from the standard price chart tier —
-  // reserved for the two most-trusted roles; the API independently re-checks
-  // this server-side (contracts/route.ts) and ignores these fields for
-  // anyone else, so this client-side gate is only about what the form shows.
-  const canOverridePricing = useAuthStore((s) => s.user?.role === 'SUPER_ADMIN' || s.user?.role === 'ADMIN');
   const { toast } = useToast();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Three-step wizard — Select Customer, Select Type & Product, Configure Payment Terms —
-  // modeled on the main hire-purchase app's contract creation flow, adapted to HP-Lite's
-  // simplified, price-chart-driven pricing (no free-typed totals/deposit) and contract types.
-  // Contract type moves the branching in step 2 (an inventory unit for SAVE_TO_OWN/
-  // DEPOSIT_INSTALMENT vs. a Product only for DEVICE_LOAN, which disburses cash rather
-  // than reserving a unit — docs/01-plan.md §20), so it has to be picked before it, not
-  // inside step 3 as originally built.
+  // Three-step wizard — Select Customer, Select Type & Unit, Configure Payment Terms.
+  // Only DEPOSIT_INSTALMENT reserves an inventory unit in step 2; SAVE_TO_OWN and
+  // DEVICE_LOAN are both open-ended/not linked to a product at all (contractService.ts),
+  // so step 2 is skipped straight to a confirmation for those two types.
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [chartEntries, setChartEntries] = useState<PriceChartEntry[]>([]);
 
   const [customerSearch, setCustomerSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
 
   const [customerId, setCustomerId] = useState('');
   const [inventoryItemId, setInventoryItemId] = useState('');
-  // DEVICE_LOAN disburses cash for the customer to buy a device outside the store — it's
-  // priced against a Product directly, never a specific serialized stock unit (docs/01-plan.md §20).
-  const [loanProductId, setLoanProductId] = useState('');
   const [contractType, setContractType] = useState('DEPOSIT_INSTALMENT');
-  const [paymentFrequency, setPaymentFrequency] = useState<PaymentFrequencyName>('MONTHLY');
-  const [selectedTermMonths, setSelectedTermMonths] = useState<number | null>(null);
+  const [paymentFrequency, setPaymentFrequency] = useState<PaymentFrequencyName>('WEEKLY');
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [gracePeriodDays, setGracePeriodDays] = useState('7');
   const [penaltyPercent, setPenaltyPercent] = useState('0');
@@ -95,98 +76,62 @@ export default function ContractsPage() {
   const [directDebitNetwork, setDirectDebitNetwork] = useState('');
   const [directDebitMsisdn, setDirectDebitMsisdn] = useState('');
   const [showSchedulePreview, setShowSchedulePreview] = useState(false);
-  // Free-text override of the price chart's own figures, SUPER_ADMIN/ADMIN
-  // only — '' means "use the price chart tier as selected", not "zero".
-  const [totalPriceOverride, setTotalPriceOverride] = useState('');
-  const [depositOverride, setDepositOverride] = useState('');
-  // Free-text override of the contract's actual term length, SUPER_ADMIN/ADMIN
-  // only — decoupled from selectedTermMonths (still the price-chart lookup key
-  // sent as termMonths) so a negotiated 5-month term can still be sourced from
-  // a 3/4/6-month priced tier. '' means "use the selected tier's own length".
-  const [termMonthsOverride, setTermMonthsOverride] = useState('');
-  // Free-text override of the frequency-derived instalment count, SUPER_ADMIN/ADMIN
-  // only — independent of termMonthsOverride, which still drives DEVICE_LOAN's
-  // interest calc; this only changes how many instalments the amount splits across.
-  const [instalmentCountOverride, setInstalmentCountOverride] = useState('');
+
+  // DEPOSIT_INSTALMENT: total price, deposit, and term are entered directly now —
+  // no price chart lookup at all (contractService.ts).
+  const [totalPrice, setTotalPrice] = useState('');
+  const [depositAmount, setDepositAmount] = useState('');
+  const [termWeeks, setTermWeeks] = useState('4');
+
+  // DEVICE_LOAN: just the amount disbursed — the daily 1% rate and grace period
+  // are global settings (Settings → Loan payment terms), snapshotted server-side.
+  const [loanAmount, setLoanAmount] = useState('');
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
   const selectedItem = items.find((i) => i.id === inventoryItemId) ?? null;
+  const isSaveToOwn = contractType === 'SAVE_TO_OWN';
   const isDeviceLoan = contractType === 'DEVICE_LOAN';
-  const selectedLoanProduct = products.find((p) => p.id === loanProductId) ?? null;
-  const effectiveProductId = isDeviceLoan ? loanProductId : selectedItem?.productId;
-  const entriesForFrequency = chartEntries.filter((e) => e.paymentFrequency === paymentFrequency);
-  const selectedEntry = entriesForFrequency.find((e) => e.termMonths === selectedTermMonths) ?? null;
+  const isDepositInstalment = contractType === 'DEPOSIT_INSTALMENT';
   const directDebitEligible = (DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES as string[]).includes(contractType);
 
-  const parsedTermOverride = parseInt(termMonthsOverride, 10);
-  const hasTermOverridePreview = canOverridePricing && termMonthsOverride !== '' && Number.isInteger(parsedTermOverride) && parsedTermOverride > 0;
-  const effectiveTermMonths = hasTermOverridePreview ? parsedTermOverride : (selectedTermMonths ?? 0);
-  const defaultInstalments = selectedTermMonths ? numberOfInstalmentsForTerm(effectiveTermMonths, paymentFrequency) : null;
+  const parsedTotalPrice = Math.round(parseFloat(totalPrice || '0') * 100);
+  const parsedDeposit = Math.round(parseFloat(depositAmount || '0') * 100);
+  const parsedTermWeeks = parseInt(termWeeks, 10);
+  const parsedLoanAmount = Math.round(parseFloat(loanAmount || '0') * 100);
+  const financeAmountMinor = isDepositInstalment && parsedTotalPrice > parsedDeposit ? parsedTotalPrice - parsedDeposit : 0;
+  const instalmentCount = isDepositInstalment && Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
+    ? (paymentFrequency === 'DAILY' ? parsedTermWeeks * 7 : parsedTermWeeks)
+    : 0;
+  const instalmentAmountMinor = instalmentCount > 0 ? Math.ceil(financeAmountMinor / instalmentCount) : 0;
 
-  const parsedInstalmentCountOverride = parseInt(instalmentCountOverride, 10);
-  const hasInstalmentCountOverridePreview = canOverridePricing && instalmentCountOverride !== ''
-    && Number.isInteger(parsedInstalmentCountOverride) && parsedInstalmentCountOverride > 0;
-  const totalInstalments = hasInstalmentCountOverridePreview ? parsedInstalmentCountOverride : defaultInstalments;
-
-  // Everything below reads from these two, never selectedEntry directly, so a
-  // manual override (SUPER_ADMIN/ADMIN) cascades into the finance amount, the
-  // schedule preview, and the summary with no separate branch per figure —
-  // mirrors exactly how contractService.ts's runContractTransaction does the
-  // same substitution server-side.
-  const parsedTotalOverride = parseFloat(totalPriceOverride);
-  const parsedDepositOverride = parseFloat(depositOverride);
-  const effectiveTotalPayableMinor = totalPriceOverride !== '' && !Number.isNaN(parsedTotalOverride)
-    ? Math.round(parsedTotalOverride * 100)
-    : (selectedEntry?.totalPayableMinor ?? 0);
-  const effectiveDepositAmountMinor = depositOverride !== '' && !Number.isNaN(parsedDepositOverride)
-    ? Math.round(parsedDepositOverride * 100)
-    : (selectedEntry?.depositAmountMinor ?? 0);
-  const financeAmountMinor = selectedEntry ? effectiveTotalPayableMinor - effectiveDepositAmountMinor : 0;
-  // Same formula contractService.ts's runContractTransaction recomputes
-  // server-side whenever a price is overridden — kept in lockstep here so the
-  // summary previews exactly what will actually be stored, not the price
-  // chart tier's now-possibly-stale figure.
-  const effectiveInstalmentAmountMinor = selectedEntry && totalInstalments ? Math.ceil(financeAmountMinor / totalInstalments) : 0;
-
-  // A newly-selected term/product means a different price chart tier — clear
-  // any override from the previous one rather than silently carrying a
-  // negotiated price over onto an unrelated tier.
-  useEffect(() => {
-    setTotalPriceOverride('');
-    setDepositOverride('');
-    setTermMonthsOverride('');
-    setInstalmentCountOverride('');
-  }, [selectedEntry?.id]);
-
-  const isSaveToOwn = contractType === 'SAVE_TO_OWN';
   const step1Valid = !!customerId;
-  // Save to Own has no product/unit to pick — it's open-ended savings, not
-  // linked to anything (contractService.ts).
-  const step2Valid = isSaveToOwn ? true : (isDeviceLoan ? !!loanProductId : !!inventoryItemId);
-  const step3Valid = isSaveToOwn ? !saving : !!selectedEntry && !saving &&
-    (paymentMethod === 'CUSTOMER_INITIATED' || (!!directDebitNetwork && !!directDebitMsisdn.trim()));
+  const step2Valid = isDepositInstalment ? !!inventoryItemId : true;
+  const depositTermsValid = Number.isFinite(parsedTotalPrice) && parsedTotalPrice > 0
+    && Number.isFinite(parsedDeposit) && parsedDeposit >= 0 && parsedDeposit < parsedTotalPrice
+    && Number.isInteger(parsedTermWeeks) && parsedTermWeeks >= DEPOSIT_INSTALMENT_MIN_TERM_WEEKS && parsedTermWeeks <= DEPOSIT_INSTALMENT_MAX_TERM_WEEKS
+    && (DEPOSIT_INSTALMENT_FREQUENCIES as readonly string[]).includes(paymentFrequency);
+  const loanTermsValid = Number.isFinite(parsedLoanAmount) && parsedLoanAmount > 0;
+  const step3Valid = !saving && (
+    isSaveToOwn ? true
+    : isDeviceLoan ? loanTermsValid
+    : depositTermsValid && (paymentMethod === 'CUSTOMER_INITIATED' || (!!directDebitNetwork && !!directDebitMsisdn.trim()))
+  );
 
   function resetWizard() {
     setStep(1);
-    setCustomerId(''); setInventoryItemId(''); setLoanProductId('');
+    setCustomerId(''); setInventoryItemId('');
     setContractType('DEPOSIT_INSTALMENT');
-    setPaymentFrequency('MONTHLY'); setSelectedTermMonths(null);
+    setPaymentFrequency('WEEKLY');
     setStartDate(new Date().toISOString().slice(0, 10));
     setGracePeriodDays('7'); setPenaltyPercent('0');
     setPaymentMethod('CUSTOMER_INITIATED'); setDirectDebitNetwork(''); setDirectDebitMsisdn(''); setShowSchedulePreview(false);
-    setCustomerSearch(''); setItemSearch(''); setTotalPriceOverride(''); setDepositOverride(''); setTermMonthsOverride('');
-    setInstalmentCountOverride('');
+    setCustomerSearch(''); setItemSearch('');
+    setTotalPrice(''); setDepositAmount(''); setTermWeeks('4'); setLoanAmount('');
   }
 
   function previewSchedule(): GeneratedInstalment[] {
-    if (!selectedEntry || contractType === 'SAVE_TO_OWN') return [];
-    const start = new Date(startDate);
-    if (contractType === 'DEVICE_LOAN') {
-      if (selectedEntry.interestRateBps == null) return [];
-      const principal = derivePrincipalFromTotalPayable(effectiveTotalPayableMinor, selectedEntry.interestRateBps, effectiveTermMonths);
-      return generateLoanSchedule(principal, selectedEntry.interestRateBps, effectiveTermMonths, start, paymentFrequency, totalInstalments ?? undefined);
-    }
-    return generateStraightLineSchedule(financeAmountMinor, effectiveTermMonths, start, paymentFrequency, totalInstalments ?? undefined);
+    if (!isDepositInstalment || !depositTermsValid) return [];
+    return generateStraightLineSchedule(financeAmountMinor, 1, new Date(startDate), paymentFrequency, instalmentCount);
   }
 
   async function loadContracts() {
@@ -211,17 +156,13 @@ export default function ContractsPage() {
     api.get<{ customers: Customer[] }>('/customers')
       .then((r) => setCustomers(r.customers))
       .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load customers', variant: 'destructive' }));
-    api.get<{ products: Product[] }>('/products')
-      .then((r) => setProducts(r.products))
-      .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load products', variant: 'destructive' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showForm]);
 
   useEffect(() => {
     // A different customer may belong to a different branch — the previously-picked
-    // unit and everything derived from it is no longer necessarily valid.
+    // unit is no longer necessarily valid.
     setInventoryItemId('');
-    setSelectedTermMonths(null);
     if (!selectedCustomer) { setItems([]); return; }
     api.get<{ items: InventoryItem[] }>(`/inventory?status=AVAILABLE&branchId=${selectedCustomer.branchId}`).then((r) => setItems(r.items));
     if (!directDebitMsisdn) setDirectDebitMsisdn(customerPhone(selectedCustomer) === '—' ? '' : customerPhone(selectedCustomer));
@@ -229,24 +170,12 @@ export default function ContractsPage() {
   }, [customerId]);
 
   useEffect(() => {
-    // A different contract type may show a completely different step 2 (product-only
-    // for DEVICE_LOAN vs. inventory-unit for the others) — whatever was picked before
-    // isn't necessarily valid for the new type.
-    setInventoryItemId(''); setLoanProductId('');
+    // A different contract type may show a completely different step 2 —
+    // whatever unit was picked before isn't necessarily valid for the new type.
+    setInventoryItemId('');
+    setPaymentFrequency('WEEKLY');
+    setPaymentMethod('CUSTOMER_INITIATED');
   }, [contractType]);
-
-  useEffect(() => {
-    setSelectedTermMonths(null);
-    setPaymentFrequency('MONTHLY');
-    if (!effectiveProductId || !contractType) { setChartEntries([]); return; }
-    api.get<{ entries: PriceChartEntry[] }>(`/price-chart?productId=${effectiveProductId}&contractType=${contractType}&activeOnly=true`)
-      .then((r) => setChartEntries(r.entries));
-  }, [effectiveProductId, contractType]);
-
-  useEffect(() => {
-    // Whatever term was picked may not be priced at the newly-chosen frequency.
-    setSelectedTermMonths(null);
-  }, [paymentFrequency]);
 
   async function onSubmit() {
     if (!customerId) { toast({ title: 'Select a customer', variant: 'destructive' }); return; }
@@ -270,41 +199,43 @@ export default function ContractsPage() {
       return;
     }
 
-    if (isDeviceLoan ? !loanProductId : !inventoryItemId) {
-      toast({ title: isDeviceLoan ? 'Select a product' : 'Select an available unit', variant: 'destructive' });
+    if (isDeviceLoan) {
+      if (!loanTermsValid) { toast({ title: 'Enter a positive loan amount', variant: 'destructive' }); return; }
+      setSaving(true);
+      try {
+        await api.post('/contracts', {
+          contractType, customerId, startDate, loanAmountMinor: parsedLoanAmount,
+          ...(selectedCustomer?.branchId && { branchId: selectedCustomer.branchId }),
+        });
+        toast({ title: 'Loan disbursed' });
+        setShowForm(false);
+        resetWizard();
+        await loadContracts();
+      } catch (e) {
+        toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to create contract', variant: 'destructive' });
+      } finally {
+        setSaving(false);
+      }
       return;
     }
-    if (!selectedEntry) { toast({ title: 'Select an installment period', variant: 'destructive' }); return; }
+
+    // DEPOSIT_INSTALMENT
+    if (!inventoryItemId) { toast({ title: 'Select an available unit', variant: 'destructive' }); return; }
+    if (!depositTermsValid) { toast({ title: 'Check total price, deposit, and installment period', variant: 'destructive' }); return; }
     if (paymentMethod !== 'CUSTOMER_INITIATED' && (!directDebitNetwork || !directDebitMsisdn.trim())) {
       toast({ title: 'Select a network and enter a mobile money number', variant: 'destructive' });
-      return;
-    }
-    const hasPriceOverride = canOverridePricing && totalPriceOverride !== '';
-    const hasDepositOverride = canOverridePricing && contractType === 'DEPOSIT_INSTALMENT' && depositOverride !== '';
-    const hasTermOverride = hasTermOverridePreview;
-    const hasInstalmentCountOverride = hasInstalmentCountOverridePreview;
-    if (hasDepositOverride && effectiveDepositAmountMinor >= effectiveTotalPayableMinor) {
-      toast({ title: 'Deposit must be less than the total price', variant: 'destructive' });
       return;
     }
     setSaving(true);
     try {
       await api.post('/contracts', {
-        contractType, customerId,
-        ...(isDeviceLoan ? { productId: loanProductId } : { inventoryItemId }),
-        termMonths: selectedEntry.termMonths, paymentFrequency: selectedEntry.paymentFrequency,
+        contractType, customerId, inventoryItemId,
+        totalPayableMinor: parsedTotalPrice, depositAmountMinor: parsedDeposit,
+        termWeeks: parsedTermWeeks, paymentFrequency,
         startDate,
-        ...(hasPriceOverride && { totalPayableMinorOverride: effectiveTotalPayableMinor }),
-        ...(hasDepositOverride && { depositAmountMinorOverride: effectiveDepositAmountMinor }),
-        ...(hasTermOverride && { termMonthsOverride: effectiveTermMonths }),
-        ...(hasInstalmentCountOverride && { instalmentCountOverride: parsedInstalmentCountOverride }),
-        ...(directDebitEligible && {
-          gracePeriodDays: Number(gracePeriodDays || '0'), penaltyRateBps: Math.round(parseFloat(penaltyPercent || '0') * 100),
-          paymentMethod,
-        }),
-        ...(directDebitEligible && paymentMethod !== 'CUSTOMER_INITIATED' && {
-          directDebitNetwork, directDebitMsisdn: directDebitMsisdn.trim(),
-        }),
+        gracePeriodDays: Number(gracePeriodDays || '0'), penaltyRateBps: Math.round(parseFloat(penaltyPercent || '0') * 100),
+        paymentMethod,
+        ...(paymentMethod !== 'CUSTOMER_INITIATED' && { directDebitNetwork, directDebitMsisdn: directDebitMsisdn.trim() }),
         ...(selectedCustomer?.branchId && { branchId: selectedCustomer.branchId }),
       });
       toast({ title: 'Contract created' });
@@ -338,16 +269,6 @@ export default function ContractsPage() {
     );
   });
 
-  const filteredProducts = products.filter((p) => {
-    if (!itemSearch.trim()) return true;
-    const q = itemSearch.toLowerCase();
-    return (
-      p.name.toLowerCase().includes(q) ||
-      p.sku.toLowerCase().includes(q) ||
-      (p.category?.name ?? '').toLowerCase().includes(q)
-    );
-  });
-
   if (showForm) {
     return (
       <div className="max-w-3xl mx-auto space-y-4">
@@ -360,7 +281,7 @@ export default function ContractsPage() {
               ))}
             </div>
             <p className="text-xs text-gray-500 mt-1.5">
-              Step {step} of 3 — {step === 1 ? 'Select Customer' : step === 2 ? 'Select Type & Product' : 'Configure Payment Terms'}
+              Step {step} of 3 — {step === 1 ? 'Select Customer' : step === 2 ? (isDepositInstalment ? 'Select Type & Unit' : 'Select Type') : 'Configure Payment Terms'}
             </p>
           </CardHeader>
           <CardContent>
@@ -403,7 +324,7 @@ export default function ContractsPage() {
                 </div>
                 <div className="flex gap-2 pt-1">
                   <Button variant="outline" onClick={() => { setShowForm(false); resetWizard(); }} className="flex-1">Cancel</Button>
-                  <Button onClick={() => setStep(2)} disabled={!step1Valid} className="flex-1">Next: Select Type & Product</Button>
+                  <Button onClick={() => setStep(2)} disabled={!step1Valid} className="flex-1">Next: Select Type</Button>
                 </div>
               </div>
             )}
@@ -419,16 +340,21 @@ export default function ContractsPage() {
                     </SelectContent>
                   </Select>
                   {isDeviceLoan && (
-                    <p className="text-xs text-gray-400 mt-1">Cash is disbursed to the customer to buy a device outside the store — no unit is reserved from stock.</p>
+                    <p className="text-xs text-gray-400 mt-1">Cash is disbursed to the customer — not linked to a product. The customer pays 1% daily interest on the loan amount, or the full amount, via USSD.</p>
                   )}
                   {isSaveToOwn && (
                     <p className="text-xs text-gray-400 mt-1">Open-ended savings — not linked to any product. The customer deposits any amount, any time, until they withdraw or the saved amount goes toward a purchase.</p>
                   )}
+                  {isDepositInstalment && (
+                    <p className="text-xs text-gray-400 mt-1">Reserves a serialized unit from stock — the total price, deposit, and installment period are entered on the next step.</p>
+                  )}
                 </div>
 
-                {isSaveToOwn ? (
+                {!isDepositInstalment ? (
                   <div className="bg-blue-50 p-3 text-sm text-blue-900">
-                    No product or unit to select for Save to Own — continue to review and create the account.
+                    {isDeviceLoan
+                      ? 'No product or unit to select for a Device Loan — continue to enter the loan amount.'
+                      : 'No product or unit to select for Save to Own — continue to review and create the account.'}
                   </div>
                 ) : (
                 <>
@@ -436,73 +362,42 @@ export default function ContractsPage() {
                   <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
                   <input
                     type="text"
-                    placeholder={isDeviceLoan ? 'Search by product name or category...' : 'Search by product name, category, or serial/IMEI...'}
+                    placeholder="Search by product name, category, or serial/IMEI..."
                     className="flex h-10 w-full border border-input bg-white/90 pl-9 pr-3 py-2 text-sm"
                     value={itemSearch}
                     onChange={(e) => setItemSearch(e.target.value)}
                   />
                 </div>
 
-                {isDeviceLoan ? (
-                  <div className="max-h-96 overflow-y-auto space-y-2">
-                    {filteredProducts.map((p) => {
-                      const priced = !p.missingContractTypes.includes('DEVICE_LOAN');
-                      return (
-                        <div
-                          key={p.id}
-                          className={`p-3 border transition-colors flex justify-between items-start gap-3 ${
-                            !priced ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
-                            : loanProductId === p.id ? 'border-blue-500 bg-blue-50 cursor-pointer' : 'border-gray-200 hover:border-blue-300 cursor-pointer'
-                          }`}
-                          onClick={() => priced && setLoanProductId(p.id)}
-                        >
-                          <div className="min-w-0">
-                            <p className={`font-medium ${priced ? 'text-gray-900' : 'text-gray-300'}`}>{p.name}</p>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">{p.sku}</span>
-                              {p.category?.name && <span className="ml-2">{p.category.name}</span>}
-                              {!priced && <span className="ml-2 text-red-500">Not priced for Device Loan</span>}
-                            </p>
-                          </div>
-                          <p className="font-semibold text-gray-900 shrink-0">{formatCurrency(p.cashPriceMinor)}</p>
+                <div className="max-h-96 overflow-y-auto space-y-2">
+                  {filteredItems.map((i) => (
+                    <div
+                      key={i.id}
+                      className={`p-3 border cursor-pointer transition-colors ${inventoryItemId === i.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
+                      onClick={() => setInventoryItemId(i.id)}
+                    >
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="min-w-0">
+                          <p className="font-medium text-gray-900">{i.product.name}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">{i.serialNumber}</span>
+                            {i.product.category?.name && <span className="ml-2">{i.product.category.name}</span>}
+                          </p>
                         </div>
-                      );
-                    })}
-                    {filteredProducts.length === 0 && (
-                      <p className="text-center text-sm text-gray-400 py-8">No products found</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="max-h-96 overflow-y-auto space-y-2">
-                    {filteredItems.map((i) => (
-                      <div
-                        key={i.id}
-                        className={`p-3 border cursor-pointer transition-colors ${inventoryItemId === i.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
-                        onClick={() => setInventoryItemId(i.id)}
-                      >
-                        <div className="flex justify-between items-start gap-3">
-                          <div className="min-w-0">
-                            <p className="font-medium text-gray-900">{i.product.name}</p>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">{i.serialNumber}</span>
-                              {i.product.category?.name && <span className="ml-2">{i.product.category.name}</span>}
-                            </p>
-                          </div>
-                          <p className="font-semibold text-gray-900 shrink-0">{formatCurrency(i.product.cashPriceMinor)}</p>
-                        </div>
+                        <p className="font-semibold text-gray-900 shrink-0">{formatCurrency(i.product.cashPriceMinor)}</p>
                       </div>
-                    ))}
-                    {filteredItems.length === 0 && (
-                      <p className="text-center text-sm text-gray-400 py-8">No available units found for this customer&apos;s branch</p>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  ))}
+                  {filteredItems.length === 0 && (
+                    <p className="text-center text-sm text-gray-400 py-8">No available units found for this customer&apos;s branch</p>
+                  )}
+                </div>
                 </>
                 )}
 
                 <div className="flex gap-2 pt-1">
                   <Button variant="outline" onClick={() => setStep(1)} className="flex-1">Back</Button>
-                  <Button onClick={() => setStep(3)} disabled={!step2Valid} className="flex-1">Next: {isSaveToOwn ? 'Review' : 'Payment Terms'}</Button>
+                  <Button onClick={() => setStep(3)} disabled={!step2Valid} className="flex-1">Next: {isSaveToOwn || isDeviceLoan ? 'Review' : 'Payment Terms'}</Button>
                 </div>
               </div>
             )}
@@ -513,7 +408,7 @@ export default function ContractsPage() {
                   <p className="text-xs font-medium text-blue-900">Customer</p>
                   <p className="text-sm text-blue-900">{selectedCustomer?.firstName} {selectedCustomer?.lastName} &middot; {selectedCustomer?.membershipId}</p>
                 </div>
-                {isSaveToOwn ? (
+                {isSaveToOwn && (
                   <>
                     <div className="bg-green-50 p-3">
                       <p className="text-xs font-medium text-green-900">Save to Own</p>
@@ -524,123 +419,77 @@ export default function ContractsPage() {
                       <Input type="date" className="mt-1.5" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                     </div>
                   </>
-                ) : (
+                )}
+
+                {isDeviceLoan && (
+                  <>
+                    <div className="bg-green-50 p-3">
+                      <p className="text-xs font-medium text-green-900">Device Loan</p>
+                      <p className="text-sm text-green-900">Not linked to a product. 1% daily interest accrues on the loan amount (weekdays only, after the grace period) until fully paid.</p>
+                    </div>
+                    <div>
+                      <Label>Loan Amount (GHS) *</Label>
+                      <Input required type="number" step="0.01" min={0} className="mt-1.5" value={loanAmount} onChange={(e) => setLoanAmount(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label>Start Date</Label>
+                      <Input type="date" className="mt-1.5" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                    </div>
+                    <div className="border border-gray-200 p-3 space-y-1.5 text-sm">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Summary</p>
+                      <div className="flex justify-between"><span className="text-gray-500">Loan Amount</span><span className="font-medium text-gray-900">{formatCurrency(parsedLoanAmount || 0)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Daily Interest (1%)</span><span className="font-medium text-gray-900">{formatCurrency(Math.round((parsedLoanAmount || 0) * 0.01))} / weekday</span></div>
+                    </div>
+                  </>
+                )}
+
+                {isDepositInstalment && (
                 <>
                 <div className="bg-green-50 p-3">
-                  <p className="text-xs font-medium text-green-900">{isDeviceLoan ? 'Product' : 'Product & Unit'}</p>
+                  <p className="text-xs font-medium text-green-900">Product & Unit</p>
                   <p className="text-sm text-green-900">
-                    {isDeviceLoan
-                      ? `${selectedLoanProduct?.name} · ${contractTypeLabel('DEVICE_LOAN')}`
-                      : <>{selectedItem?.product.name} &middot; <span className="font-mono">{selectedItem?.serialNumber}</span></>}
+                    {selectedItem?.product.name} &middot; <span className="font-mono">{selectedItem?.serialNumber}</span>
                   </p>
-                </div>
-
-                <div>
-                  <Label>Installment Period *</Label>
-                  <div className="mt-1.5 grid grid-cols-3 gap-2">
-                    {PRICE_CHART_TERM_MONTHS.map((term) => {
-                      const entry = entriesForFrequency.find((e) => e.termMonths === term);
-                      const active = selectedTermMonths === term;
-                      return (
-                        <button
-                          type="button"
-                          key={term}
-                          disabled={!entry}
-                          onClick={() => setSelectedTermMonths(term)}
-                          className={`min-w-0 p-3 border text-left transition-colors ${
-                            !entry ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
-                            : active ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'
-                          }`}
-                        >
-                          <p className="text-xs font-medium text-gray-500">{term} Months</p>
-                          <p className={`text-sm font-semibold mt-0.5 break-words ${entry ? 'text-gray-900' : 'text-gray-300'}`}>
-                            {entry ? formatCurrency(entry.totalPayableMinor) : 'Not priced'}
-                          </p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {chartEntries.length === 0 && (
-                    <p className="text-xs text-red-600 mt-1.5">No price chart entries for this product/contract type — price it from the Products or Price Chart page first.</p>
-                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label>Total Price (GHS)</Label>
-                    <Input
-                      disabled={!canOverridePricing}
-                      type={canOverridePricing ? 'number' : 'text'}
-                      step="0.01"
-                      className={`mt-1.5 ${canOverridePricing ? '' : 'bg-gray-50'}`}
-                      value={totalPriceOverride !== '' ? totalPriceOverride : (selectedEntry ? (selectedEntry.totalPayableMinor / 100).toFixed(2) : '0.00')}
-                      onChange={(e) => setTotalPriceOverride(e.target.value)}
-                    />
-                    {canOverridePricing && (
-                      <p className="text-xs text-gray-400 mt-1">Negotiated price — overrides the price chart tier for this contract only.</p>
-                    )}
+                    <Label>Total Price (GHS) *</Label>
+                    <Input required type="number" step="0.01" min={0} className="mt-1.5" value={totalPrice} onChange={(e) => setTotalPrice(e.target.value)} />
                   </div>
-                  {contractType === 'DEPOSIT_INSTALMENT' && (
-                    <div>
-                      <Label>Deposit Amount (GHS)</Label>
-                      <Input
-                        disabled={!canOverridePricing}
-                        type={canOverridePricing ? 'number' : 'text'}
-                        step="0.01"
-                        className={`mt-1.5 ${canOverridePricing ? '' : 'bg-gray-50'}`}
-                        value={depositOverride !== '' ? depositOverride : (selectedEntry ? (selectedEntry.depositAmountMinor / 100).toFixed(2) : '0.00')}
-                        onChange={(e) => setDepositOverride(e.target.value)}
-                      />
-                    </div>
-                  )}
+                  <div>
+                    <Label>Deposit Amount (GHS) *</Label>
+                    <Input required type="number" step="0.01" min={0} className="mt-1.5" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Installment Period (weeks) *</Label>
+                    <Input
+                      required type="number" step="1"
+                      min={DEPOSIT_INSTALMENT_MIN_TERM_WEEKS} max={DEPOSIT_INSTALMENT_MAX_TERM_WEEKS}
+                      className="mt-1.5" value={termWeeks} onChange={(e) => setTermWeeks(e.target.value)}
+                    />
+                    <p className="text-xs text-gray-400 mt-1">{DEPOSIT_INSTALMENT_MIN_TERM_WEEKS} to {DEPOSIT_INSTALMENT_MAX_TERM_WEEKS} weeks.</p>
+                  </div>
                   <div>
                     <Label>Payment Frequency *</Label>
                     <Select value={paymentFrequency} onValueChange={(v) => setPaymentFrequency(v as PaymentFrequencyName)}>
                       <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {PAYMENT_FREQUENCIES.map((f) => <SelectItem key={f} value={f}>{frequencyLabel(f)}</SelectItem>)}
+                        {DEPOSIT_INSTALMENT_FREQUENCIES.map((f) => <SelectItem key={f} value={f}>{frequencyLabel(f)}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div>
-                    <Label>Total Installments</Label>
-                    <Input
-                      disabled={!canOverridePricing}
-                      type={canOverridePricing ? 'number' : 'text'}
-                      min={1}
-                      step="1"
-                      className={`mt-1.5 ${canOverridePricing ? '' : 'bg-gray-50'}`}
-                      value={
-                        canOverridePricing
-                          ? (instalmentCountOverride !== '' ? instalmentCountOverride : (defaultInstalments ? String(defaultInstalments) : ''))
-                          : (totalInstalments ? `${totalInstalments} (auto)` : 'Auto')
-                      }
-                      onChange={(e) => setInstalmentCountOverride(e.target.value)}
-                    />
-                    {canOverridePricing && (
-                      <p className="text-xs text-gray-400 mt-1">Negotiated count — overrides the frequency-derived default of {defaultInstalments ?? '—'}.</p>
-                    )}
+                    <p className="text-xs text-gray-400 mt-1">
+                      {paymentFrequency === 'DAILY' && Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
+                        ? `${parsedTermWeeks} weeks = ${parsedTermWeeks * 7} daily installments`
+                        : Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
+                          ? `${parsedTermWeeks} weekly installments`
+                          : ''}
+                    </p>
                   </div>
                 </div>
-
-                {canOverridePricing && (
-                  <div>
-                    <Label>Term Override (Months)</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      step="1"
-                      className="mt-1.5"
-                      placeholder={selectedTermMonths ? `${selectedTermMonths} (price chart tier)` : ''}
-                      value={termMonthsOverride}
-                      onChange={(e) => setTermMonthsOverride(e.target.value)}
-                    />
-                    <p className="text-xs text-gray-400 mt-1">Negotiated term length — priced off the {selectedTermMonths ?? '—'}-month tier above, but the actual schedule runs for this many months instead.</p>
-                  </div>
-                )}
 
                 <div>
                   <Label>Start Date</Label>
@@ -701,22 +550,15 @@ export default function ContractsPage() {
 
                 <div className="border border-gray-200 p-3 space-y-1.5 text-sm">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Summary</p>
-                  <div className="flex justify-between"><span className="text-gray-500">Total Price</span><span className="font-medium text-gray-900">{selectedEntry ? formatCurrency(effectiveTotalPayableMinor) : formatCurrency(0)}</span></div>
-                  {contractType === 'DEPOSIT_INSTALMENT' && (
-                    <div className="flex justify-between"><span className="text-gray-500">Deposit</span><span className="font-medium text-gray-900">{selectedEntry ? formatCurrency(effectiveDepositAmountMinor) : formatCurrency(0)}</span></div>
-                  )}
+                  <div className="flex justify-between"><span className="text-gray-500">Total Price</span><span className="font-medium text-gray-900">{formatCurrency(parsedTotalPrice || 0)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Deposit</span><span className="font-medium text-gray-900">{formatCurrency(parsedDeposit || 0)}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Finance Amount</span><span className="font-medium text-gray-900">{formatCurrency(financeAmountMinor)}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">Installment Amount</span><span className="font-medium text-gray-900">{formatCurrency(effectiveInstalmentAmountMinor)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Installment Amount</span><span className="font-medium text-gray-900">{formatCurrency(instalmentAmountMinor)}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Payment Frequency</span><Badge variant="secondary">{paymentFrequency}</Badge></div>
-                  {hasTermOverridePreview && (
-                    <div className="flex justify-between"><span className="text-gray-500">Term</span><span className="font-medium text-gray-900">{effectiveTermMonths} months</span></div>
-                  )}
-                  {hasInstalmentCountOverridePreview && (
-                    <div className="flex justify-between"><span className="text-gray-500">Installments</span><span className="font-medium text-gray-900">{totalInstalments}</span></div>
-                  )}
+                  <div className="flex justify-between"><span className="text-gray-500">Installments</span><span className="font-medium text-gray-900">{instalmentCount || '—'}</span></div>
                 </div>
 
-                {selectedEntry && (
+                {depositTermsValid && (
                   <div>
                     <Button type="button" variant="outline" className="w-full" onClick={() => setShowSchedulePreview((v) => !v)}>
                       {showSchedulePreview ? 'Hide' : 'Preview'} Installment Schedule
@@ -808,7 +650,9 @@ export default function ContractsPage() {
                     <TableCell>
                       {c.contractType === 'SAVE_TO_OWN'
                         ? `Saved: ${formatCurrency(c.totalPaidMinor)}`
-                        : `${formatCurrency(c.balanceMinor ?? 0)} / ${formatCurrency(c.totalPayableMinor ?? 0)}`}
+                        : c.contractType === 'DEVICE_LOAN'
+                          ? `Paid: ${formatCurrency(c.totalPaidMinor)}`
+                          : `${formatCurrency(c.balanceMinor ?? 0)} / ${formatCurrency(c.totalPayableMinor ?? 0)}`}
                     </TableCell>
                     <TableCell>
                       <Link href={`/contracts/${c.id}`}><ChevronRight className="h-4 w-4 text-gray-300" /></Link>

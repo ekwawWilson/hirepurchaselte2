@@ -6,7 +6,7 @@ import { Plus, Package as PackageIcon } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency, contractTypeLabel } from '@/lib/utils';
+import { formatCurrency } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,17 +23,10 @@ interface Product {
   model: string | null;
   cashPriceMinor: number;
   isActive: boolean;
-  missingContractTypes: string[];
 }
 interface Category { id: string; name: string }
 
-// Matches the legacy hirepurchase app's fixed pricing tiers exactly — see constants/contracts.ts.
-const TERM_MONTHS = [3, 4, 6] as const;
 const NEW_CATEGORY = '__new__';
-type TermPricingForm = { totalPayable: string; deposit: string };
-const emptyTermPricing: Record<number, TermPricingForm> = { 3: { totalPayable: '', deposit: '' }, 4: { totalPayable: '', deposit: '' }, 6: { totalPayable: '', deposit: '' } };
-type DeviceLoanPricingForm = { totalPayable: string; interestRate: string };
-const emptyDeviceLoanPricing: Record<number, DeviceLoanPricingForm> = { 3: { totalPayable: '', interestRate: '' }, 4: { totalPayable: '', interestRate: '' }, 6: { totalPayable: '', interestRate: '' } };
 
 export default function ProductsPage() {
   const canCreate = useAuthStore((s) => s.hasPermission('inventory.receive'));
@@ -44,8 +37,6 @@ export default function ProductsPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', categoryId: '', cashPrice: '' });
   const [newCategoryName, setNewCategoryName] = useState('');
-  const [termPricing, setTermPricing] = useState(emptyTermPricing);
-  const [deviceLoanPricing, setDeviceLoanPricing] = useState(emptyDeviceLoanPricing);
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -73,8 +64,6 @@ export default function ProductsPage() {
   function resetForm() {
     setForm({ name: '', description: '', categoryId: '', cashPrice: '' });
     setNewCategoryName('');
-    setTermPricing(emptyTermPricing);
-    setDeviceLoanPricing(emptyDeviceLoanPricing);
   }
 
   async function onCreate(e: React.FormEvent) {
@@ -96,32 +85,8 @@ export default function ProductsPage() {
         categoryId = category.id;
       }
 
-      const termPricingPayload: Record<number, { totalPayableMinor: number; depositAmountMinor: number }> = {};
-      for (const term of TERM_MONTHS) {
-        const t = termPricing[term];
-        if (!t.totalPayable.trim()) continue; // blank = skip this period
-        termPricingPayload[term] = {
-          totalPayableMinor: Math.round(parseFloat(t.totalPayable) * 100),
-          depositAmountMinor: Math.round(parseFloat(t.deposit || '0') * 100),
-        };
-      }
-
-      const deviceLoanPricingPayload: Record<number, { totalPayableMinor: number; interestRateBps: number }> = {};
-      for (const term of TERM_MONTHS) {
-        const t = deviceLoanPricing[term];
-        if (!t.totalPayable.trim()) continue; // blank = skip this period
-        deviceLoanPricingPayload[term] = {
-          totalPayableMinor: Math.round(parseFloat(t.totalPayable) * 100),
-          interestRateBps: Number(t.interestRate || '0'),
-        };
-      }
-
       const cashPriceMinor = Math.round(parseFloat(form.cashPrice) * 100);
-      await api.post('/products', {
-        name: form.name, description: form.description, categoryId, cashPriceMinor,
-        ...(Object.keys(termPricingPayload).length > 0 && { termPricing: termPricingPayload }),
-        ...(Object.keys(deviceLoanPricingPayload).length > 0 && { deviceLoanPricing: deviceLoanPricingPayload }),
-      });
+      await api.post('/products', { name: form.name, description: form.description, categoryId, cashPriceMinor });
       toast({ title: 'Product created', description: `${form.name} was added to the catalogue.` });
       resetForm();
       setShowForm(false);
@@ -176,71 +141,8 @@ export default function ProductsPage() {
                 <div>
                   <Label>Base Price (GHS) *</Label>
                   <Input required type="number" step="0.01" min={0} placeholder="0.00" className="mt-1.5" value={form.cashPrice} onChange={(e) => setForm({ ...form, cashPrice: e.target.value })} />
+                  <p className="text-xs text-gray-400 mt-1">The product&apos;s one price — deal terms (total price, deposit, loan amount, etc.) are entered per contract, not here.</p>
                 </div>
-              </div>
-
-              <div className="pt-2">
-                <p className="text-sm font-semibold text-gray-900">Pricing by Installment Period</p>
-                <div className="mt-3 space-y-3">
-                  {TERM_MONTHS.map((term) => (
-                    <div key={term} className="ring-1 ring-black/5 p-3">
-                      <p className="text-xs font-semibold text-gray-700 mb-2">{term} months</p>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label className="text-xs font-normal text-gray-500">Base Price (GHS)</Label>
-                          <Input
-                            type="number" step="0.01" min={0} placeholder="0.00" className="mt-1"
-                            value={termPricing[term].totalPayable}
-                            onChange={(e) => setTermPricing({ ...termPricing, [term]: { ...termPricing[term], totalPayable: e.target.value } })}
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs font-normal text-gray-500">Deposit (GHS)</Label>
-                          <Input
-                            type="number" step="0.01" min={0} placeholder="0.00" className="mt-1"
-                            value={termPricing[term].deposit}
-                            onChange={(e) => setTermPricing({ ...termPricing, [term]: { ...termPricing[term], deposit: e.target.value } })}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-xs text-gray-400 mt-2">
-                  Leave blank to skip a period. These prices are auto-filled during contract creation.
-                </p>
-              </div>
-
-              <div className="pt-2">
-                <p className="text-sm font-semibold text-gray-900">Device Loan Pricing</p>
-                <div className="mt-3 space-y-3">
-                  {TERM_MONTHS.map((term) => (
-                    <div key={term} className="ring-1 ring-black/5 p-3">
-                      <p className="text-xs font-semibold text-gray-700 mb-2">{term} months</p>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label className="text-xs font-normal text-gray-500">Total Payable (GHS)</Label>
-                          <Input
-                            type="number" step="0.01" min={0} placeholder="0.00" className="mt-1"
-                            value={deviceLoanPricing[term].totalPayable}
-                            onChange={(e) => setDeviceLoanPricing({ ...deviceLoanPricing, [term]: { ...deviceLoanPricing[term], totalPayable: e.target.value } })}
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs font-normal text-gray-500">Interest rate (bps/yr, e.g. 2400 = 24%)</Label>
-                          <Input
-                            type="number" min={0} placeholder="0" className="mt-1"
-                            value={deviceLoanPricing[term].interestRate}
-                            onChange={(e) => setDeviceLoanPricing({ ...deviceLoanPricing, [term]: { ...deviceLoanPricing[term], interestRate: e.target.value } })}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-xs text-gray-400 mt-2">
-                  Leave blank to skip a period. Cash is disbursed to the customer for a Device Loan — no deposit applies.
-                </p>
               </div>
 
               <div className="flex gap-2 pt-2">
@@ -287,8 +189,7 @@ export default function ProductsPage() {
                   <TableHead>SKU</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Brand/Model</TableHead>
-                  <TableHead>Cash Price</TableHead>
-                  <TableHead>Pricing</TableHead>
+                  <TableHead>Base Price</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -299,15 +200,6 @@ export default function ProductsPage() {
                     <TableCell className="font-medium text-gray-900"><Link href={`/products/${p.id}`} className="hover:underline">{p.name}</Link></TableCell>
                     <TableCell>{[p.brand, p.model].filter(Boolean).join(' ') || '—'}</TableCell>
                     <TableCell>{formatCurrency(p.cashPriceMinor)}</TableCell>
-                    <TableCell>
-                      {p.missingContractTypes.length === 0 ? (
-                        <Badge variant="success">2/2 types priced</Badge>
-                      ) : (
-                        <Badge variant="destructive" title={`Missing: ${p.missingContractTypes.map(contractTypeLabel).join(', ')}`}>
-                          {2 - p.missingContractTypes.length}/2 types priced
-                        </Badge>
-                      )}
-                    </TableCell>
                     <TableCell><Badge variant={p.isActive ? 'success' : 'secondary'}>{p.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
                   </TableRow>
                 ))}

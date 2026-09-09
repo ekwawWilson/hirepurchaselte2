@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
+import { getDeviceLoanState } from '@/lib/services/paymentService';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(req);
@@ -27,5 +28,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // SAVE_TO_OWN has no target to overpay against — credit only applies to
   // contracts with a real totalPayableMinor (contractService.ts).
   const creditMinor = contract.totalPayableMinor === null ? 0 : Math.max(0, contract.totalPaidMinor - contract.totalPayableMinor);
-  return NextResponse.json({ contract: { ...contract, creditMinor } });
+  // DEVICE_LOAN has no fixed target either — principal/accrued-interest owed
+  // right now, derived from the ledger the same way postDeviceLoanPayment
+  // validates against (paymentService.ts).
+  const deviceLoanState = contract.contractType === 'DEVICE_LOAN' ? await getDeviceLoanState(contract.id) : null;
+  return NextResponse.json({ contract: { ...contract, creditMinor, deviceLoanState } });
 }

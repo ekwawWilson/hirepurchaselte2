@@ -1,17 +1,18 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { makeRequest, makeParams } from './helpers';
 import { prisma } from '@/lib/db/prisma';
+import { accrueDailyLoanInterest } from '@/lib/services/loanService';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { GET as branchesGET } from '@/app/api/branches/route';
 import { POST as productsPOST } from '@/app/api/products/route';
-import { POST as priceChartPOST } from '@/app/api/price-chart/route';
 import { POST as customersPOST } from '@/app/api/customers/route';
 import { POST as inventoryPOST, GET as inventoryGET } from '@/app/api/inventory/route';
 import { POST as contractsPOST } from '@/app/api/contracts/route';
 import { GET as contractGET } from '@/app/api/contracts/[id]/route';
 import { POST as contractReleasePOST } from '@/app/api/contracts/[id]/release/route';
 import { POST as paymentsCashPOST } from '@/app/api/payments/cash/route';
+import { POST as deviceLoanPaymentsPOST } from '@/app/api/payments/device-loan/route';
 import { GET as paymentsGET } from '@/app/api/payments/route';
 import { POST as paymentReversePOST } from '@/app/api/payments/[id]/reverse/route';
 import { POST as withdrawPOST } from '@/app/api/payments/withdraw/route';
@@ -87,11 +88,23 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     return (await res.json()).contract;
   }
 
+  /** Total price/deposit/term are entered directly now — no price chart lookup at all (contractService.ts). */
+  async function makeDepositInstalment(token: string, custId: string, itemId: string, overrides: Record<string, unknown> = {}) {
+    return contractsPOST(makeRequest('POST', '/api/contracts', {
+      token,
+      body: {
+        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId,
+        totalPayableMinor: 300000, depositAmountMinor: 60000, termWeeks: 6, paymentFrequency: 'WEEKLY',
+        ...overrides,
+      },
+    }));
+  }
+
   it('SAVE_TO_OWN: open-ended savings — no product, no target, deposits accumulate, and it never auto-completes', async () => {
     const custId = await makeCustomer('SaveToOwn');
 
-    // No inventoryItemId, no productId, no termMonths — SAVE_TO_OWN needs
-    // none of them (contractService.ts).
+    // No inventoryItemId, no productId, no term — SAVE_TO_OWN needs none of
+    // them (contractService.ts).
     const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
       token: cashier, body: { contractType: 'SAVE_TO_OWN', customerId: custId },
     }));
@@ -175,16 +188,9 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
   });
 
   it('withdrawals are only available on SAVE_TO_OWN contracts', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
-    }));
-    expect(entry.status).toBe(201);
-
     const custId = await makeCustomer('NoWithdraw');
     const itemId = await receiveItem('NW');
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
-    }));
+    const created = await makeDepositInstalment(cashier, custId, itemId);
     const contract = (await created.json()).contract;
 
     const res = await withdrawPOST(makeRequest('POST', '/api/payments/withdraw', {
@@ -195,159 +201,58 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(body.error).toMatch(/only available on save to own/i);
   });
 
-  it('ADMIN can override the price chart tier with a negotiated total/deposit, and the schedule reflects it', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
-    }));
-    expect(entry.status).toBe(201);
+  it('DEPOSIT_INSTALMENT: total price, deposit, and term are entered directly, and WEEKLY term weeks map 1:1 to instalments', async () => {
+    const custId = await makeCustomer('DirectTerms');
+    const itemId = await receiveItem('DT');
 
-    const custId = await makeCustomer('OverrideAdmin');
-    const itemId = await receiveItem('OA');
-    // admin is an all-branch user (branchId null) — every other contract
-    // creation in this file uses the branch-scoped cashier token instead, so
-    // branchId resolves automatically; here it must be passed explicitly.
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: admin, body: {
-        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6, branchId,
-        totalPayableMinorOverride: 280000, depositAmountMinorOverride: 50000,
-      },
-    }));
+    const created = await makeDepositInstalment(admin, custId, itemId, { branchId, totalPayableMinor: 280000, depositAmountMinor: 50000, termWeeks: 5, paymentFrequency: 'WEEKLY' });
     expect(created.status).toBe(201);
     const contract = (await created.json()).contract;
-    expect(contract.totalPayableMinor).toBe(280000); // negotiated, not the price chart's 300000
-    expect(contract.depositAmountMinor).toBe(50000); // negotiated, not the price chart's 60000
+    expect(contract.totalPayableMinor).toBe(280000);
+    expect(contract.depositAmountMinor).toBe(50000);
+    expect(contract.termWeeks).toBe(5);
     expect(contract.balanceMinor).toBe(280000);
-    expect(contract.instalmentAmountMinor).toBe(Math.ceil((280000 - 50000) / 6)); // recomputed from the override, not the stale price-chart figure
+    expect(contract.instalmentAmountMinor).toBe(Math.ceil((280000 - 50000) / 5));
 
     const detail = await getContract(contract.id, admin);
-    expect(detail.instalments).toHaveLength(6);
+    expect(detail.instalments).toHaveLength(5); // WEEKLY: one instalment per week
     const scheduledTotal = detail.instalments.reduce((s: number, i: { amountDueMinor: number }) => s + i.amountDueMinor, 0);
-    expect(scheduledTotal).toBe(280000 - 50000); // the actual generated schedule finances the overridden amount, not the price chart's
+    expect(scheduledTotal).toBe(280000 - 50000);
   });
 
-  it('a non-admin\'s attempted price override is silently ignored — the standard price chart tier is used instead', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
-    }));
-    expect(entry.status).toBe(201);
+  it('DEPOSIT_INSTALMENT: DAILY frequency expands term weeks into 7x as many instalments', async () => {
+    const custId = await makeCustomer('DailyTerms');
+    const itemId = await receiveItem('DLY');
 
-    const custId = await makeCustomer('OverrideCashier');
-    const itemId = await receiveItem('OC');
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: {
-        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6,
-        totalPayableMinorOverride: 1, depositAmountMinorOverride: 0,
-      },
-    }));
+    const created = await makeDepositInstalment(admin, custId, itemId, { branchId, totalPayableMinor: 210000, depositAmountMinor: 30000, termWeeks: 3, paymentFrequency: 'DAILY' });
     expect(created.status).toBe(201);
     const contract = (await created.json()).contract;
-    expect(contract.totalPayableMinor).toBe(300000); // the override was ignored, not honored
-    expect(contract.depositAmountMinor).toBe(60000);
-  });
-
-  it('ADMIN can override the installment period, decoupled from the price chart tier used to source it', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
-    }));
-    expect(entry.status).toBe(201);
-
-    const custId = await makeCustomer('TermOverrideAdmin');
-    const itemId = await receiveItem('TOA');
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: admin, body: {
-        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6, branchId,
-        termMonthsOverride: 5,
-      },
-    }));
-    expect(created.status).toBe(201);
-    const contract = (await created.json()).contract;
-    expect(contract.termMonths).toBe(5); // the negotiated term, not the price chart's 6-month lookup tier
-    expect(contract.instalmentAmountMinor).toBe(Math.ceil((300000 - 60000) / 5)); // recomputed for a 5-month schedule, not the 6-month chart figure
+    expect(contract.termWeeks).toBe(3);
+    expect(contract.instalmentAmountMinor).toBe(Math.ceil((210000 - 30000) / 21)); // 3 weeks * 7 = 21 daily instalments
 
     const detail = await getContract(contract.id, admin);
-    expect(detail.instalments).toHaveLength(5);
-    const scheduledTotal = detail.instalments.reduce((s: number, i: { amountDueMinor: number }) => s + i.amountDueMinor, 0);
-    expect(scheduledTotal).toBe(300000 - 60000);
+    expect(detail.instalments).toHaveLength(21);
   });
 
-  it("a non-admin's attempted term override is silently ignored — the price chart tier's own term is used instead", async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
-    }));
-    expect(entry.status).toBe(201);
+  it('DEPOSIT_INSTALMENT rejects a term outside 1-24 weeks and a MONTHLY frequency', async () => {
+    const custId = await makeCustomer('BadTerms');
+    const itemId = await receiveItem('BT');
 
-    const custId = await makeCustomer('TermOverrideCashier');
-    const itemId = await receiveItem('TOC');
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: {
-        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6,
-        termMonthsOverride: 2,
-      },
-    }));
-    expect(created.status).toBe(201);
-    const contract = (await created.json()).contract;
-    expect(contract.termMonths).toBe(6); // the override was ignored, not honored
-  });
+    const tooLong = await makeDepositInstalment(cashier, custId, itemId, { termWeeks: 25 });
+    expect(tooLong.status).toBe(400);
+    expect((await tooLong.json()).error).toMatch(/termWeeks/i);
 
-  it('ADMIN can override the total instalment count directly, independent of termMonths', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
-    }));
-    expect(entry.status).toBe(201);
-
-    const custId = await makeCustomer('InstalCountAdmin');
-    const itemId = await receiveItem('ICA');
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: admin, body: {
-        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6, branchId,
-        instalmentCountOverride: 8,
-      },
-    }));
-    expect(created.status).toBe(201);
-    const contract = (await created.json()).contract;
-    expect(contract.termMonths).toBe(6); // unaffected — only the split count changed, not the term
-    expect(contract.instalmentAmountMinor).toBe(Math.ceil((300000 - 60000) / 8)); // recomputed for an 8-way split, not the 6-month default
-
-    const detail = await getContract(contract.id, admin);
-    expect(detail.instalments).toHaveLength(8);
-    const scheduledTotal = detail.instalments.reduce((s: number, i: { amountDueMinor: number }) => s + i.amountDueMinor, 0);
-    expect(scheduledTotal).toBe(300000 - 60000);
-  });
-
-  it("a non-admin's attempted instalment count override is silently ignored — the frequency-derived default is used instead", async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
-    }));
-    expect(entry.status).toBe(201);
-
-    const custId = await makeCustomer('InstalCountCashier');
-    const itemId = await receiveItem('ICC');
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: {
-        contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6,
-        instalmentCountOverride: 20,
-      },
-    }));
-    expect(created.status).toBe(201);
-    const contract = (await created.json()).contract;
-    expect(contract.instalmentAmountMinor).toBe(Math.ceil((300000 - 60000) / 6)); // the override was ignored, not honored
-
-    const detail = await getContract(contract.id, cashier);
-    expect(detail.instalments).toHaveLength(6);
+    const itemId2 = await receiveItem('BT2');
+    const monthly = await makeDepositInstalment(cashier, custId, itemId2, { paymentFrequency: 'MONTHLY' });
+    expect(monthly.status).toBe(400);
+    expect((await monthly.json()).error).toMatch(/paymentFrequency/i);
   });
 
   it('DEPOSIT_INSTALMENT: device withheld until deposit threshold is met (partial deposits accumulate)', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
-    }));
-    expect(entry.status).toBe(201);
-
     const custId = await makeCustomer('DepositInst');
     const itemId = await receiveItem('B');
 
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
-    }));
+    const created = await makeDepositInstalment(cashier, custId, itemId);
     const contract = (await created.json()).contract;
     expect(contract.status).toBe('PENDING_DEPOSIT');
     expect(contract.depositAmountMinor).toBe(60000);
@@ -370,15 +275,9 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
   });
 
   it('Payment idempotency + reversal: replay does not double-post, original row survives reversal', async () => {
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 60000, totalPayableMinor: 300000 },
-    }));
-    expect(entry.status).toBe(201);
     const custId = await makeCustomer('Idempotency');
     const itemId = await receiveItem('IDEM');
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId: custId, inventoryItemId: itemId, termMonths: 6 },
-    }));
+    const created = await makeDepositInstalment(cashier, custId, itemId);
     const contract = (await created.json()).contract;
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
       token: cashier, body: { contractId: contract.id, amountMinor: 60000, entryType: 'DEPOSIT' },
@@ -419,89 +318,155 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(doubleReverse.status).toBe(400);
   });
 
-  it('DEVICE_LOAN: flat interest matches the docs/02-loan-maths.md worked example exactly', async () => {
-    // Created directly (not via the validated POST /api/price-chart route) since this
-    // worked example is deliberately a 12-month term, outside the {3,4,6}-month admin
-    // pricing tiers (priceChartService.validateEntryBody, matching the legacy hirepurchase
-    // app's fixed ProductPricing tiers) — the test's real purpose is verifying flat-interest
-    // schedule math against a documented example, not re-testing that validation.
-    const adminUser = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
-    await prisma.priceChartEntry.create({
-      data: {
-        productId, contractType: 'DEVICE_LOAN', termMonths: 12, depositAmountMinor: 0,
-        totalPayableMinor: 248000, instalmentAmountMinor: Math.ceil(248000 / 12), interestRateBps: 2400,
-        createdById: adminUser.id,
-      },
-    });
+  it('rejects a DEVICE_LOAN contract linked to an inventory item, or missing a positive loanAmountMinor', async () => {
+    const custId = await makeCustomer('BadDeviceLoan');
+    const itemId = await receiveItem('BDL');
 
-    const custId = await makeCustomer('DeviceLoan');
-
-    // No inventoryItemId — DEVICE_LOAN disburses cash for the customer to buy a
-    // device outside the store, so no stock unit is ever reserved/issued for it.
-    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, productId, termMonths: 12 },
+    const withItem = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, inventoryItemId: itemId, loanAmountMinor: 100000 },
     }));
-    expect(created.status).toBe(201);
-    const contract = (await created.json()).contract;
-    expect(contract.status).toBe('ACTIVE'); // no down-payment gate
-    expect(Math.abs(contract.principalMinor - 200000)).toBeLessThanOrEqual(1);
-    expect(contract.totalPayableMinor).toBe(248000);
-    expect(contract.inventoryItemId).toBeNull();
+    expect(withItem.status).toBe(400);
+    expect((await withItem.json()).error).toMatch(/not linked to a product/i);
 
-    const detail = await getContract(contract.id, cashier);
-    const insts = detail.instalments;
-    expect(insts).toHaveLength(12);
-    expect(insts[0].interestPortionMinor).toBe(4000);
-    expect(insts[0].principalPortionMinor).toBe(16667);
-    expect(insts[11].interestPortionMinor).toBe(4000); // last absorbs remainder
-    expect(insts[11].principalPortionMinor).toBe(16663);
-    expect(insts.reduce((s: number, i: { amountDueMinor: number }) => s + i.amountDueMinor, 0)).toBe(248000);
-
-    const settle = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 248000, entryType: 'INSTALMENT_PAYMENT' },
+    const noAmount = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId },
     }));
-    expect(settle.status).toBe(201);
-    const afterSettle = await getContract(contract.id, cashier);
-    expect(afterSettle.status).toBe('COMPLETED');
-    expect(afterSettle.balanceMinor).toBe(0);
-  });
-
-  it('rejects a DEVICE_LOAN contract with no productId — cash is disbursed against a priced product, not a stock unit', async () => {
-    const custId = await makeCustomer('NoProductLoan');
-    const res = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, termMonths: 6 },
-    }));
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toMatch(/productId is required/i);
+    expect(noAmount.status).toBe(400);
+    expect((await noAmount.json()).error).toMatch(/loanAmountMinor is required/i);
   });
 
   it('rejects a DEPOSIT_INSTALMENT contract with no inventoryItemId', async () => {
     const custId = await makeCustomer('NoItemDeposit');
     const res = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId: custId, termMonths: 6 },
+      token: cashier, body: { contractType: 'DEPOSIT_INSTALMENT', customerId: custId, totalPayableMinor: 300000, depositAmountMinor: 60000, termWeeks: 6 },
     }));
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/inventoryItemId is required/i);
   });
 
-  it('Overpayment is accepted and flagged as credit, not rejected', async () => {
-    // DEVICE_LOAN, not SAVE_TO_OWN — this exercises overpayment against a real
-    // target (totalPayableMinor), which SAVE_TO_OWN no longer has at all
-    // (open-ended savings, contractService.ts). Starts ACTIVE immediately,
-    // no deposit gate to clear first.
-    const entry = await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEVICE_LOAN', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000, interestRateBps: 2400 },
-    }));
-    expect(entry.status).toBe(201);
+  it('DEVICE_LOAN: disbursed immediately with no product/schedule, and daily interest accrues as a flat 1% of the original amount', async () => {
+    const custId = await makeCustomer('DeviceLoan');
 
-    const custId = await makeCustomer('Overpay');
+    // Not linked to a product or inventory item — cash is disbursed directly
+    // (contractService.ts's new DEVICE_LOAN model).
     const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, productId, termMonths: 6 },
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, loanAmountMinor: 100000 },
+    }));
+    expect(created.status).toBe(201);
+    const contract = (await created.json()).contract;
+    expect(contract.status).toBe('ACTIVE'); // cash disbursed unconditionally, no down-payment gate
+    expect(contract.principalMinor).toBe(100000);
+    expect(contract.inventoryItemId).toBeNull();
+    expect(contract.productId).toBeNull();
+    // Snapshotted from whatever LoanSettings currently holds (loanSettingsService.ts's
+    // DEFAULTS is 1%/day, 0 grace days — but another test/run may have changed the
+    // global row, so read it back rather than assuming the default survived).
+    expect(contract.interestRateBps).toBeGreaterThan(0);
+    expect(contract.gracePeriodDays).toBeGreaterThanOrEqual(0);
+
+    let detail = await getContract(contract.id, cashier);
+    expect(detail.deviceLoanState.principalMinor).toBe(100000);
+    expect(detail.deviceLoanState.principalOutstanding).toBe(true);
+    expect(detail.deviceLoanState.accruedInterestMinor).toBe(0);
+    expect(detail.instalments).toHaveLength(0); // no fixed schedule under the new model
+
+    // The generic cash-payment route refuses this contract type outright.
+    const genericAttempt = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
+      token: cashier, body: { contractId: contract.id, amountMinor: 100000, entryType: 'INSTALMENT_PAYMENT' },
+    }));
+    expect(genericAttempt.status).toBe(400);
+    expect((await genericAttempt.json()).error).toMatch(/postDeviceLoanPayment/);
+
+    // Simulates one day of the accrual sweep (loanService.accrueDailyLoanInterest)
+    // directly, so the test doesn't depend on the actual day of the week it runs
+    // on — computed off the contract's own snapshotted rate, the same formula
+    // loanService.ts uses.
+    const dailyInterestMinor = Math.round((100000 * contract.interestRateBps) / 10000);
+    await prisma.penalty.create({
+      data: { contractId: contract.id, amountMinor: dailyInterestMinor, reason: 'DAILY_LOAN_INTEREST', appliedDate: new Date() },
+    });
+
+    detail = await getContract(contract.id, cashier);
+    expect(detail.deviceLoanState.accruedInterestMinor).toBe(dailyInterestMinor);
+    expect(detail.deviceLoanState.totalOwedMinor).toBe(100000 + dailyInterestMinor);
+
+    // Exact-match validation: neither an under- nor over-payment of interest is accepted.
+    const wrongInterest = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
+      token: cashier, body: { contractId: contract.id, amountMinor: dailyInterestMinor + 1, option: 'INTEREST' },
+    }));
+    expect(wrongInterest.status).toBe(400);
+    expect((await wrongInterest.json()).error).toMatch(/exactly the accrued interest/i);
+
+    const payInterest = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
+      token: cashier, body: { contractId: contract.id, amountMinor: dailyInterestMinor, option: 'INTEREST' },
+    }));
+    expect(payInterest.status).toBe(201);
+    const interestPayment = (await payInterest.json()).payment;
+    expect(interestPayment.entryType).toBe('LOAN_INTEREST_PAYMENT');
+
+    detail = await getContract(contract.id, cashier);
+    expect(detail.deviceLoanState.accruedInterestMinor).toBe(0);
+    expect(detail.deviceLoanState.interestPaidMinor).toBe(dailyInterestMinor);
+    expect(detail.status).toBe('ACTIVE'); // principal still outstanding
+
+    // Exact-match validation on the principal side too.
+    const wrongPrincipal = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
+      token: cashier, body: { contractId: contract.id, amountMinor: 99999, option: 'PRINCIPAL' },
+    }));
+    expect(wrongPrincipal.status).toBe(400);
+    expect((await wrongPrincipal.json()).error).toMatch(/exactly the full loan amount/i);
+
+    // Paying the full loan amount clears the principal only.
+    const payPrincipal = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
+      token: cashier, body: { contractId: contract.id, amountMinor: 100000, option: 'PRINCIPAL' },
+    }));
+    expect(payPrincipal.status).toBe(201);
+    expect((await payPrincipal.json()).payment.entryType).toBe('LOAN_PRINCIPAL_PAYMENT');
+
+    detail = await getContract(contract.id, cashier);
+    expect(detail.deviceLoanState.principalOutstanding).toBe(false);
+    expect(detail.status).toBe('COMPLETED'); // principal paid AND no unpaid interest left
+
+    // Once fully paid, the accrual sweep skips it — there's no more "loan" to charge 1% of.
+    const accrualCount = await accrueDailyLoanInterest();
+    expect(accrualCount).toBe(0);
+  });
+
+  it('DEVICE_LOAN: paying off the full loan amount does not forgive interest already accrued at that point', async () => {
+    const custId = await makeCustomer('LoanPartial');
+    const created = await contractsPOST(makeRequest('POST', '/api/contracts', {
+      token: cashier, body: { contractType: 'DEVICE_LOAN', customerId: custId, loanAmountMinor: 50000 },
     }));
     const contract = (await created.json()).contract;
-    expect(contract.status).toBe('ACTIVE');
+
+    await prisma.penalty.create({
+      data: { contractId: contract.id, amountMinor: 500, reason: 'DAILY_LOAN_INTEREST', appliedDate: new Date() },
+    });
+
+    const payPrincipal = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
+      token: cashier, body: { contractId: contract.id, amountMinor: 50000, option: 'PRINCIPAL' },
+    }));
+    expect(payPrincipal.status).toBe(201);
+
+    const detail = await getContract(contract.id, cashier);
+    expect(detail.deviceLoanState.principalOutstanding).toBe(false);
+    expect(detail.deviceLoanState.accruedInterestMinor).toBe(500); // still owed, not forgiven
+    expect(detail.status).toBe('ACTIVE'); // not COMPLETED — interest still unpaid
+
+    const payInterest = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
+      token: cashier, body: { contractId: contract.id, amountMinor: 500, option: 'INTEREST' },
+    }));
+    expect(payInterest.status).toBe(201);
+    expect((await getContract(contract.id, cashier)).status).toBe('COMPLETED');
+  });
+
+  it('Overpayment is accepted and flagged as credit, not rejected', async () => {
+    const custId = await makeCustomer('Overpay');
+    const itemId = await receiveItem('OVP');
+    const created = await makeDepositInstalment(cashier, custId, itemId, { totalPayableMinor: 240000, depositAmountMinor: 0 });
+    const contract = (await created.json()).contract;
+    expect(contract.status).toBe('ACTIVE'); // no deposit required — starts active immediately
     expect(contract.totalPayableMinor).toBe(240000);
 
     const over = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {

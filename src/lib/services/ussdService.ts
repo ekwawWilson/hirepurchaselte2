@@ -2,6 +2,7 @@ import { prisma } from '../db/prisma';
 import { formatMoney } from '../utils/money';
 import { initiateHubtelPayment } from './hubtelPaymentService';
 import { getOrgSettings } from './orgSettingsService';
+import { getDeviceLoanState } from './paymentService';
 import { contractTypeLabel, formatDate } from '../utils';
 import { phoneVariants } from './hubtelClient';
 
@@ -45,14 +46,29 @@ function findCustomerByPhone(msisdn: string) {
 }
 
 /**
+ * Whether a DEVICE_LOAN contract's prompt should route into DEVICE_LOAN_CHOOSE
+ * (pick one of up to two exact amounts) instead of ENTER_AMOUNT (type any
+ * amount) — shared by beginForCustomer and the SELECT_CONTRACT handler.
+ */
+function nextStateFor(contractType: string): 'DEVICE_LOAN_CHOOSE' | 'ENTER_AMOUNT' {
+  return contractType === 'DEVICE_LOAN' ? 'DEVICE_LOAN_CHOOSE' : 'ENTER_AMOUNT';
+}
+
+/**
  * Shared by beginForCustomer and the SELECT_CONTRACT handler so the two never
- * drift. Content differs by contract type since SAVE_TO_OWN has no due
- * schedule to report against (contractService.ts) — it's free-form savings,
- * so all there is to show is the running total paid in. DEPOSIT_INSTALMENT
- * and DEVICE_LOAN both have one, so they get paid/remaining plus whatever's
- * next: the upcoming instalment normally, or — when the customer has fallen
- * behind — the overdue amount they actually owe right now *and* what follows
- * it, rather than silently quoting a future date as if nothing were wrong.
+ * drift. Content differs by contract type:
+ *  - SAVE_TO_OWN has no due schedule at all (contractService.ts) — free-form
+ *    savings, so all there is to show is the running total paid in.
+ *  - DEPOSIT_INSTALMENT has a real schedule — paid/remaining plus whatever's
+ *    next: the upcoming instalment normally, or — when the customer has
+ *    fallen behind — the overdue amount they actually owe right now *and*
+ *    what follows it, rather than silently quoting a future date as if
+ *    nothing were wrong.
+ *  - DEVICE_LOAN has neither a schedule nor a free amount to type — it's a
+ *    daily-simple-interest loan the customer pays down via exactly one of two
+ *    choices (paymentService.getDeviceLoanState/postDeviceLoanPayment): the
+ *    accrued interest owed so far, or the full loan amount. Whichever of the
+ *    two is currently owed is shown; a fully-paid-off option isn't offered.
  *
  * Opens with "{companyName}\nHi {full name}" — the tenant's own configured
  * company name (Settings page, same source startSession's no-account-found
@@ -75,8 +91,17 @@ async function contractPrompt(contract: {
 }, customerName: string): Promise<string> {
   const { companyName } = await getOrgSettings();
   const greeting = `${companyName}\nHi ${customerName}\n`;
+
   if (contract.contractType === 'SAVE_TO_OWN') {
     return `${greeting}Total paid: GHS${formatMoney(contract.totalPaidMinor)}\nEnter amount to pay:`;
+  }
+
+  if (contract.contractType === 'DEVICE_LOAN') {
+    const state = await getDeviceLoanState(contract.id);
+    const options: string[] = [];
+    if (state.accruedInterestMinor > 0) options.push(`1. Pay interest GHS${formatMoney(state.accruedInterestMinor)}`);
+    if (state.principalOutstanding) options.push(`2. Pay full loan GHS${formatMoney(state.principalMinor)}`);
+    return `${greeting}${options.join('\n')}\nReply with option:`;
   }
 
   const [due, upcoming] = await prisma.instalment.findMany({
@@ -85,9 +110,8 @@ async function contractPrompt(contract: {
     take: 2,
   });
 
-  // Never actually null here — only SAVE_TO_OWN's balanceMinor is null, and
-  // that branch already returned above — but the type is shared with the
-  // SAVE_TO_OWN case, so this stays defensive rather than asserted.
+  // Never actually null here — DEVICE_LOAN/SAVE_TO_OWN both return above —
+  // but the type is shared, so this stays defensive rather than asserted.
   const paidLine = `Paid GHS${formatMoney(contract.totalPaidMinor)}  Bal GHS${formatMoney(contract.balanceMinor ?? 0)}`;
   let dueLine = '';
   if (due) {
@@ -114,14 +138,14 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
   // overdueService.markDefaultedContracts / paymentService.advanceContractStatus) —
   // a customer catching up their own arrears via USSD is exactly the self-service
   // path that cures a default, so hiding it here would strand them on cash-only.
-  // SAVE_TO_OWN has no balanceMinor at all (open-ended savings, no target — see
-  // paymentService.recomputeContract) — it's always payable while ACTIVE, so the
-  // balanceMinor > 0 gate only applies to the other two types.
+  // SAVE_TO_OWN and DEVICE_LOAN have no balanceMinor at all (open-ended — see
+  // paymentService.recomputeContract) — both are always payable while ACTIVE,
+  // so the balanceMinor > 0 gate only applies to DEPOSIT_INSTALMENT.
   const contracts = await prisma.contract.findMany({
     where: {
       customerId,
       status: { in: ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'] },
-      OR: [{ contractType: 'SAVE_TO_OWN' }, { balanceMinor: { gt: 0 } }],
+      OR: [{ contractType: { in: ['SAVE_TO_OWN', 'DEVICE_LOAN'] } }, { balanceMinor: { gt: 0 } }],
     },
     orderBy: { createdAt: 'asc' },
   });
@@ -139,21 +163,32 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
       create: { sessionId, msisdn: dialedMsisdn, state: 'SELECT_CONTRACT', context: JSON.stringify(context), expiresAt },
       update: { state: 'SELECT_CONTRACT', contractId: null, context: JSON.stringify(context), expiresAt },
     });
-    const lines = contracts.map((c, i) => `${i + 1}. ${c.contractNumber} (${contractTypeLabel(c.contractType)}) ${
-      c.contractType === 'SAVE_TO_OWN' ? `Saved GHS${formatMoney(c.totalPaidMinor)}` : `Bal GHS${formatMoney(c.balanceMinor ?? 0)}`
-    }`);
+    const lines = await Promise.all(contracts.map(async (c, i) => {
+      const amountLabel = c.contractType === 'SAVE_TO_OWN'
+        ? `Saved GHS${formatMoney(c.totalPaidMinor)}`
+        : c.contractType === 'DEVICE_LOAN'
+          ? `Owed GHS${formatMoney((await getDeviceLoanState(c.id)).totalOwedMinor)}`
+          : `Bal GHS${formatMoney(c.balanceMinor ?? 0)}`;
+      return `${i + 1}. ${c.contractNumber} (${contractTypeLabel(c.contractType)}) ${amountLabel}`;
+    }));
     const { companyName } = await getOrgSettings();
     return { message: `${companyName}\nHi ${customerName}\nSelect a contract:\n${lines.join('\n')}`, continueSession: true, label: 'Select contract', fieldType: 'number' };
   }
 
   const contract = contracts[0];
   const context: UssdContext = { contractId: contract.id };
+  const nextState = nextStateFor(contract.contractType);
   await prisma.ussdSession.upsert({
     where: { sessionId },
-    create: { sessionId, msisdn: dialedMsisdn, state: 'ENTER_AMOUNT', contractId: contract.id, context: JSON.stringify(context), expiresAt },
-    update: { state: 'ENTER_AMOUNT', contractId: contract.id, context: JSON.stringify(context), expiresAt },
+    create: { sessionId, msisdn: dialedMsisdn, state: nextState, contractId: contract.id, context: JSON.stringify(context), expiresAt },
+    update: { state: nextState, contractId: contract.id, context: JSON.stringify(context), expiresAt },
   });
-  return { message: await contractPrompt(contract, customerName), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+  return {
+    message: await contractPrompt(contract, customerName),
+    continueSession: true,
+    label: nextState === 'DEVICE_LOAN_CHOOSE' ? 'Choose option' : 'Enter amount',
+    fieldType: nextState === 'DEVICE_LOAN_CHOOSE' ? 'number' : 'decimal',
+  };
 }
 
 async function startSession(sessionId: string, msisdn: string): Promise<UssdResult> {
@@ -247,11 +282,44 @@ export async function handleUssdInput(params: {
         return { message: 'Invalid selection. Session ended.', continueSession: false, label: 'Invalid selection' };
       }
       const contract = await prisma.contract.findUniqueOrThrow({ where: { id: contractIds[idx] }, include: { customer: true } });
+      const nextState = nextStateFor(contract.contractType);
       await prisma.ussdSession.update({
         where: { id: existing.id },
-        data: { state: 'ENTER_AMOUNT', contractId: contract.id, context: JSON.stringify({ contractId: contract.id }) },
+        data: { state: nextState, contractId: contract.id, context: JSON.stringify({ contractId: contract.id }) },
       });
-      return { message: await contractPrompt(contract, `${contract.customer.firstName} ${contract.customer.lastName}`), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+      return {
+        message: await contractPrompt(contract, `${contract.customer.firstName} ${contract.customer.lastName}`),
+        continueSession: true,
+        label: nextState === 'DEVICE_LOAN_CHOOSE' ? 'Choose option' : 'Enter amount',
+        fieldType: nextState === 'DEVICE_LOAN_CHOOSE' ? 'number' : 'decimal',
+      };
+    }
+
+    case 'DEVICE_LOAN_CHOOSE': {
+      const contractId = context.contractId as string;
+      // Recomputed fresh, never trusted from the earlier prompt — a day's
+      // interest could have accrued (or the loan could have been paid off
+      // some other way) in the time it took the customer to reply.
+      const state = await getDeviceLoanState(contractId);
+      const choice = params.input.trim();
+      let amountMinor = 0;
+      if (choice === '1' && state.accruedInterestMinor > 0) {
+        amountMinor = state.accruedInterestMinor;
+      } else if (choice === '2' && state.principalOutstanding) {
+        amountMinor = state.principalMinor;
+      } else {
+        return { message: 'Invalid option. Reply with option:', continueSession: true, label: 'Choose option', fieldType: 'number' };
+      }
+      await prisma.ussdSession.update({
+        where: { id: existing.id },
+        data: { state: 'CONFIRM', context: JSON.stringify({ contractId, amountMinor }) },
+      });
+      return {
+        message: `Confirm payment of GHS${formatMoney(amountMinor)}?\n1. Confirm\n2. Cancel`,
+        continueSession: true,
+        label: 'Confirm payment',
+        fieldType: 'number',
+      };
     }
 
     case 'ENTER_AMOUNT': {

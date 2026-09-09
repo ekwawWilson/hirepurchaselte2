@@ -22,9 +22,21 @@ export function numberOfInstalmentsForTerm(termMonths: number, paymentFrequency:
  * The only term lengths an admin can price a product at — matches the legacy
  * hirepurchase app's ProductPricing model exactly (it only ever offers 3, 4, or
  * 6 month tiers). Enforced in priceChartService.validateEntryBody, i.e. at the
- * admin-entry point, not as a DB constraint.
+ * admin-entry point, not as a DB constraint. No contract type reads a price
+ * chart entry at creation anymore (contractService.ts) — kept only for the
+ * standalone Price Chart page/legacy entries.
  */
 export const PRICE_CHART_TERM_MONTHS = [3, 4, 6] as const;
+
+/**
+ * DEPOSIT_INSTALMENT's term is entered directly at contract creation, in
+ * weeks, not looked up from a price chart — 1 to 24 weeks.
+ */
+export const DEPOSIT_INSTALMENT_MIN_TERM_WEEKS = 1;
+export const DEPOSIT_INSTALMENT_MAX_TERM_WEEKS = 24;
+
+/** DEPOSIT_INSTALMENT collects daily or weekly only — no monthly cadence. */
+export const DEPOSIT_INSTALMENT_FREQUENCIES = ['DAILY', 'WEEKLY'] as const;
 
 /** No further payments/status changes accepted once a contract reaches one of these. */
 export const TERMINAL_CONTRACT_STATUSES = ['COMPLETED', 'RELEASED', 'CANCELLED', 'WRITTEN_OFF'];
@@ -39,11 +51,15 @@ export const CONTRACT_STATUSES_BY_TYPE: Record<ContractTypeName, string[]> = {
 /**
  * Direct debit (a Hubtel mandate the customer approves once, then the merchant
  * auto-charges going forward — see hubtelPreapprovalService.ts) only makes sense
- * against a contract with an actual due schedule to collect on. SAVE_TO_OWN is
- * free-form savings with no due dates at all (contractService.ts), so it's the
- * one type explicitly excluded.
+ * against a contract with a single well-defined "amount currently due" to
+ * auto-charge. SAVE_TO_OWN is free-form savings with no due dates at all
+ * (contractService.ts). DEVICE_LOAN no longer has one either under its new
+ * daily-interest model — the customer self-directs which of two payments
+ * (accrued interest, or the full loan amount) to make via USSD/staff, which
+ * has no natural "auto-charge the due amount" equivalent — so DEPOSIT_INSTALMENT
+ * is the only type left eligible.
  */
-export const DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES: ContractTypeName[] = ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'];
+export const DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES: ContractTypeName[] = ['DEPOSIT_INSTALMENT'];
 
 /** AirtelTigo has no Hubtel direct-debit product — regular USSD collection only. */
 export const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'] as const;

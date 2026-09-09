@@ -8,6 +8,10 @@ import { queueSms, deliverQueuedSms } from './smsService';
 export class PaymentError extends Error {}
 
 type Tx = Prisma.TransactionClient;
+// Every read-only helper below (getEffectivePayments, getDeviceLoanState) can
+// run either inside an open transaction or standalone against the plain
+// client — only the write path (postDeviceLoanPayment et al.) requires a real Tx.
+type Db = Tx | typeof prisma;
 
 /**
  * Sums, per target (instalment or penalty), only the PaymentAllocation rows that
@@ -16,14 +20,14 @@ type Tx = Prisma.TransactionClient;
  * from the ledger with zero drift (docs/00-legacy-study.md §4/§6): nothing is ever
  * incremented or mutated, everything is re-derived from source rows every time.
  */
-async function getEffectivePayments(tx: Tx, contractId: string) {
-  const reversalRows = await tx.payment.findMany({
+async function getEffectivePayments(db: Db, contractId: string) {
+  const reversalRows = await db.payment.findMany({
     where: { contractId, status: 'SUCCESS', reversesPaymentId: { not: null } },
     select: { reversesPaymentId: true },
   });
   const reversedIds = new Set(reversalRows.map((r) => r.reversesPaymentId as string));
 
-  return tx.payment.findMany({
+  return db.payment.findMany({
     where: { contractId, status: 'SUCCESS', reversesPaymentId: null },
     include: { allocations: true },
   }).then((payments) => payments.filter((p) => !reversedIds.has(p.id)));
@@ -160,6 +164,23 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<Advanc
     }
   }
 
+  if (effectiveStatus === 'ACTIVE' && contract.contractType === 'DEVICE_LOAN') {
+    // DEVICE_LOAN completes only once BOTH the principal and every day of
+    // accrued interest are cleared to zero — paying "the full loan amount"
+    // alone (LOAN_PRINCIPAL_PAYMENT) only settles the principal; any interest
+    // already accrued by that point is a separate balance still owed (see
+    // loanService.accrueDailyLoanInterest and getDeviceLoanState).
+    const effectivePayments = await getEffectivePayments(tx, contractId);
+    const principalPaidMinor = effectivePayments
+      .filter((p) => p.entryType === 'LOAN_PRINCIPAL_PAYMENT')
+      .reduce((s, p) => s + p.amountMinor, 0);
+    const unpaidInterestCount = await tx.penalty.count({ where: { contractId, reason: 'DAILY_LOAN_INTEREST', isPaid: false } });
+    if (principalPaidMinor >= (contract.principalMinor ?? 0) && unpaidInterestCount === 0) {
+      await tx.contract.update({ where: { id: contractId }, data: { status: 'COMPLETED', completedAt: now } });
+    }
+    return { queuedSmsIds };
+  }
+
   // SAVE_TO_OWN never auto-completes — there's no savings target to reach
   // (balanceMinor is always null for it, see recomputeContract), so it just
   // stays ACTIVE until the customer withdraws or the balance is put toward a
@@ -234,6 +255,9 @@ export async function postPayment(params: PostPaymentParams) {
 
     if (TERMINAL_CONTRACT_STATUSES.includes(contract.status)) {
       throw new PaymentError(`Cannot post a payment to a contract in status ${contract.status}`);
+    }
+    if (contract.contractType === 'DEVICE_LOAN') {
+      throw new PaymentError('DEVICE_LOAN payments must be posted via postDeviceLoanPayment — pay interest or the full loan amount, not a free-form amount');
     }
     if (params.entryType === 'DEPOSIT' && contract.contractType !== 'DEPOSIT_INSTALMENT') {
       throw new PaymentError('Only DEPOSIT_INSTALMENT contracts accept a DEPOSIT payment');
@@ -370,6 +394,150 @@ export async function postWithdrawal(params: PostWithdrawalParams) {
     await recomputeContract(tx, contract.id);
     return payment;
   });
+}
+
+export interface DeviceLoanState {
+  principalMinor: number;
+  // Once the customer has paid a LOAN_PRINCIPAL_PAYMENT covering the full
+  // principalMinor, this flips false and daily interest stops accruing
+  // (loanService.accrueDailyLoanInterest) — but any interest already accrued
+  // by that point is a separate balance, not forgiven (see advanceContractStatus).
+  principalOutstanding: boolean;
+  // Sum of every still-unpaid DAILY_LOAN_INTEREST Penalty row — what "pay
+  // interest" currently costs, exactly.
+  accruedInterestMinor: number;
+  // Total ever paid via LOAN_INTEREST_PAYMENT (effective, reversal-aware) —
+  // history, not what's currently owed. Used by reportService.loanBookReport.
+  interestPaidMinor: number;
+  totalOwedMinor: number;
+}
+
+/**
+ * Derives a DEVICE_LOAN's current state purely from the ledger (payments +
+ * penalties) — same "never trust a stored running total" rule recomputeContract
+ * follows. Usable both inside an open transaction (postDeviceLoanPayment,
+ * loanService's accrual sweep) and standalone (the contract detail API, the
+ * USSD prompt) via the optional `db` param.
+ */
+export async function getDeviceLoanState(contractId: string, db: Db = prisma): Promise<DeviceLoanState> {
+  const contract = await db.contract.findUniqueOrThrow({ where: { id: contractId } });
+  const principalMinor = contract.principalMinor ?? 0;
+
+  const effectivePayments = await getEffectivePayments(db, contractId);
+  const principalPaidMinor = effectivePayments
+    .filter((p) => p.entryType === 'LOAN_PRINCIPAL_PAYMENT')
+    .reduce((s, p) => s + p.amountMinor, 0);
+  const principalOutstanding = principalPaidMinor < principalMinor;
+  const interestPaidMinor = effectivePayments
+    .filter((p) => p.entryType === 'LOAN_INTEREST_PAYMENT')
+    .reduce((s, p) => s + p.amountMinor, 0);
+
+  const unpaidInterest = await db.penalty.findMany({ where: { contractId, reason: 'DAILY_LOAN_INTEREST', isPaid: false } });
+  const accruedInterestMinor = unpaidInterest.reduce((s, p) => s + p.amountMinor, 0);
+
+  return {
+    principalMinor,
+    principalOutstanding,
+    accruedInterestMinor,
+    interestPaidMinor,
+    totalOwedMinor: (principalOutstanding ? principalMinor : 0) + accruedInterestMinor,
+  };
+}
+
+export interface PostDeviceLoanPaymentParams {
+  contractId: string;
+  // Exactly two choices — no free-form amount (docs: prevent under/over payment).
+  // 'INTEREST' clears every currently-unpaid day of accrued interest in one go.
+  // 'PRINCIPAL' clears the original loan amount only — interest already
+  // accrued by that point is unaffected, still owed separately.
+  option: 'INTEREST' | 'PRINCIPAL';
+  amountMinor: number;
+  channel: 'CASH' | 'USSD';
+  transactionRef?: string;
+  rawGatewayPayload?: string;
+  createdById?: string;
+  initiatedByCustomerId?: string;
+}
+
+/**
+ * DEVICE_LOAN's counterpart to postPayment — deliberately its own function
+ * (postPayment refuses DEVICE_LOAN outright, see above) because the two
+ * payment options are exact-match only, never a free amount: `amountMinor`
+ * must equal exactly what's currently owed for the chosen option, checked
+ * against getDeviceLoanState computed inside the same transaction the
+ * payment is created in, so a concurrent accrual/payment can't race it.
+ */
+export async function postDeviceLoanPayment(params: PostDeviceLoanPaymentParams) {
+  if (params.amountMinor <= 0) throw new PaymentError('amountMinor must be positive');
+
+  const transactionRef = params.transactionRef ?? generateTransactionRef();
+  const existing = await prisma.payment.findUnique({ where: { transactionRef } });
+  if (existing) return { payment: existing, idempotentReplay: true as const };
+
+  const result = await prisma.$transaction(async (tx) => {
+    const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+    if (contract.contractType !== 'DEVICE_LOAN') throw new PaymentError('Only DEVICE_LOAN contracts accept this payment');
+    if (TERMINAL_CONTRACT_STATUSES.includes(contract.status)) {
+      throw new PaymentError(`Cannot post a payment to a contract in status ${contract.status}`);
+    }
+
+    const state = await getDeviceLoanState(contract.id, tx);
+    if (params.option === 'PRINCIPAL') {
+      if (!state.principalOutstanding) throw new PaymentError('The loan amount has already been paid');
+      if (params.amountMinor !== state.principalMinor) {
+        throw new PaymentError(`Amount must be exactly the full loan amount (${state.principalMinor}) to pay it off`);
+      }
+    } else {
+      if (state.accruedInterestMinor <= 0) throw new PaymentError('No interest is currently owed');
+      if (params.amountMinor !== state.accruedInterestMinor) {
+        throw new PaymentError(`Amount must be exactly the accrued interest owed (${state.accruedInterestMinor})`);
+      }
+    }
+
+    const payment = await tx.payment.create({
+      data: {
+        contractId: contract.id,
+        entryType: params.option === 'PRINCIPAL' ? 'LOAN_PRINCIPAL_PAYMENT' : 'LOAN_INTEREST_PAYMENT',
+        amountMinor: params.amountMinor,
+        channel: params.channel,
+        transactionRef,
+        status: 'SUCCESS',
+        receiptNumber: params.channel === 'CASH' ? generateReceiptNumber() : undefined,
+        rawGatewayPayload: params.rawGatewayPayload,
+        createdById: params.createdById,
+        initiatedByCustomerId: params.initiatedByCustomerId,
+        receivedAt: new Date(),
+      },
+    });
+
+    if (params.option === 'INTEREST') {
+      // Allocate against every currently-unpaid day of interest — recomputeContract
+      // below reads these allocations back to flip each Penalty's isPaid, the
+      // exact same mechanism applyLatePenalties's own rows already use.
+      const unpaid = await tx.penalty.findMany({
+        where: { contractId: contract.id, reason: 'DAILY_LOAN_INTEREST', isPaid: false },
+        orderBy: { appliedDate: 'asc' },
+      });
+      for (const penalty of unpaid) {
+        await tx.paymentAllocation.create({
+          data: { paymentId: payment.id, targetType: 'PENALTY', penaltyId: penalty.id, amountMinor: penalty.amountMinor },
+        });
+      }
+    }
+
+    await recomputeContract(tx, contract.id);
+    const { queuedSmsIds } = await advanceContractStatus(tx, contract.id);
+    const paymentSms = await queueSms({ contractId: contract.id, templateKey: 'payment.success', paymentId: payment.id, tx });
+    const allSmsIds = paymentSms ? [...queuedSmsIds, paymentSms.id] : queuedSmsIds;
+
+    return { payment, idempotentReplay: false as const, queuedSmsIds: allSmsIds };
+  });
+
+  for (const smsId of result.queuedSmsIds) {
+    void deliverQueuedSms(smsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
+  }
+
+  return result;
 }
 
 /**

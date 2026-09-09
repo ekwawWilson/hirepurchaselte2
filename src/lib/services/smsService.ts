@@ -38,26 +38,39 @@ export async function queueSms(params: {
 
   const payment = params.paymentId ? await db.payment.findUnique({ where: { id: params.paymentId } }) : null;
   const nextInstalment = contract.instalments[0];
+  // Only fetched for DEVICE_LOAN — it has no balanceMinor/instalments at all,
+  // just an accrued-interest-vs-full-amount choice (paymentService.ts).
+  // Dynamic import avoids a circular static import — paymentService.ts
+  // already imports queueSms/deliverQueuedSms from this file.
+  const loanState = contract.contractType === 'DEVICE_LOAN'
+    ? await (await import('./paymentService')).getDeviceLoanState(contract.id, db)
+    : null;
 
-  // Rendered as one clause (not separate amount/date fields) so each of the three
-  // cases below reads as a real sentence: SAVE_TO_OWN's free-form savings (no
-  // schedule, no target, no balance to speak of — see contractService.ts),
-  // a scheduled contract's next due instalment, and a contract that's already
-  // fully paid off. SAVE_TO_OWN is checked first since its balanceMinor is
-  // always null, not a real "fully paid" zero.
+  // Rendered as one clause (not separate amount/date fields) so each case below
+  // reads as a real sentence. SAVE_TO_OWN and DEVICE_LOAN are both checked
+  // before the balanceMinor comparison since it's always null for them, not a
+  // real "fully paid" zero (contractService.ts).
   const nextDueLine = contract.contractType === 'SAVE_TO_OWN'
     ? 'Deposit any amount, any time, to keep saving toward it.'
-    : (contract.balanceMinor ?? 0) <= 0
-      ? 'Your contract is fully paid.'
-      : nextInstalment
-        ? `Next due: ${currencyCode()} ${formatMoney(nextInstalment.amountDueMinor - nextInstalment.amountPaidMinor)} on ${nextInstalment.dueDate.toISOString().slice(0, 10)}.`
-        : '';
+    : contract.contractType === 'DEVICE_LOAN'
+      ? (loanState && (loanState.principalOutstanding || loanState.accruedInterestMinor > 0)
+          ? `Interest owed: ${currencyCode()} ${formatMoney(loanState.accruedInterestMinor)}. Full loan amount: ${currencyCode()} ${formatMoney(loanState.principalMinor)}.`
+          : 'Your loan is fully paid.')
+      : (contract.balanceMinor ?? 0) <= 0
+        ? 'Your contract is fully paid.'
+        : nextInstalment
+          ? `Next due: ${currencyCode()} ${formatMoney(nextInstalment.amountDueMinor - nextInstalment.amountPaidMinor)} on ${nextInstalment.dueDate.toISOString().slice(0, 10)}.`
+          : '';
 
   const vars: Record<string, string> = {
     customerName: `${contract.customer.firstName} ${contract.customer.lastName}`,
     contractNumber: contract.contractNumber,
     amountPaid: payment ? formatMoney(payment.amountMinor) : '',
-    outstandingBalance: contract.contractType === 'SAVE_TO_OWN' ? formatMoney(contract.totalPaidMinor) : formatMoney(contract.balanceMinor ?? 0),
+    outstandingBalance: contract.contractType === 'SAVE_TO_OWN'
+      ? formatMoney(contract.totalPaidMinor)
+      : contract.contractType === 'DEVICE_LOAN'
+        ? formatMoney(loanState?.totalOwedMinor ?? 0)
+        : formatMoney(contract.balanceMinor ?? 0),
     nextDueLine,
     currency: currencyCode(),
   };

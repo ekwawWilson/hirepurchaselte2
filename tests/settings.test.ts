@@ -10,6 +10,7 @@ import { makeRequest } from './helpers';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { GET as settingsGET, PATCH as settingsPATCH } from '@/app/api/settings/route';
+import { GET as loanTermsGET, PATCH as loanTermsPATCH } from '@/app/api/settings/loan-terms/route';
 
 const PASSWORD = 'Passw0rd!123';
 
@@ -65,5 +66,69 @@ describe('Org settings', () => {
     const { settings } = await getRes.json();
     expect(settings.companyName).toBe('Accra Mobile Finance');
     expect(settings.email).toBe('ops@amf.test');
+  });
+});
+
+/**
+ * Coverage for the global DEVICE_LOAN terms (daily interest rate + grace
+ * period) — unlike org settings, gated on GET too, since this is operational
+ * pricing configuration, not public branding. Snapshotted onto each
+ * DEVICE_LOAN contract at creation (loanSettingsService.ts/contractService.ts) —
+ * changing it here never repricess a contract already created.
+ */
+describe('Loan payment terms settings', () => {
+  let admin: string;
+  let cashier: string;
+
+  beforeAll(async () => {
+    admin = await login('admin@zple.test');
+    cashier = await login('cashier@zple.test');
+  });
+
+  it('GET requires settings.manage — CASHIER gets 403', async () => {
+    const res = await loanTermsGET(makeRequest('GET', '/api/settings/loan-terms', { token: cashier }));
+    expect(res.status).toBe(403);
+  });
+
+  it('ADMIN can read the current terms, defaulting to 1%/day with no grace period before any row is saved', async () => {
+    const res = await loanTermsGET(makeRequest('GET', '/api/settings/loan-terms', { token: admin }));
+    expect(res.status).toBe(200);
+    const { settings } = await res.json();
+    expect(typeof settings.dailyInterestRateBps).toBe('number');
+    expect(typeof settings.interestGraceDays).toBe('number');
+  });
+
+  it('rejects a PATCH from a role without settings.manage (CASHIER)', async () => {
+    const res = await loanTermsPATCH(makeRequest('PATCH', '/api/settings/loan-terms', {
+      token: cashier, body: { dailyInterestRateBps: 100, interestGraceDays: 0 },
+    }));
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a non-positive dailyInterestRateBps and a negative interestGraceDays', async () => {
+    const zeroRate = await loanTermsPATCH(makeRequest('PATCH', '/api/settings/loan-terms', {
+      token: admin, body: { dailyInterestRateBps: 0, interestGraceDays: 0 },
+    }));
+    expect(zeroRate.status).toBe(400);
+
+    const negativeGrace = await loanTermsPATCH(makeRequest('PATCH', '/api/settings/loan-terms', {
+      token: admin, body: { dailyInterestRateBps: 100, interestGraceDays: -1 },
+    }));
+    expect(negativeGrace.status).toBe(400);
+  });
+
+  it('ADMIN can update the terms, and GET reflects the change afterwards', async () => {
+    const patchRes = await loanTermsPATCH(makeRequest('PATCH', '/api/settings/loan-terms', {
+      token: admin, body: { dailyInterestRateBps: 150, interestGraceDays: 3 },
+    }));
+    expect(patchRes.status).toBe(200);
+    const patched = (await patchRes.json()).settings;
+    expect(patched.dailyInterestRateBps).toBe(150);
+    expect(patched.interestGraceDays).toBe(3);
+
+    const getRes = await loanTermsGET(makeRequest('GET', '/api/settings/loan-terms', { token: admin }));
+    const { settings } = await getRes.json();
+    expect(settings.dailyInterestRateBps).toBe(150);
+    expect(settings.interestGraceDays).toBe(3);
   });
 });

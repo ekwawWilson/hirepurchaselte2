@@ -98,6 +98,7 @@ model User {
   auditLogs                 AuditLog[]
   hubtelPreapprovalsCreated HubtelPreapproval[] @relation("HubtelPreapprovalCreatedBy")
   orgSettingsUpdates        OrgSettings[]
+  loanSettingsUpdates       LoanSettings[]
 
   @@map("users")
 }
@@ -271,9 +272,9 @@ model Contract {
   contractNumber      String  @unique
   contractType        String
   customerId          String
-  // Null for SAVE_TO_OWN — free-form savings with no target item, so nothing
-  // to link at creation (docs/01-plan.md). Required for DEPOSIT_INSTALMENT/
-  // DEVICE_LOAN, which are always priced against a specific product.
+  // Set only for DEPOSIT_INSTALMENT, from the reserved inventory item's own
+  // product — SAVE_TO_OWN and DEVICE_LOAN are both never linked to a product
+  // at all (contractService.ts).
   productId           String?
   inventoryItemId     String?
   branchId            String
@@ -299,19 +300,27 @@ model Contract {
   // require a mandate (hubtelPreapprovalId) — see hubtelPreapprovalService.enableDirectDebit.
   paymentMethod String @default("CUSTOMER_INITIATED")
 
-  // Snapshotted pricing terms — never re-read from priceChartEntries after creation.
-  // All null for SAVE_TO_OWN: it has no price chart entry, no term, and no
-  // instalment amount — the customer deposits any amount, any time.
+  // Snapshotted deal terms — entered directly at contract creation, never
+  // looked up from a price chart (no contract type reads PriceChartEntry
+  // anymore; the column stays only for legacy contracts' historical link).
+  // All null for SAVE_TO_OWN: it has no term or instalment amount at all —
+  // the customer deposits any amount, any time.
   totalPriceMinor       Int?
   depositAmountMinor    Int    @default(0)
-  termMonths            Int?
+  termMonths            Int? // legacy only — no longer written by any contract type
+  termWeeks             Int? // DEPOSIT_INSTALMENT only — 1 to 24, entered directly at creation
   paymentFrequency      String @default("MONTHLY")
   instalmentAmountMinor Int?
 
-  // DEVICE_LOAN only
+  // DEVICE_LOAN only — a daily-simple-interest loan, not linked to a product.
+  // principalMinor is the loan amount entered at creation; interestRateBps and
+  // gracePeriodDays (below, shared with DEPOSIT_INSTALMENT's late-payment grace)
+  // are snapshotted from LoanSettings at creation time, in daily basis points
+  // (100 = 1%/day) — never re-read live, same "snapshot, don't re-read"
+  // convention as every other pricing field on this model.
   principalMinor  Int?
   interestRateBps Int?
-  rateBasis       String? @default("FLAT")
+  rateBasis       String? @default("FLAT") // 'DAILY_SIMPLE' for the new DEVICE_LOAN model
 
   // Late-payment handling — set per contract in the wizard (docs/01-plan.md's own
   // glossary calls out "Grace Period" but it was never implemented until now).
@@ -450,9 +459,13 @@ model PaymentAllocation {
 }
 
 // `reason` is a plain string (not a native enum, matching this schema's convention) —
-// 'LATE_PENALTY' is the one value the app creates automatically, in
-// overdueService.applyLatePenalties, once an instalment is overdue past its
-// contract's gracePeriodDays. Anything else is a manually-recorded penalty.
+// 'LATE_PENALTY' is created automatically by overdueService.applyLatePenalties
+// once a DEPOSIT_INSTALMENT/DEVICE_LOAN instalment is overdue past its
+// contract's gracePeriodDays. 'DAILY_LOAN_INTEREST' is created automatically
+// by loanService.accrueDailyLoanInterest — one row per weekday a DEVICE_LOAN's
+// principal is still outstanding, `instalmentId` always null for these (there
+// is no instalment schedule for a device loan). Anything else is a manually-
+// recorded penalty.
 model Penalty {
   id           String    @id @default(uuid())
   contractId   String
@@ -655,4 +668,26 @@ model OrgSettings {
   updatedBy User? @relation(fields: [updatedById], references: [id])
 
   @@map("org_settings")
+}
+
+// Global DEVICE_LOAN terms — one row (id pinned to "singleton", same
+// convention as OrgSettings), edited from Settings > Loan payment terms.
+// Every new DEVICE_LOAN contract snapshots these onto itself at creation
+// (Contract.interestRateBps/gracePeriodDays) — changing this later reprices
+// nothing already created, same "snapshot, don't re-read" rule every other
+// pricing field on Contract follows.
+model LoanSettings {
+  id                   String   @id @default("singleton")
+  // Daily basis points charged against the ORIGINAL loan amount every weekday
+  // the principal is still outstanding — 100 = 1%/day (loanService.ts).
+  dailyInterestRateBps Int      @default(100)
+  // Calendar days after the loan's startDate before daily interest starts
+  // accruing at all ("days after loan date").
+  interestGraceDays    Int      @default(0)
+  updatedAt            DateTime @updatedAt
+  updatedById          String?
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("loan_settings")
 }

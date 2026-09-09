@@ -5,7 +5,6 @@ import { prisma } from '@/lib/db/prisma';
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { GET as branchesGET } from '@/app/api/branches/route';
 import { POST as productsPOST } from '@/app/api/products/route';
-import { POST as priceChartPOST } from '@/app/api/price-chart/route';
 import { POST as customersPOST } from '@/app/api/customers/route';
 import { POST as inventoryPOST } from '@/app/api/inventory/route';
 import { POST as contractsPOST } from '@/app/api/contracts/route';
@@ -47,14 +46,6 @@ describe('Reports', () => {
       token: admin, body: { sku: `REPORT-SKU-${runId}`, name: 'Report Test Phone', cashPriceMinor: 240000 },
     }));
     productId = (await product.json()).product.id;
-
-    // SAVE_TO_OWN has no price chart entry to speak of (open-ended savings —
-    // see contractService.ts). The arrears test below needs a real
-    // Instalment row to backdate, so it uses this DEPOSIT_INSTALMENT entry
-    // instead (0% deposit keeps its finance amount identical).
-    await priceChartPOST(makeRequest('POST', '/api/price-chart', {
-      token: admin, body: { productId, contractType: 'DEPOSIT_INSTALMENT', termMonths: 6, depositAmountMinor: 0, totalPayableMinor: 240000 },
-    }));
   });
 
   async function setupContract(label: string, contractType: string = 'SAVE_TO_OWN') {
@@ -77,7 +68,8 @@ describe('Reports', () => {
     }));
     const itemId = (await item.json()).item.id;
     const contract = await contractsPOST(makeRequest('POST', '/api/contracts', {
-      token: cashier, body: { contractType, customerId: custId, inventoryItemId: itemId, termMonths: 6 },
+      token: cashier,
+      body: { contractType, customerId: custId, inventoryItemId: itemId, totalPayableMinor: 240000, depositAmountMinor: 0, termWeeks: 6, paymentFrequency: 'WEEKLY' },
     }));
     return (await contract.json()).contract;
   }
