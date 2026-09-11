@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
-import { ROLES } from '@/lib/constants/rbac';
 
 function toUserResponse(user: {
   id: string; email: string; firstName: string; lastName: string; isActive: boolean;
@@ -34,10 +33,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   let roleId: string | undefined;
   if (role !== undefined) {
-    if (!(ROLES as readonly string[]).includes(role)) {
-      return NextResponse.json({ error: `role must be one of: ${ROLES.join(', ')}` }, { status: 400 });
-    }
-    const roleRow = await prisma.role.findUniqueOrThrow({ where: { name: role } });
+    // Looked up rather than checked against a fixed list — see the matching
+    // comment in POST /api/users.
+    const roleRow = await prisma.role.findUnique({ where: { name: role } });
+    if (!roleRow) return NextResponse.json({ error: `Unknown role: ${role}` }, { status: 400 });
     roleId = roleRow.id;
   }
 

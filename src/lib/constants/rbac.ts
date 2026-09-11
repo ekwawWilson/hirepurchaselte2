@@ -17,6 +17,55 @@ export const PERMISSIONS = [
 
 export type Permission = (typeof PERMISSIONS)[number];
 
+/** Human-readable label for each permission — the Roles admin UI's checkbox grid. */
+export const PERMISSION_LABELS: Record<Permission, string> = {
+  'customer.create': 'Create customers',
+  'customer.view': 'View customers',
+  'customer.update': 'Edit customers',
+  'contract.create': 'Create contracts',
+  'contract.view': 'View contracts',
+  'contract.cancel': 'Cancel contracts',
+  'contract.writeoff': 'Write off contracts',
+  'contract.reschedule': 'Reschedule contracts',
+  'payment.cash.record': 'Record cash / USSD payments',
+  'payment.reverse': 'Reverse payments',
+  'payment.view': 'View payments',
+  'pricechart.view': 'View price chart',
+  'pricechart.edit': 'Edit price chart',
+  'inventory.receive': 'Receive stock',
+  'inventory.issue': 'Issue stock',
+  'inventory.transfer': 'Transfer stock between branches',
+  'inventory.adjust': 'Adjust stock',
+  'inventory.view': 'View inventory',
+  'report.view.branch': "View own branch's reports",
+  'report.view.all': 'View all-branch reports',
+  'report.export': 'Export reports',
+  'user.manage': 'Manage users',
+  'role.manage': 'Manage roles & permissions',
+  'audit.view': 'View audit trail',
+  'settings.manage': 'Manage settings',
+};
+
+/** Permissions grouped for display — the Roles admin UI's checkbox grid, in this order. */
+export const PERMISSION_GROUPS: Array<{ label: string; permissions: Permission[] }> = [
+  { label: 'Customers', permissions: ['customer.create', 'customer.view', 'customer.update'] },
+  { label: 'Contracts', permissions: ['contract.create', 'contract.view', 'contract.cancel', 'contract.writeoff', 'contract.reschedule'] },
+  { label: 'Payments', permissions: ['payment.cash.record', 'payment.reverse', 'payment.view'] },
+  { label: 'Price Chart', permissions: ['pricechart.view', 'pricechart.edit'] },
+  { label: 'Inventory', permissions: ['inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view'] },
+  { label: 'Reports', permissions: ['report.view.branch', 'report.view.all', 'report.export'] },
+  { label: 'Administration', permissions: ['user.manage', 'role.manage', 'audit.view'] },
+  { label: 'Settings', permissions: ['settings.manage'] },
+];
+
+// These 7 are the SYSTEM roles: syncRbac.ts force-replaces each one's
+// permission set from ROLE_PERMISSIONS below on every deploy (see that
+// file's comment — it's how a permission added/removed in code propagates to
+// every already-deployed database). That means editing a system role's
+// permissions through the Roles admin UI would just get silently overwritten
+// on the next deploy — so that UI only lets an admin create/edit/delete
+// CUSTOM roles (any Role row whose name isn't one of these 7), which
+// syncRbac never touches at all. See src/app/api/roles/[id]/route.ts.
 export const ROLES = [
   'SUPER_ADMIN',
   'ADMIN',

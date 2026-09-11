@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
-import { ROLES } from '@/lib/constants/rbac';
 
 function toUserResponse(user: {
   id: string; email: string; firstName: string; lastName: string; isActive: boolean;
@@ -42,17 +41,18 @@ export async function POST(req: NextRequest) {
   if (!email || !password || !firstName || !lastName || !role) {
     return NextResponse.json({ error: 'email, password, firstName, lastName, role are required' }, { status: 400 });
   }
-  if (!(ROLES as readonly string[]).includes(role)) {
-    return NextResponse.json({ error: `role must be one of: ${ROLES.join(', ')}` }, { status: 400 });
-  }
   if (password.length < 8) {
     return NextResponse.json({ error: 'password must be at least 8 characters' }, { status: 400 });
   }
 
+  // Looked up rather than checked against a fixed list — a role is anything
+  // that exists as a Role row now, system role or admin-created custom one
+  // (roleService.ts / src/app/api/roles).
+  const roleRow = await prisma.role.findUnique({ where: { name: role } });
+  if (!roleRow) return NextResponse.json({ error: `Unknown role: ${role}` }, { status: 400 });
+
   const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
   if (existing) return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 });
-
-  const roleRow = await prisma.role.findUniqueOrThrow({ where: { name: role } });
   const passwordHash = await bcrypt.hash(password, Number(process.env.BCRYPT_ROUNDS) || 10);
 
   const user = await prisma.user.create({

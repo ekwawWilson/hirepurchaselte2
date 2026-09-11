@@ -10,6 +10,7 @@ import {
   Tags,
   Smartphone,
   UserCog,
+  ShieldCheck,
   Building2,
   Settings,
   type LucideIcon,
@@ -77,6 +78,7 @@ export const navGroups: NavGroup[] = [
     label: 'Administration',
     items: [
       { name: 'Users', href: '/users', icon: UserCog, perms: ['user.manage'] },
+      { name: 'Roles', href: '/roles', icon: ShieldCheck, perms: ['role.manage'] },
       { name: 'Branches', href: '/branches', icon: Building2, perms: ['user.manage'] },
       { name: 'Settings', href: '/settings', icon: Settings, perms: ['settings.manage'] },
     ],

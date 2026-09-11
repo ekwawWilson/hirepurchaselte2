@@ -14,13 +14,15 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
-const ROLES = ['SUPER_ADMIN', 'ADMIN', 'BRANCH_MANAGER', 'CASHIER', 'SALES', 'STORE_KEEPER', 'AUDITOR'];
-
 interface User {
   id: string; email: string; firstName: string; lastName: string; isActive: boolean;
   branchId: string | null; role: string;
 }
 interface Branch { id: string; name: string; code: string }
+// Fetched from /api/roles rather than a hardcoded list — includes any custom
+// role created from the Roles admin page (src/app/(app)/roles/page.tsx), not
+// just the 7 built-in ones.
+interface RoleOption { id: string; name: string }
 
 const ALL_BRANCHES = '__all__';
 
@@ -29,14 +31,15 @@ export default function UsersPage() {
   const { toast } = useToast();
   const [users, setUsers] = useState<User[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [roles, setRoles] = useState<RoleOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [createForm, setCreateForm] = useState({ firstName: '', lastName: '', email: '', password: '', role: 'CASHIER', branchId: ALL_BRANCHES });
+  const [createForm, setCreateForm] = useState({ firstName: '', lastName: '', email: '', password: '', role: '', branchId: ALL_BRANCHES });
   const [creating, setCreating] = useState(false);
 
   const [editUser, setEditUser] = useState<User | null>(null);
-  const [editForm, setEditForm] = useState({ role: 'CASHIER', branchId: ALL_BRANCHES, isActive: true });
+  const [editForm, setEditForm] = useState({ role: '', branchId: ALL_BRANCHES, isActive: true });
   const [saving, setSaving] = useState(false);
 
   const branchName = (id: string | null) => (id ? branches.find((b) => b.id === id)?.name ?? id : 'All branches');
@@ -44,12 +47,15 @@ export default function UsersPage() {
   async function load() {
     setIsLoading(true);
     try {
-      const [{ users }, { branches }] = await Promise.all([
+      const [{ users }, { branches }, { roles }] = await Promise.all([
         api.get<{ users: User[] }>('/users'),
         api.get<{ branches: Branch[] }>('/branches'),
+        api.get<{ roles: RoleOption[] }>('/roles'),
       ]);
       setUsers(users);
       setBranches(branches);
+      setRoles(roles);
+      setCreateForm((f) => ({ ...f, role: f.role || roles[0]?.name || '' }));
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load users', variant: 'destructive' });
     } finally {
@@ -91,7 +97,7 @@ export default function UsersPage() {
       });
       toast({ title: 'User created' });
       setCreateOpen(false);
-      setCreateForm({ firstName: '', lastName: '', email: '', password: '', role: 'CASHIER', branchId: ALL_BRANCHES });
+      setCreateForm({ firstName: '', lastName: '', email: '', password: '', role: roles[0]?.name ?? '', branchId: ALL_BRANCHES });
       await load();
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to create user', variant: 'destructive' });
@@ -204,7 +210,7 @@ export default function UsersPage() {
               <Select value={createForm.role} onValueChange={(v) => setCreateForm({ ...createForm, role: v })}>
                 <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  {roles.map((r) => <SelectItem key={r.id} value={r.name}>{r.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -236,7 +242,7 @@ export default function UsersPage() {
               <Select value={editForm.role} onValueChange={(v) => setEditForm({ ...editForm, role: v })}>
                 <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  {roles.map((r) => <SelectItem key={r.id} value={r.name}>{r.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

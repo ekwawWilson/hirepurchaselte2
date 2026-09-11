@@ -14,11 +14,6 @@ import { POST as priceChartPOST } from '@/app/api/price-chart/route';
 import { POST as priceChartBundlePOST } from '@/app/api/price-chart/bundle/route';
 const PASSWORD = 'Passw0rd!123';
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
-let counter = 0;
-function uniquePhone() {
-  counter += 1;
-  return `023${runId}${counter}`;
-}
 
 async function login(email: string): Promise<string> {
   const res = await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email, password: PASSWORD } }));
