@@ -7,4 +7,4 @@
  * (orgSettingsService.ts and orgSettingsStore.ts) can share one source of truth.
  */
 export const APP_NAME = 'PETROS Hirepurchase';
-export const APP_LOGO_URL = '/eyo.jpeg';
+export const APP_LOGO_URL = '/zple.jpeg';
