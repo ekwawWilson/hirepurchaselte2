@@ -122,7 +122,10 @@ async function main() {
         data: { status: 'AVAILABLE' },
       });
     }
-  });
+    // Prisma's default interactive-transaction timeout (5s) assumes low-latency
+    // local access — too tight over a higher-latency connection (a tunnel, a
+    // remote host) for this many sequential deleteMany calls in one transaction.
+  }, { timeout: 30_000 });
 
   console.log('\nDone.');
 }
