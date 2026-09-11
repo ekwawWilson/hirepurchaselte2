@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { HubtelDiagnostics } from '@/components/settings/HubtelDiagnostics';
+import { CompanyLogo } from '@/components/CompanyLogo';
 
 export default function SettingsPage() {
   const canManage = useAuthStore((s) => s.hasPermission('settings.manage'));
@@ -146,14 +147,16 @@ export default function SettingsPage() {
         <CardHeader><CardTitle>Preview</CardTitle></CardHeader>
         <CardContent>
           <div className="flex items-center gap-2.5 min-w-0">
-            {form.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={form.logoUrl} alt={form.companyName} className="w-8 h-8 rounded-lg object-cover shrink-0" />
-            ) : (
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
-                <span className="text-white text-[13px] font-extrabold tracking-tighter">{companyInitials(form.companyName || APP_NAME)}</span>
-              </div>
-            )}
+            <CompanyLogo
+              logoUrl={form.logoUrl || null}
+              companyName={form.companyName}
+              imgClassName="w-8 h-8 rounded-lg object-cover shrink-0"
+              fallback={
+                <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
+                  <span className="text-white text-[13px] font-extrabold tracking-tighter">{companyInitials(form.companyName || APP_NAME)}</span>
+                </div>
+              }
+            />
             <div className="flex flex-col leading-none min-w-0">
               <span className="text-[15px] font-extrabold text-gray-900 tracking-tight truncate">{form.companyName || APP_NAME}</span>
               <span className="text-[10px] text-gray-400 font-medium tracking-wide uppercase">Hire Purchase System</span>

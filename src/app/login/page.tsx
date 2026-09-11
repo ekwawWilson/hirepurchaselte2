@@ -6,6 +6,7 @@ import { Eye, EyeOff, AlertCircle, Shield } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useOrgSettingsStore } from '@/lib/orgSettingsStore';
+import { CompanyLogo } from '@/components/CompanyLogo';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -64,14 +65,16 @@ export default function LoginPage() {
       {/* Right form panel */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-14 bg-[#f5f0eb]">
         <div className="flex items-center gap-2.5 mb-8">
-          {logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={logoUrl} alt={companyName} className="w-9 h-9 object-cover shadow-sm" />
-          ) : (
-            <div className="w-9 h-9 bg-primary flex items-center justify-center shadow-sm">
-              <Shield className="w-5 h-5 text-white" />
-            </div>
-          )}
+          <CompanyLogo
+            logoUrl={logoUrl}
+            companyName={companyName}
+            imgClassName="w-9 h-9 object-cover shadow-sm"
+            fallback={
+              <div className="w-9 h-9 bg-primary flex items-center justify-center shadow-sm">
+                <Shield className="w-5 h-5 text-white" />
+              </div>
+            }
+          />
           <div>
             <p className="text-sm font-bold text-gray-900 leading-none tracking-wide">{companyName.toUpperCase()}</p>
             <p className="text-xs text-gray-400 leading-none mt-0.5">Management System</p>

@@ -6,20 +6,23 @@ import { useOrgSettingsStore } from "@/lib/orgSettingsStore";
 import { APP_NAME } from "@/lib/constants/branding";
 import { useVisibleNavGroups } from "@/lib/navigation";
 import { cn, companyInitials } from "@/lib/utils";
+import { CompanyLogo } from "@/components/CompanyLogo";
 
 function BrandStrip() {
   const { companyName, logoUrl } = useOrgSettingsStore((s) => s.settings);
 
   return (
     <div className="h-14 flex items-center gap-2.5 px-4 border-b border-slate-800 shrink-0">
-      {logoUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={logoUrl} alt={companyName} className="w-7 h-7 rounded-lg object-cover shrink-0" />
-      ) : (
-        <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center shrink-0">
-          <span className="text-white text-[11px] font-extrabold tracking-tighter">{companyInitials(companyName)}</span>
-        </div>
-      )}
+      <CompanyLogo
+        logoUrl={logoUrl}
+        companyName={companyName}
+        imgClassName="w-7 h-7 rounded-lg object-cover shrink-0"
+        fallback={
+          <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center shrink-0">
+            <span className="text-white text-[11px] font-extrabold tracking-tighter">{companyInitials(companyName)}</span>
+          </div>
+        }
+      />
       <div className="leading-none min-w-0">
         <p className="font-heading text-[14px] font-extrabold text-white tracking-tight truncate">{companyName}</p>
         <p className="text-[9px] text-slate-500 font-medium uppercase tracking-widest mt-0.5">Hire Purchase</p>
