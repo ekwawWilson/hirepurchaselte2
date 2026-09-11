@@ -31,17 +31,53 @@ function addMonths(date: Date, months: number): Date {
   return d;
 }
 
+function isWeekend(date: Date): boolean {
+  const day = date.getDay(); // 0 Sun .. 6 Sat
+  return day === 0 || day === 6;
+}
+
+/** Rolls a Saturday/Sunday date forward to the following Monday — no repayment date is ever due on a weekend. */
+function rollToWeekday(date: Date): Date {
+  const d = new Date(date);
+  while (isWeekend(d)) d.setDate(d.getDate() + 1);
+  return d;
+}
+
 /**
- * Advances `date` by `n` instalment periods at the given cadence. DAILY/WEEKLY
- * are plain day arithmetic (no month-length ambiguity to clamp); MONTHLY
- * reuses addMonths's month-end clamping.
+ * Advances `date` by exactly `n` business days (Mon-Fri), skipping weekends
+ * entirely — used for DAILY cadence instead of a plain `+n` calendar-day
+ * offset plus a rollToWeekday, since rolling each of several consecutive
+ * weekend dates independently would collapse them onto the same Monday
+ * (e.g. a Saturday and the Sunday right after it both rolling to that same
+ * Monday). Walking forward one business day at a time guarantees every
+ * instalment lands on a distinct weekday.
+ */
+function addBusinessDays(date: Date, n: number): Date {
+  const d = new Date(date);
+  let remaining = n;
+  while (remaining > 0) {
+    d.setDate(d.getDate() + 1);
+    if (!isWeekend(d)) remaining--;
+  }
+  return d;
+}
+
+/**
+ * Advances `date` by `n` instalment periods at the given cadence, always
+ * landing on a weekday (Mon-Fri) — no contract type's repayment dates fall
+ * on a Saturday/Sunday. MONTHLY reuses addMonths's month-end clamping, then
+ * rolls forward off a weekend if the clamped date landed on one. WEEKLY's
+ * fixed 7-day offset stays on the same weekday as `date` every time, so
+ * rolling only ever matters if `date` itself is a weekend. DAILY walks
+ * business days directly (see addBusinessDays) rather than rolling each
+ * calendar day independently.
  */
 function addPeriod(date: Date, paymentFrequency: PaymentFrequencyName, n: number): Date {
-  if (paymentFrequency === 'MONTHLY') return addMonths(date, n);
-  const daysPerPeriod = paymentFrequency === 'WEEKLY' ? 7 : 1;
+  if (paymentFrequency === 'MONTHLY') return rollToWeekday(addMonths(date, n));
+  if (paymentFrequency === 'DAILY') return addBusinessDays(date, n);
   const d = new Date(date);
-  d.setDate(d.getDate() + n * daysPerPeriod);
-  return d;
+  d.setDate(d.getDate() + n * 7);
+  return rollToWeekday(d);
 }
 
 /**
