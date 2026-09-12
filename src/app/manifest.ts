@@ -12,6 +12,11 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
   const name = companyName === APP_NAME ? APP_NAME : `${companyName} · ${APP_NAME}`;
 
   return {
+    // Explicit, stable app identity — without it, browsers fall back to
+    // start_url for identity, which is more fragile across an
+    // uninstall/reinstall cycle (some engines otherwise still associate the
+    // old install's state with a fresh one at the same start_url).
+    id: '/',
     name,
     short_name: companyName === APP_NAME ? APP_NAME : companyName,
     description: 'Hire-purchase management system',
