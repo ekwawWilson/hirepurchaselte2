@@ -26,6 +26,9 @@ export default function SettingsPage() {
   const [loanForm, setLoanForm] = useState({ dailyInterestPercent: '1', interestGraceDays: '0' });
   const [loanSaving, setLoanSaving] = useState(false);
 
+  const [workingDays, setWorkingDays] = useState({ worksSaturday: false, worksSunday: false });
+  const [workingDaysSaving, setWorkingDaysSaving] = useState(false);
+
   useEffect(() => {
     if (!canManage) return;
     api.get<{ settings: { dailyInterestRateBps: number; interestGraceDays: number } }>('/settings/loan-terms')
@@ -34,6 +37,9 @@ export default function SettingsPage() {
         interestGraceDays: r.settings.interestGraceDays.toString(),
       }))
       .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load loan terms', variant: 'destructive' }));
+    api.get<{ settings: { worksSaturday: boolean; worksSunday: boolean } }>('/settings/operating')
+      .then((r) => setWorkingDays({ worksSaturday: r.settings.worksSaturday, worksSunday: r.settings.worksSunday }))
+      .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load working days', variant: 'destructive' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canManage]);
 
@@ -73,6 +79,22 @@ export default function SettingsPage() {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save loan terms', variant: 'destructive' });
     } finally {
       setLoanSaving(false);
+    }
+  }
+
+  async function onSaveWorkingDays(e: React.FormEvent) {
+    e.preventDefault();
+    setWorkingDaysSaving(true);
+    try {
+      await api.patch('/settings/operating', workingDays);
+      toast({
+        title: 'Working days saved',
+        description: 'Applies to new contract schedules, daily loan interest, and direct debit collection from now on — existing instalment dates stay as agreed.',
+      });
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save working days', variant: 'destructive' });
+    } finally {
+      setWorkingDaysSaving(false);
     }
   }
 
@@ -167,6 +189,38 @@ export default function SettingsPage() {
       </Card>
 
       <Card>
+        <CardHeader><CardTitle>Working days</CardTitle></CardHeader>
+        <CardContent>
+          <form className="space-y-4" onSubmit={onSaveWorkingDays}>
+            <p className="text-xs text-gray-400">
+              Monday to Friday are always working days. Tick a weekend day if the business operates on it — that
+              controls which days instalments can fall due, which days daily loan interest is charged, and which days
+              direct debit collects. Payments a customer actually makes are always accepted, any day.
+            </p>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={workingDays.worksSaturday}
+                  onChange={(e) => setWorkingDays({ ...workingDays, worksSaturday: e.target.checked })}
+                />
+                Open on Saturdays
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={workingDays.worksSunday}
+                  onChange={(e) => setWorkingDays({ ...workingDays, worksSunday: e.target.checked })}
+                />
+                Open on Sundays
+              </label>
+            </div>
+            <Button type="submit" disabled={workingDaysSaving}>{workingDaysSaving ? 'Saving...' : 'Save working days'}</Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle>Loan payment terms</CardTitle></CardHeader>
         <CardContent>
           <form className="grid grid-cols-2 gap-4" onSubmit={onSaveLoanTerms}>
@@ -177,7 +231,7 @@ export default function SettingsPage() {
                 value={loanForm.dailyInterestPercent}
                 onChange={(e) => setLoanForm({ ...loanForm, dailyInterestPercent: e.target.value })}
               />
-              <p className="text-xs text-gray-400 mt-1">Flat percentage of the original loan amount, charged each weekday the loan is unpaid.</p>
+              <p className="text-xs text-gray-400 mt-1">Flat percentage of the original loan amount, charged each working day the loan is unpaid.</p>
             </div>
             <div>
               <Label>Grace period (days)</Label>

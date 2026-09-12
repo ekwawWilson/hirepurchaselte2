@@ -25,6 +25,7 @@ import {
   processDirectDebitCallback, retryFailedDirectDebits, PreapprovalError,
 } from '@/lib/services/hubtelPreapprovalService';
 import { runDirectDebitCollections } from '@/lib/services/collectionsService';
+import { updateOperatingSettings } from '@/lib/services/operatingSettingsService';
 import { applyLatePenalties } from '@/lib/services/overdueService';
 
 const PASSWORD = 'Passw0rd!123';
@@ -131,6 +132,11 @@ describe('Hubtel Direct Debit', () => {
     branchId = branch.id;
     const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
     adminUserId = admin.id;
+    // runDirectDebitCollections is a no-op on a non-working day
+    // (collectionsService.ts), so without this the collection tests below
+    // would pass Mon-Fri and fail every Saturday/Sunday. Marking both weekend
+    // days as working makes them depend only on what they actually assert.
+    await updateOperatingSettings({ worksSaturday: true, worksSunday: true, updatedById: adminUserId });
   });
 
   async function makeProduct(label: string) {

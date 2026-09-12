@@ -12,6 +12,7 @@ import {
   DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, DIRECT_DEBIT_NETWORKS, type PaymentFrequencyName,
 } from '@/lib/constants/contracts';
 import { generateStraightLineSchedule, type GeneratedInstalment } from '@/lib/services/scheduleService';
+import { DEFAULT_WORKING_DAYS, type WorkingDays } from '@/lib/workingDays';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -61,6 +62,9 @@ export default function ContractsPage() {
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  // Fetched so the preview shows the same due dates the server will actually
+  // write (contractService.ts reads the same setting at creation).
+  const [workingDays, setWorkingDays] = useState<WorkingDays>(DEFAULT_WORKING_DAYS);
 
   const [customerSearch, setCustomerSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
@@ -131,7 +135,7 @@ export default function ContractsPage() {
 
   function previewSchedule(): GeneratedInstalment[] {
     if (!isDepositInstalment || !depositTermsValid) return [];
-    return generateStraightLineSchedule(financeAmountMinor, 1, new Date(startDate), paymentFrequency, instalmentCount);
+    return generateStraightLineSchedule(financeAmountMinor, 1, new Date(startDate), paymentFrequency, instalmentCount, workingDays);
   }
 
   async function loadContracts() {
@@ -153,6 +157,9 @@ export default function ContractsPage() {
 
   useEffect(() => {
     if (!showForm) return;
+    api.get<{ settings: { worksSaturday: boolean; worksSunday: boolean } }>('/settings/operating')
+      .then((r) => setWorkingDays({ saturday: r.settings.worksSaturday, sunday: r.settings.worksSunday }))
+      .catch(() => undefined); // preview falls back to Mon-Fri; not worth blocking the wizard over
     api.get<{ customers: Customer[] }>('/customers')
       .then((r) => setCustomers(r.customers))
       .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load customers', variant: 'destructive' }));
@@ -425,7 +432,7 @@ export default function ContractsPage() {
                   <>
                     <div className="bg-green-50 p-3">
                       <p className="text-xs font-medium text-green-900">Device Loan</p>
-                      <p className="text-sm text-green-900">Not linked to a product. 1% daily interest accrues on the loan amount (weekdays only, after the grace period) until fully paid.</p>
+                      <p className="text-sm text-green-900">Not linked to a product. 1% daily interest accrues on the loan amount (working days only, after the grace period) until fully paid.</p>
                     </div>
                     <div>
                       <Label>Loan Amount (GHS) *</Label>
@@ -438,7 +445,7 @@ export default function ContractsPage() {
                     <div className="border border-gray-200 p-3 space-y-1.5 text-sm">
                       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Summary</p>
                       <div className="flex justify-between"><span className="text-gray-500">Loan Amount</span><span className="font-medium text-gray-900">{formatCurrency(parsedLoanAmount || 0)}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Daily Interest (1%)</span><span className="font-medium text-gray-900">{formatCurrency(Math.round((parsedLoanAmount || 0) * 0.01))} / weekday</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Daily Interest (1%)</span><span className="font-medium text-gray-900">{formatCurrency(Math.round((parsedLoanAmount || 0) * 0.01))} / working day</span></div>
                     </div>
                   </>
                 )}

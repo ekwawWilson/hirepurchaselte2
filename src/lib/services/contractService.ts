@@ -7,6 +7,7 @@ import { queueSms, deliverQueuedSms } from './smsService';
 import { reverseAllPaymentsForContract } from './paymentService';
 import { initiatePreapproval, enableDirectDebit } from './hubtelPreapprovalService';
 import { getLoanSettings } from './loanSettingsService';
+import { getWorkingDays } from './operatingSettingsService';
 import {
   CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
   DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
@@ -222,7 +223,7 @@ async function runSaveToOwnTransaction(params: CreateContractParams, startDate: 
 /**
  * DEVICE_LOAN's own creation path: no product/inventory item, no schedule —
  * a daily-simple-interest loan (loanService.accrueDailyLoanInterest charges
- * 1%/weekday against principalMinor until it's paid off; see
+ * 1%/working day against principalMinor until it's paid off; see
  * paymentService.postDeviceLoanPayment for how it's repaid). interestRateBps
  * and gracePeriodDays are snapshotted from the current LoanSettings — later
  * changes to those global settings never reprice a loan already created.
@@ -316,8 +317,12 @@ async function runDepositInstalmentTransaction(
 
     // termMonths passed here is irrelevant — instalmentCount is always
     // explicit for this weeks-based term (scheduleService.ts's guard is
-    // relaxed accordingly whenever an explicit count is given).
-    const schedule = generateStraightLineSchedule(financeAmountMinor, 1, startDate, frequency, instalmentCount);
+    // relaxed accordingly whenever an explicit count is given). Working days
+    // are read once here and baked into the dates written below: changing
+    // the setting later never moves an existing schedule the customer has
+    // already agreed to.
+    const workingDays = await getWorkingDays(tx);
+    const schedule = generateStraightLineSchedule(financeAmountMinor, 1, startDate, frequency, instalmentCount, workingDays);
     await tx.instalment.createMany({
       data: schedule.map((s) => ({
         contractId: contract.id,

@@ -469,7 +469,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           <CardHeader><CardTitle>Daily interest</CardTitle></CardHeader>
           <CardContent>
             <p className="text-sm text-gray-500">
-              No fixed instalment schedule — 1% of the loan amount accrues each weekday (after the grace period) until
+              No fixed instalment schedule — 1% of the loan amount accrues each working day (after the grace period) until
               the customer pays it off, either as accrued interest or the full loan amount at once.
             </p>
           </CardContent>

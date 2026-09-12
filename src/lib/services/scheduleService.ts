@@ -5,6 +5,7 @@
  * docs/02-loan-maths.md (Type C flat-rate interest, worked example).
  */
 import { numberOfInstalmentsForTerm, type PaymentFrequencyName } from '../constants/contracts';
+import { DEFAULT_WORKING_DAYS, addWorkingDays, rollToWorkingDay, type WorkingDays } from '../workingDays';
 
 export interface GeneratedInstalment {
   instalmentNo: number;
@@ -31,53 +32,24 @@ function addMonths(date: Date, months: number): Date {
   return d;
 }
 
-function isWeekend(date: Date): boolean {
-  const day = date.getDay(); // 0 Sun .. 6 Sat
-  return day === 0 || day === 6;
-}
-
-/** Rolls a Saturday/Sunday date forward to the following Monday — no repayment date is ever due on a weekend. */
-function rollToWeekday(date: Date): Date {
-  const d = new Date(date);
-  while (isWeekend(d)) d.setDate(d.getDate() + 1);
-  return d;
-}
-
-/**
- * Advances `date` by exactly `n` business days (Mon-Fri), skipping weekends
- * entirely — used for DAILY cadence instead of a plain `+n` calendar-day
- * offset plus a rollToWeekday, since rolling each of several consecutive
- * weekend dates independently would collapse them onto the same Monday
- * (e.g. a Saturday and the Sunday right after it both rolling to that same
- * Monday). Walking forward one business day at a time guarantees every
- * instalment lands on a distinct weekday.
- */
-function addBusinessDays(date: Date, n: number): Date {
-  const d = new Date(date);
-  let remaining = n;
-  while (remaining > 0) {
-    d.setDate(d.getDate() + 1);
-    if (!isWeekend(d)) remaining--;
-  }
-  return d;
-}
-
 /**
  * Advances `date` by `n` instalment periods at the given cadence, always
- * landing on a weekday (Mon-Fri) — no contract type's repayment dates fall
- * on a Saturday/Sunday. MONTHLY reuses addMonths's month-end clamping, then
- * rolls forward off a weekend if the clamped date landed on one. WEEKLY's
- * fixed 7-day offset stays on the same weekday as `date` every time, so
- * rolling only ever matters if `date` itself is a weekend. DAILY walks
- * business days directly (see addBusinessDays) rather than rolling each
+ * landing on a working day — no contract type's repayment dates fall on a
+ * day the business is closed. Which weekend days count as working is
+ * configurable (Settings > Working days, see workingDays.ts); Mon-Fri
+ * always are. MONTHLY reuses addMonths's month-end clamping, then rolls
+ * forward if the clamped date landed on a non-working day. WEEKLY's fixed
+ * 7-day offset stays on the same weekday as `date` every time, so rolling
+ * only ever matters if `date` itself is a non-working day. DAILY walks
+ * working days directly (see addWorkingDays) rather than rolling each
  * calendar day independently.
  */
-function addPeriod(date: Date, paymentFrequency: PaymentFrequencyName, n: number): Date {
-  if (paymentFrequency === 'MONTHLY') return rollToWeekday(addMonths(date, n));
-  if (paymentFrequency === 'DAILY') return addBusinessDays(date, n);
+function addPeriod(date: Date, paymentFrequency: PaymentFrequencyName, n: number, workingDays: WorkingDays): Date {
+  if (paymentFrequency === 'MONTHLY') return rollToWorkingDay(addMonths(date, n), workingDays);
+  if (paymentFrequency === 'DAILY') return addWorkingDays(date, n, workingDays);
   const d = new Date(date);
   d.setDate(d.getDate() + n * 7);
-  return rollToWeekday(d);
+  return rollToWorkingDay(d, workingDays);
 }
 
 /**
@@ -98,6 +70,11 @@ export function generateStraightLineSchedule(
   // always supplied and termMonths itself goes unused whenever it is (kept
   // only so the signature stays uniform with generateLoanSchedule).
   instalmentCountOverride?: number,
+  // Which weekend days the business operates on — due dates never land on a
+  // non-working day. Defaults to Mon-Fri so existing callers (and the pure
+  // date-math tests) keep their previous behavior; contractService.ts passes
+  // the configured value (operatingSettingsService.ts).
+  workingDays: WorkingDays = DEFAULT_WORKING_DAYS,
 ): GeneratedInstalment[] {
   if (instalmentCountOverride === undefined && termMonths < 1) throw new Error('termMonths must be at least 1');
   if (financeAmountMinor < 0) throw new Error('financeAmountMinor cannot be negative');
@@ -113,7 +90,7 @@ export function generateStraightLineSchedule(
     runningTotal += amount;
     schedule.push({
       instalmentNo: i,
-      dueDate: addPeriod(startDate, paymentFrequency, i),
+      dueDate: addPeriod(startDate, paymentFrequency, i, workingDays),
       amountDueMinor: amount,
       principalPortionMinor: amount,
       interestPortionMinor: 0,
@@ -139,6 +116,8 @@ export function generateLoanSchedule(
   // below — termMonths still drives totalInterestMinor (time-value of money
   // over the loan's real duration), only the split count changes.
   instalmentCountOverride?: number,
+  // See generateStraightLineSchedule's own workingDays note.
+  workingDays: WorkingDays = DEFAULT_WORKING_DAYS,
 ): GeneratedInstalment[] {
   if (termMonths < 1) throw new Error('termMonths must be at least 1');
   if (principalMinor < 0) throw new Error('principalMinor cannot be negative');
@@ -163,7 +142,7 @@ export function generateLoanSchedule(
 
     schedule.push({
       instalmentNo: i,
-      dueDate: addPeriod(startDate, paymentFrequency, i),
+      dueDate: addPeriod(startDate, paymentFrequency, i, workingDays),
       amountDueMinor: interestPortion + principalPortion,
       principalPortionMinor: principalPortion,
       interestPortionMinor: interestPortion,

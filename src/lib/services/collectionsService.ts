@@ -1,5 +1,7 @@
 import { prisma } from '../db/prisma';
 import { chargeDirectDebit } from './hubtelPreapprovalService';
+import { getWorkingDays } from './operatingSettingsService';
+import { isWorkingDay } from '../workingDays';
 
 /**
  * Charges the direct-debit mandate for every ACTIVE contract that has one
@@ -22,6 +24,14 @@ import { chargeDirectDebit } from './hubtelPreapprovalService';
  * nobody ever uses to collect.
  */
 export async function runDirectDebitCollections() {
+  // Never pull money out of a customer's wallet on a day the business is
+  // closed (Settings > Working days) — there'd be nobody to answer for it if
+  // the charge goes wrong. Whatever was due simply gets collected on the next
+  // working day; nothing is skipped, only deferred. Recording a payment the
+  // customer actively makes is deliberately NOT gated this way
+  // (paymentService.ts) — this is only about charges the merchant initiates.
+  if (!isWorkingDay(new Date(), await getWorkingDays())) return 0;
+
   const contracts = await prisma.contract.findMany({
     where: {
       status: 'ACTIVE',

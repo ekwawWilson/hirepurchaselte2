@@ -1,13 +1,7 @@
 import { prisma } from '../db/prisma';
 import { getDeviceLoanState } from './paymentService';
-
-const MONDAY = 1;
-const FRIDAY = 5;
-
-function isWeekday(date: Date): boolean {
-  const day = date.getDay(); // 0 Sun .. 6 Sat
-  return day >= MONDAY && day <= FRIDAY;
-}
+import { getWorkingDays } from './operatingSettingsService';
+import { isWorkingDay } from '../workingDays';
 
 function startOfDay(date: Date): Date {
   const d = new Date(date);
@@ -26,7 +20,8 @@ function startOfDay(date: Date): Date {
  * "accrued interest" counter.
  *
  * Only charges a contract when:
- *  - Today is a weekday (Mon-Fri) — no charge Sat/Sun.
+ *  - Today is a working day — Mon-Fri always, plus whichever weekend days
+ *    the business has enabled (Settings > Working days, read live).
  *  - At least `gracePeriodDays` calendar days have passed since the loan's
  *    startDate ("days after loan date", editable in Settings > Loan payment
  *    terms — snapshotted per-contract the same way, onto gracePeriodDays).
@@ -43,7 +38,7 @@ function startOfDay(date: Date): Date {
  */
 export async function accrueDailyLoanInterest(): Promise<number> {
   const now = new Date();
-  if (!isWeekday(now)) return 0;
+  if (!isWorkingDay(now, await getWorkingDays())) return 0;
   const today = startOfDay(now);
 
   const contracts = await prisma.contract.findMany({

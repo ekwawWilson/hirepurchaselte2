@@ -99,6 +99,7 @@ model User {
   hubtelPreapprovalsCreated HubtelPreapproval[] @relation("HubtelPreapprovalCreatedBy")
   orgSettingsUpdates        OrgSettings[]
   loanSettingsUpdates       LoanSettings[]
+  operatingSettingsUpdates  OperatingSettings[]
 
   @@map("users")
 }
@@ -690,4 +691,33 @@ model LoanSettings {
   updatedBy User? @relation(fields: [updatedById], references: [id])
 
   @@map("loan_settings")
+}
+
+// Which weekend days the business actually operates on — one row (id pinned
+// to "singleton", same convention as OrgSettings), edited from
+// Settings > Working days. Monday-Friday are always working days; only the
+// weekend is configurable, which is the only part that varies in practice.
+//
+// Read LIVE, not snapshotted per contract — unlike the pricing fields on
+// Contract, this answers "is the business open today?", an operational fact
+// that should take effect everywhere the moment it changes. Instalment due
+// dates are the one exception in practice, but only because they're written
+// once at contract creation (contractService.ts) and never recomputed, so an
+// existing schedule keeps the dates the customer already agreed to.
+//
+// Consumed by scheduleService (due dates never land on a non-working day),
+// loanService (daily interest only accrues on working days) and
+// collectionsService (no direct-debit auto-charge on a day you're closed).
+// Deliberately NOT consulted when recording a payment — a customer handing
+// over cash on a Sunday is always accepted (paymentService.ts).
+model OperatingSettings {
+  id            String   @id @default("singleton")
+  worksSaturday Boolean  @default(false)
+  worksSunday   Boolean  @default(false)
+  updatedAt     DateTime @updatedAt
+  updatedById   String?
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("operating_settings")
 }
