@@ -136,7 +136,7 @@ describe('Hubtel Direct Debit', () => {
     // (collectionsService.ts), so without this the collection tests below
     // would pass Mon-Fri and fail every Saturday/Sunday. Marking both weekend
     // days as working makes them depend only on what they actually assert.
-    await updateOperatingSettings({ worksSaturday: true, worksSunday: true, updatedById: adminUserId });
+    await updateOperatingSettings({ worksSaturday: true, worksSunday: true, acceptsPaymentsOnClosedDays: true, updatedById: adminUserId });
   });
 
   async function makeProduct(label: string) {

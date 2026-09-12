@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
 import { postDeviceLoanPayment, PaymentError } from '@/lib/services/paymentService';
 import { logAudit } from '@/lib/services/auditService';
+import { assertPaymentsAcceptedToday, PaymentsClosedError } from '@/lib/services/operatingSettingsService';
 
 /**
  * DEVICE_LOAN's own payment route — postPayment (the generic /payments/cash
@@ -30,6 +31,7 @@ export async function POST(req: NextRequest) {
   if (!assertBranchAccess(auth.user, contract.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
+    await assertPaymentsAcceptedToday();
     const result = await postDeviceLoanPayment({
       contractId: contractId as string,
       amountMinor,
@@ -44,6 +46,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json(result, { status: 201 });
   } catch (e) {
+    if (e instanceof PaymentsClosedError) return NextResponse.json({ error: e.message }, { status: 409 });
     if (e instanceof PaymentError) return NextResponse.json({ error: e.message }, { status: 400 });
     throw e;
   }

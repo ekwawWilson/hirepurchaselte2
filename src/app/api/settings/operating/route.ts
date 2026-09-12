@@ -31,6 +31,7 @@ export async function PATCH(req: NextRequest) {
   const settings = await updateOperatingSettings({
     worksSaturday: body.worksSaturday as boolean,
     worksSunday: body.worksSunday as boolean,
+    acceptsPaymentsOnClosedDays: body.acceptsPaymentsOnClosedDays as boolean,
     updatedById: auth.user.id,
   });
   await logAudit({ userId: auth.user.id, action: 'SETTINGS_UPDATE', entityType: 'OperatingSettings', entityId: settings.id, newValues: settings });

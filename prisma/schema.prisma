@@ -714,6 +714,15 @@ model OperatingSettings {
   id            String   @id @default("singleton")
   worksSaturday Boolean  @default(false)
   worksSunday   Boolean  @default(false)
+  // Whether a customer may still pay on a day the business is closed — a
+  // Saturday payment against a Monday instalment, or against loan interest
+  // that only accrues on working days. Defaults ON: the common case is a
+  // business that doesn't *schedule* anything on the weekend but will
+  // gladly take money offered on one. Turning it off blocks only the
+  // INITIATION of a new payment (the cash routes and the USSD confirm step),
+  // never the recording of one already collected — see
+  // assertPaymentsAcceptedToday in operatingSettingsService.ts.
+  acceptsPaymentsOnClosedDays Boolean @default(true)
   updatedAt     DateTime @updatedAt
   updatedById   String?
 

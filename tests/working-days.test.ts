@@ -16,6 +16,7 @@ import { makeRequest } from './helpers';
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { GET as operatingGET, PATCH as operatingPATCH } from '@/app/api/settings/operating/route';
 import { isWorkingDay, rollToWorkingDay, addWorkingDays, DEFAULT_WORKING_DAYS } from '@/lib/workingDays';
+import { arePaymentsAccepted } from '@/lib/services/operatingSettingsService';
 import { generateStraightLineSchedule } from '@/lib/services/scheduleService';
 
 const PASSWORD = 'Passw0rd!123';
@@ -109,6 +110,30 @@ describe('Working days: instalment schedules', () => {
   });
 });
 
+describe('Working days: accepting payments on a closed day', () => {
+  const closedWeekend = { worksSaturday: false, worksSunday: false };
+
+  it('accepts any day while the option is on — the default', () => {
+    const settings = { ...closedWeekend, acceptsPaymentsOnClosedDays: true };
+    expect(arePaymentsAccepted(settings, SATURDAY)).toBe(true);
+    expect(arePaymentsAccepted(settings, SUNDAY)).toBe(true);
+    expect(arePaymentsAccepted(settings, MONDAY)).toBe(true);
+  });
+
+  it('turns away a closed-day payment once the option is off, but never a working-day one', () => {
+    const settings = { ...closedWeekend, acceptsPaymentsOnClosedDays: false };
+    expect(arePaymentsAccepted(settings, SATURDAY)).toBe(false);
+    expect(arePaymentsAccepted(settings, SUNDAY)).toBe(false);
+    expect(arePaymentsAccepted(settings, MONDAY)).toBe(true);
+  });
+
+  it('a day the business actually works is never a closed day, option off or not', () => {
+    const worksSaturday = { worksSaturday: true, worksSunday: false, acceptsPaymentsOnClosedDays: false };
+    expect(arePaymentsAccepted(worksSaturday, SATURDAY)).toBe(true); // open that day
+    expect(arePaymentsAccepted(worksSaturday, SUNDAY)).toBe(false); // still closed
+  });
+});
+
 describe('Working days: settings API', () => {
   let admin: string;
   let cashier: string;
@@ -124,6 +149,7 @@ describe('Working days: settings API', () => {
     const { settings } = await res.json();
     expect(typeof settings.worksSaturday).toBe('boolean');
     expect(typeof settings.worksSunday).toBe('boolean');
+    expect(typeof settings.acceptsPaymentsOnClosedDays).toBe('boolean');
   });
 
   it('GET rejects an unauthenticated caller', async () => {
@@ -140,7 +166,7 @@ describe('Working days: settings API', () => {
 
   it('PATCH rejects a non-boolean value', async () => {
     const res = await operatingPATCH(makeRequest('PATCH', '/api/settings/operating', {
-      token: admin, body: { worksSaturday: 'yes', worksSunday: false },
+      token: admin, body: { worksSaturday: 'yes', worksSunday: false, acceptsPaymentsOnClosedDays: true },
     }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/worksSaturday must be a boolean/i);
@@ -149,12 +175,16 @@ describe('Working days: settings API', () => {
   it('ADMIN can save both toggles, and the response reflects exactly what was written', async () => {
     // Asserted against this call's own response rather than a follow-up GET:
     // the row is a global singleton other test files also write to.
+    // acceptsPaymentsOnClosedDays is left ON: it's a global singleton other
+    // test files record payments against, and switching it off here could
+    // 409 them mid-run.
     const on = await operatingPATCH(makeRequest('PATCH', '/api/settings/operating', {
-      token: admin, body: { worksSaturday: true, worksSunday: false },
+      token: admin, body: { worksSaturday: true, worksSunday: false, acceptsPaymentsOnClosedDays: true },
     }));
     expect(on.status).toBe(200);
     const saved = (await on.json()).settings;
     expect(saved.worksSaturday).toBe(true);
     expect(saved.worksSunday).toBe(false);
+    expect(saved.acceptsPaymentsOnClosedDays).toBe(true);
   });
 });

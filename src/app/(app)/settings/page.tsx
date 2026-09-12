@@ -26,7 +26,7 @@ export default function SettingsPage() {
   const [loanForm, setLoanForm] = useState({ dailyInterestPercent: '1', interestGraceDays: '0' });
   const [loanSaving, setLoanSaving] = useState(false);
 
-  const [workingDays, setWorkingDays] = useState({ worksSaturday: false, worksSunday: false });
+  const [workingDays, setWorkingDays] = useState({ worksSaturday: false, worksSunday: false, acceptsPaymentsOnClosedDays: true });
   const [workingDaysSaving, setWorkingDaysSaving] = useState(false);
 
   useEffect(() => {
@@ -37,8 +37,12 @@ export default function SettingsPage() {
         interestGraceDays: r.settings.interestGraceDays.toString(),
       }))
       .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load loan terms', variant: 'destructive' }));
-    api.get<{ settings: { worksSaturday: boolean; worksSunday: boolean } }>('/settings/operating')
-      .then((r) => setWorkingDays({ worksSaturday: r.settings.worksSaturday, worksSunday: r.settings.worksSunday }))
+    api.get<{ settings: { worksSaturday: boolean; worksSunday: boolean; acceptsPaymentsOnClosedDays: boolean } }>('/settings/operating')
+      .then((r) => setWorkingDays({
+        worksSaturday: r.settings.worksSaturday,
+        worksSunday: r.settings.worksSunday,
+        acceptsPaymentsOnClosedDays: r.settings.acceptsPaymentsOnClosedDays,
+      }))
       .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load working days', variant: 'destructive' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canManage]);
@@ -89,7 +93,7 @@ export default function SettingsPage() {
       await api.patch('/settings/operating', workingDays);
       toast({
         title: 'Working days saved',
-        description: 'Applies to new contract schedules, daily loan interest, and direct debit collection from now on — existing instalment dates stay as agreed.',
+        description: 'Applies to new contract schedules, daily loan interest, direct debit collection, and whether closed-day payments are taken — existing instalment dates stay as agreed.',
       });
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save working days', variant: 'destructive' });
@@ -195,7 +199,7 @@ export default function SettingsPage() {
             <p className="text-xs text-gray-400">
               Monday to Friday are always working days. Tick a weekend day if the business operates on it — that
               controls which days instalments can fall due, which days daily loan interest is charged, and which days
-              direct debit collects. Payments a customer actually makes are always accepted, any day.
+              direct debit collects.
             </p>
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -214,6 +218,21 @@ export default function SettingsPage() {
                 />
                 Open on Sundays
               </label>
+            </div>
+            <div className="border-t border-gray-100 pt-4">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={workingDays.acceptsPaymentsOnClosedDays}
+                  onChange={(e) => setWorkingDays({ ...workingDays, acceptsPaymentsOnClosedDays: e.target.checked })}
+                />
+                Accept payments on closed days
+              </label>
+              <p className="text-xs text-gray-400 mt-1">
+                Lets a customer pay on a weekend toward a weekday instalment, or toward loan interest that only
+                accrues on working days. Untick to turn those payments away until the next working day — a charge
+                already collected is still always recorded, never lost.
+              </p>
             </div>
             <Button type="submit" disabled={workingDaysSaving}>{workingDaysSaving ? 'Saving...' : 'Save working days'}</Button>
           </form>

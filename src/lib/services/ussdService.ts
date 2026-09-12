@@ -3,6 +3,7 @@ import { formatMoney } from '../utils/money';
 import { initiateHubtelPayment } from './hubtelPaymentService';
 import { getOrgSettings } from './orgSettingsService';
 import { getDeviceLoanState } from './paymentService';
+import { assertPaymentsAcceptedToday, PaymentsClosedError } from './operatingSettingsService';
 import { contractTypeLabel, formatDate } from '../utils';
 import { phoneVariants } from './hubtelClient';
 
@@ -353,6 +354,17 @@ export async function handleUssdInput(params: {
       await endSession(existing.id);
       if (!contractId || !amountMinor) {
         return { message: 'Session error. Please try again.', continueSession: false, label: 'Session error' };
+      }
+      // Checked here, before Hubtel is asked for anything — once a charge is
+      // initiated the money is gone from the customer's wallet and the
+      // callback must be free to record it (operatingSettingsService.ts).
+      try {
+        await assertPaymentsAcceptedToday();
+      } catch (e) {
+        if (e instanceof PaymentsClosedError) {
+          return { message: 'We are closed today and cannot take payments. Please try again on a working day.', continueSession: false, label: 'Closed today' };
+        }
+        throw e;
       }
       const txn = await initiateHubtelPayment({ contractId, msisdn: params.msisdn, amountMinor });
       return txn.status === 'SUCCESS'
