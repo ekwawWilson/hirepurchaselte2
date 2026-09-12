@@ -1,6 +1,6 @@
 /**
- * One-off cleanup: permanently removes a named list of customers and every
- * record financially/operationally linked to them — contracts, instalments,
+ * One-off cleanup: permanently removes a list of customers and every record
+ * financially/operationally linked to them — contracts, instalments,
  * payments (+ allocations), penalties, Hubtel transactions/preapprovals, and
  * related SMS messages. Nothing here is soft-deleted; this is a real, hard
  * removal, unlike the rest of the app's "reverse, never delete" ledger rule
@@ -18,50 +18,46 @@
  * Dry-run by default: prints exactly what it found and would delete. Pass
  * --confirm to actually perform the deletion.
  *
+ * Each identifier can be a customer's membershipId (exact, case-insensitive)
+ * or their full name ("First Last", case-insensitive) — mix and match freely.
+ *
  * Usage:
- *   npx tsx scripts/removeCustomers.ts            # dry run
- *   npx tsx scripts/removeCustomers.ts --confirm   # actually deletes
+ *   npx tsx scripts/removeCustomers.ts "Full Name" HP-MAIN-2026-000012 ...            # dry run
+ *   npx tsx scripts/removeCustomers.ts "Full Name" HP-MAIN-2026-000012 ... --confirm   # actually deletes
  */
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-const FULL_NAMES = [
-  'Prince Quartey',
-  'Ekow Beecham',
-  'Isaac Appiah',
-  'Emmanuel Zple',
-  'Winfred Quarty',
-  'Kofi Mensah',
-  'Kofi Boateng',
-  'Kwame Mensah',
-  'Efua Asante',
-  'Ama Owusu',
-  'Yaw Appiah',
-  'Akosua Darko',
-];
-
 async function main() {
   const confirm = process.argv.includes('--confirm');
+  const identifiers = process.argv.slice(2).filter((a) => a !== '--confirm');
 
-  const namePairs = FULL_NAMES.map((full) => {
-    const [firstName, ...rest] = full.trim().split(/\s+/);
-    return { firstName, lastName: rest.join(' ') };
-  });
+  if (identifiers.length === 0) {
+    console.error('Usage: npx tsx scripts/removeCustomers.ts <membershipId-or-"Full Name"> [...] [--confirm]');
+    process.exit(1);
+  }
 
   const customers = await prisma.customer.findMany({
     where: {
-      OR: namePairs.map((n) => ({
-        firstName: { equals: n.firstName, mode: 'insensitive' as const },
-        lastName: { equals: n.lastName, mode: 'insensitive' as const },
-      })),
+      OR: identifiers.flatMap((id): Prisma.CustomerWhereInput[] => {
+        const conditions: Prisma.CustomerWhereInput[] = [{ membershipId: { equals: id, mode: 'insensitive' } }];
+        const parts = id.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          const [firstName, ...rest] = parts;
+          conditions.push({ firstName: { equals: firstName, mode: 'insensitive' }, lastName: { equals: rest.join(' '), mode: 'insensitive' } });
+        }
+        return conditions;
+      }),
     },
   });
 
-  const foundNames = new Set(customers.map((c) => `${c.firstName} ${c.lastName}`.toLowerCase()));
-  const notFound = FULL_NAMES.filter((n) => !foundNames.has(n.toLowerCase()));
+  const foundIdentifiers = new Set(
+    customers.flatMap((c) => [c.membershipId.toLowerCase(), `${c.firstName} ${c.lastName}`.toLowerCase()]),
+  );
+  const notFound = identifiers.filter((id) => !foundIdentifiers.has(id.toLowerCase()));
 
-  console.log(`Matched ${customers.length} of ${FULL_NAMES.length} names:`);
+  console.log(`Matched ${customers.length} of ${identifiers.length} identifier(s):`);
   for (const c of customers) {
     console.log(`  - ${c.firstName} ${c.lastName}  (${c.membershipId}, id=${c.id}, phone=${c.phone ?? c.phone2 ?? c.phone3 ?? '—'})`);
   }
