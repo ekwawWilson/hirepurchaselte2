@@ -21,7 +21,7 @@ env:
 jobs:
   check:
     name: Typecheck, lint and test
-    runs-on: [self-hosted, linux, x64, eyo]
+    runs-on: ubuntu-latest
     container:
       image: node:22-bookworm
     # A real Postgres, because the suite exercises route handlers that go
@@ -68,59 +68,11 @@ jobs:
       - run: npm run db:seed
       - run: npm test
 
-  migrate:
-    name: Apply migrations
-    needs: check
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, x64, eyo]
-    container:
-      image: node:22-bookworm
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm ci
-      - name: Refuse to run with no database configured
-        env:
-          URL: ${{ secrets.HPLITE_DIRECT_URL }}
-        run: |
-          set -euo pipefail
-          if [ -z "${URL// /}" ]; then
-            echo "::error::HPLITE_DIRECT_URL is empty. Refusing to publish an image"
-            echo "::error::whose schema may not exist. Set it, or remove this job."
-            exit 1
-          fi
-      - name: Migrate
-        env:
-          DATABASE_URL: ${{ secrets.HPLITE_DIRECT_URL }}
-          DIRECT_URL: ${{ secrets.HPLITE_DIRECT_URL }}
-        # `migrate deploy` prints the host it connected to, which is the only
-        # place a run says which database was really migrated — a secret cannot
-        # be read back to check.
-        run: npx prisma migrate deploy
-      - name: Sync RBAC (permissions + role mappings only — no demo users)
-        env:
-          DATABASE_URL: ${{ secrets.HPLITE_DIRECT_URL }}
-          DIRECT_URL: ${{ secrets.HPLITE_DIRECT_URL }}
-        # A schema migration can add a column, but a new *permission* (e.g.
-        # settings.manage) is application data, not schema — prisma/seed.ts
-        # covers it in dev/CI, but seed.ts also creates demo users with a
-        # publicly-documented password and must never run against prod.
-        # runSyncRbac.ts is the safe subset: just the permission catalog and
-        # each role's permission set, kept in sync with
-        # src/lib/constants/rbac.ts on every deploy.
-        run: npx tsx prisma/runSyncRbac.ts
-
   publish:
     name: Build and publish image
-    # Migrations first, deliberately. A failed migration must mean the image
-    # never ships, so the box keeps serving the old code against the old schema.
-    # Publishing first and migrating after is the wrong way round: the
-    # reconciler would pull new code whose migration had already failed.
-    needs: [check, migrate]
+    needs: check
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, x64, eyo]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
