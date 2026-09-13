@@ -70,6 +70,7 @@ export async function register() {
     try {
       const result = await reconcilePendingHubtelTransactions();
       if (result.checked > 0) console.log(`[cron] Hubtel reconciliation: checked ${result.checked}, failed ${result.failed}`);
+      if (result.unrecordedRetried > 0) console.log(`[cron] Hubtel reconciliation: retried ledger posting for ${result.unrecordedRetried} collected charge(s)`);
     } catch (e) {
       console.error('[cron] reconcilePendingHubtelTransactions failed:', e);
     }

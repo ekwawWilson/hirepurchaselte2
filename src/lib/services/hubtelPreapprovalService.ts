@@ -1,7 +1,7 @@
 import { prisma } from '../db/prisma';
 import { generateTransactionRef } from '../utils/idGenerators';
 import { DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName } from '../constants/contracts';
-import { postPayment } from './paymentService';
+import { recordSuccessfulHubtelCharge } from './hubtelPaymentService';
 import { appendWebhookToken } from '../auth/webhookSecurity';
 import { isHubtelLiveMode, callHubtelReceiveMoney, callHubtelPreapprovalInitiate, HubtelApiError } from './hubtelClient';
 
@@ -287,16 +287,8 @@ export async function processDirectDebitCallback(params: { clientReference: stri
   if (claim.count === 0) return prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: txn.id } });
 
   if (params.status === 'SUCCESS') {
-    const result = await postPayment({
-      contractId: txn.contractId,
-      amountMinor: txn.amountMinor,
-      entryType: 'INSTALMENT_PAYMENT',
-      channel: 'DIRECT_DEBIT',
-      transactionRef: txn.clientReference,
-      externalRef: txn.clientReference,
-      rawGatewayPayload: params.rawPayload,
-    });
-    await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { paymentId: result.payment.id } });
+    // Same never-drop-a-collected-charge handling as a USSD payment.
+    await recordSuccessfulHubtelCharge(txn.id, params.rawPayload);
   } else if (txn.retryCount < RETRY_SCHEDULE_DAYS.length) {
     // Fixed schedule (1, 3, 7 days), capped at 3 attempts — a deliberately simple,
     // hardcoded policy rather than a configurable settings model (matches this

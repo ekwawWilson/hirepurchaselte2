@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { generateTransactionRef, generateReceiptNumber } from '../utils/idGenerators';
-import { TERMINAL_CONTRACT_STATUSES } from '../constants/contracts';
+import { TERMINAL_CONTRACT_STATUSES, defaultCutoffDate } from '../constants/contracts';
 import { applyStockMovement } from './inventoryService';
 import { queueSms, deliverQueuedSms } from './smsService';
 
@@ -155,10 +155,17 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<Advanc
   // moment its arrears are cleared by a payment — recomputeContract above already
   // re-derived every instalment's status from the ledger, so "no OVERDUE rows left"
   // is the authoritative signal, not a separate balance check.
+  // A DEVICE_LOAN defaulted on unpaid interest instead (no instalments) is
+  // cured the same way, once no interest older than the threshold is unpaid.
   let effectiveStatus = contract.status;
   if (effectiveStatus === 'DEFAULTED') {
     const stillOverdue = await tx.instalment.count({ where: { contractId, status: 'OVERDUE' } });
-    if (stillOverdue === 0) {
+    const staleInterest = contract.contractType === 'DEVICE_LOAN'
+      ? await tx.penalty.count({
+          where: { contractId, reason: 'DAILY_LOAN_INTEREST', isPaid: false, appliedDate: { lt: defaultCutoffDate(now) } },
+        })
+      : 0;
+    if (stillOverdue === 0 && staleInterest === 0) {
       await tx.contract.update({ where: { id: contractId }, data: { status: 'ACTIVE' } });
       effectiveStatus = 'ACTIVE'; // may complete outright below, in the same payment that cured it
     }
@@ -320,7 +327,8 @@ export async function postPayment(params: PostPaymentParams) {
   // just cleared may have activated a contract that had a direct-debit mandate
   // requested at creation (mandates require ACTIVE, which this contract wasn't until
   // this payment). Dynamic import avoids a circular static import —
-  // hubtelPreapprovalService.ts imports postPayment from this file.
+  // hubtelPreapprovalService.ts reaches postPayment in this file through
+  // hubtelPaymentService.ts.
   if (result.pendingDirectDebit) {
     try {
       const { initiatePreapproval, enableDirectDebit } = await import('./hubtelPreapprovalService');
@@ -457,6 +465,26 @@ export interface PostDeviceLoanPaymentParams {
   rawGatewayPayload?: string;
   createdById?: string;
   initiatedByCustomerId?: string;
+  // Gateway callbacks only. The customer confirmed an interest amount on
+  // their phone, and more interest may have accrued before Hubtel's callback
+  // arrived. When set, an INTEREST amount smaller than what's owed now is
+  // still accepted if it pays off exactly the oldest days of interest, which
+  // are the ones the customer confirmed. The staff counter stays exact-match.
+  acceptOldestInterestDays?: boolean;
+}
+
+/**
+ * The oldest unpaid interest rows whose amounts add up to exactly
+ * `amountMinor`, or null if no run of oldest rows lands on that figure.
+ */
+function oldestInterestRowsSummingTo<T extends { amountMinor: number }>(rowsOldestFirst: T[], amountMinor: number): T[] | null {
+  let sum = 0;
+  for (let i = 0; i < rowsOldestFirst.length; i++) {
+    sum += rowsOldestFirst[i].amountMinor;
+    if (sum === amountMinor) return rowsOldestFirst.slice(0, i + 1);
+    if (sum > amountMinor) return null;
+  }
+  return null;
 }
 
 /**
@@ -482,6 +510,9 @@ export async function postDeviceLoanPayment(params: PostDeviceLoanPaymentParams)
     }
 
     const state = await getDeviceLoanState(contract.id, tx);
+    // The interest rows this payment settles, oldest first — every unpaid row
+    // for an exact match, or only the oldest ones (see acceptOldestInterestDays).
+    let interestRowsToPay: { id: string; amountMinor: number }[] = [];
     if (params.option === 'PRINCIPAL') {
       if (!state.principalOutstanding) throw new PaymentError('The loan amount has already been paid');
       if (params.amountMinor !== state.principalMinor) {
@@ -489,8 +520,18 @@ export async function postDeviceLoanPayment(params: PostDeviceLoanPaymentParams)
       }
     } else {
       if (state.accruedInterestMinor <= 0) throw new PaymentError('No interest is currently owed');
-      if (params.amountMinor !== state.accruedInterestMinor) {
-        throw new PaymentError(`Amount must be exactly the accrued interest owed (${state.accruedInterestMinor})`);
+      const unpaid = await tx.penalty.findMany({
+        where: { contractId: contract.id, reason: 'DAILY_LOAN_INTEREST', isPaid: false },
+        orderBy: { appliedDate: 'asc' },
+      });
+      if (params.amountMinor === state.accruedInterestMinor) {
+        interestRowsToPay = unpaid;
+      } else {
+        const oldest = params.acceptOldestInterestDays ? oldestInterestRowsSummingTo(unpaid, params.amountMinor) : null;
+        if (!oldest) {
+          throw new PaymentError(`Amount must be exactly the accrued interest owed (${state.accruedInterestMinor})`);
+        }
+        interestRowsToPay = oldest;
       }
     }
 
@@ -510,19 +551,13 @@ export async function postDeviceLoanPayment(params: PostDeviceLoanPaymentParams)
       },
     });
 
-    if (params.option === 'INTEREST') {
-      // Allocate against every currently-unpaid day of interest — recomputeContract
-      // below reads these allocations back to flip each Penalty's isPaid, the
-      // exact same mechanism applyLatePenalties's own rows already use.
-      const unpaid = await tx.penalty.findMany({
-        where: { contractId: contract.id, reason: 'DAILY_LOAN_INTEREST', isPaid: false },
-        orderBy: { appliedDate: 'asc' },
+    // Allocate against the interest rows chosen above — recomputeContract below
+    // reads these allocations back to flip each Penalty's isPaid, the exact
+    // same mechanism applyLatePenalties's own rows already use.
+    for (const penalty of interestRowsToPay) {
+      await tx.paymentAllocation.create({
+        data: { paymentId: payment.id, targetType: 'PENALTY', penaltyId: penalty.id, amountMinor: penalty.amountMinor },
       });
-      for (const penalty of unpaid) {
-        await tx.paymentAllocation.create({
-          data: { paymentId: payment.id, targetType: 'PENALTY', penaltyId: penalty.id, amountMinor: penalty.amountMinor },
-        });
-      }
     }
 
     await recomputeContract(tx, contract.id);

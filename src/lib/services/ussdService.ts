@@ -367,9 +367,15 @@ export async function handleUssdInput(params: {
         throw e;
       }
       const txn = await initiateHubtelPayment({ contractId, msisdn: params.msisdn, amountMinor });
-      return txn.status === 'SUCCESS'
-        ? { message: 'Payment successful! You will receive an SMS confirmation shortly.', continueSession: false, label: 'Payment successful' }
-        : { message: 'Payment failed. Please try again later.', continueSession: false, label: 'Payment failed' };
+      if (txn.status === 'SUCCESS') {
+        return { message: 'Payment successful! You will receive an SMS confirmation shortly.', continueSession: false, label: 'Payment successful' };
+      }
+      if (txn.status === 'NEEDS_REVIEW') {
+        // The money was taken but couldn't be applied automatically — never
+        // tell the customer it failed, or they may pay a second time.
+        return { message: 'Payment received. Our staff will apply it to your account shortly.', continueSession: false, label: 'Payment received' };
+      }
+      return { message: 'Payment failed. Please try again later.', continueSession: false, label: 'Payment failed' };
     }
 
     default:

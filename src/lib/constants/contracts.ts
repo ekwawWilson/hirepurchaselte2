@@ -38,6 +38,18 @@ export const DEPOSIT_INSTALMENT_MAX_TERM_WEEKS = 24;
 /** DEPOSIT_INSTALMENT collects daily or weekly only — no monthly cadence. */
 export const DEPOSIT_INSTALMENT_FREQUENCIES = ['DAILY', 'WEEKLY'] as const;
 
+/**
+ * Days in arrears before an ACTIVE contract is marked DEFAULTED — matches the
+ * "90+" arrears-ageing bucket used in reporting. For DEPOSIT_INSTALMENT it's
+ * measured from an overdue instalment's due date; for DEVICE_LOAN (no
+ * instalments) from the oldest day of interest still unpaid.
+ */
+export const DEFAULT_THRESHOLD_DAYS = 90;
+
+export function defaultCutoffDate(now: Date = new Date()): Date {
+  return new Date(now.getTime() - DEFAULT_THRESHOLD_DAYS * 24 * 60 * 60 * 1000);
+}
+
 /** No further payments/status changes accepted once a contract reaches one of these. */
 export const TERMINAL_CONTRACT_STATUSES = ['COMPLETED', 'RELEASED', 'CANCELLED', 'WRITTEN_OFF'];
 

@@ -15,7 +15,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized webhook request' }, { status: 401 });
   }
 
-  const body = await req.json();
+  const body = await req.json().catch(() => undefined);
+  if (body === undefined) return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
 
   try {
     await processPreapprovalCallback(body);

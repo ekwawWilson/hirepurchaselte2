@@ -16,7 +16,12 @@ export async function POST(req: NextRequest) {
   }
 
   const raw = await req.text();
-  const body = JSON.parse(raw) as unknown;
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
+  }
   const { clientReference, status } = normalizeHubtelPaymentCallback(body);
 
   if (!clientReference) {

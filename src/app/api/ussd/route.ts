@@ -10,7 +10,8 @@ import { recordHubtelSample } from '@/lib/services/hubtelSampleLogService';
  * Hubtel's own USSD contract (SessionId/Mobile/Message/Type) for realism.
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as { SessionId?: string; Mobile?: string; Message?: string; Type?: string };
+  const body = (await req.json().catch(() => null)) as { SessionId?: string; Mobile?: string; Message?: string; Type?: string } | null;
+  if (!body) return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
   const { SessionId: sessionId, Mobile: mobile, Message: message, Type: type } = body;
 
   if (!sessionId || !mobile) {

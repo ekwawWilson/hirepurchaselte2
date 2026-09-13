@@ -1,4 +1,5 @@
 import { prisma } from '../db/prisma';
+import { defaultCutoffDate } from '../constants/contracts';
 
 /**
  * Flips PENDING/PARTIAL instalments past their due date to OVERDUE. A direct
@@ -17,26 +18,34 @@ export async function markOverdueInstalments() {
   return result.count;
 }
 
-/** Days-past-due threshold at which an ACTIVE contract in arrears is marked DEFAULTED — matches the "90+" arrears-ageing bucket already used elsewhere in reporting. */
-const DEFAULT_THRESHOLD_DAYS = 90;
-
 /**
  * DEFAULTED exists in the DEPOSIT_INSTALMENT and DEVICE_LOAN state machines
  * (docs/01-plan.md §5) but is never reached on its own — an ACTIVE contract
- * whose oldest unpaid instalment has been overdue past the threshold gets
- * flipped here. SAVE_TO_OWN has no DEFAULTED state (the device was never
- * released, so there's nothing to be "in default" on) and is deliberately
- * excluded. Must run after markOverdueInstalments in the same sweep so the
- * OVERDUE flips it reads are current.
+ * in arrears past DEFAULT_THRESHOLD_DAYS gets flipped here:
+ *  - DEPOSIT_INSTALMENT: an instalment overdue past the threshold.
+ *  - DEVICE_LOAN: no instalments under the daily-interest model, so a day of
+ *    interest left unpaid past the threshold. (The instalment clause still
+ *    covers any older flat-rate loan that has a schedule.)
+ * SAVE_TO_OWN has no DEFAULTED state and is deliberately excluded. Must run
+ * after markOverdueInstalments in the same sweep so the OVERDUE flips it
+ * reads are current.
  */
 export async function markDefaultedContracts() {
-  const cutoff = new Date(Date.now() - DEFAULT_THRESHOLD_DAYS * 24 * 60 * 60 * 1000);
+  const cutoff = defaultCutoffDate();
 
   const candidates = await prisma.contract.findMany({
     where: {
       status: 'ACTIVE',
-      contractType: { in: ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] },
-      instalments: { some: { status: 'OVERDUE', dueDate: { lt: cutoff } } },
+      OR: [
+        {
+          contractType: { in: ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] },
+          instalments: { some: { status: 'OVERDUE', dueDate: { lt: cutoff } } },
+        },
+        {
+          contractType: 'DEVICE_LOAN',
+          penalties: { some: { reason: 'DAILY_LOAN_INTEREST', isPaid: false, appliedDate: { lt: cutoff } } },
+        },
+      ],
     },
     select: { id: true },
   });
