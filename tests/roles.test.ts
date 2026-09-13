@@ -24,7 +24,7 @@ const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000)
 let counter = 0;
 function uniqueEmail(label: string) {
   counter += 1;
-  return `role-test-${label}-${counter}-${runId}@zple.test`;
+  return `role-test-${label}-${counter}-${runId}@example.test`;
 }
 
 async function login(email: string): Promise<string> {
@@ -39,9 +39,9 @@ describe('Roles: custom role management', () => {
   let cashier: string;
 
   beforeAll(async () => {
-    superAdmin = await login('superadmin@zple.test');
-    admin = await login('admin@zple.test');
-    cashier = await login('cashier@zple.test');
+    superAdmin = await login('superadmin@example.test');
+    admin = await login('admin@example.test');
+    cashier = await login('cashier@example.test');
   });
 
   it('GET /api/roles requires user.manage or role.manage — CASHIER gets 403', async () => {

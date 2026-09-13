@@ -4,7 +4,7 @@
  * terms, and an admin-entered absolute deposit amount rather than a percentage.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -20,12 +20,15 @@ async function login(email: string): Promise<string> {
   return (await res.json()).token as string;
 }
 
+// Save to Own and Device Loan must be activated before they can be created.
+beforeAll(enableOptionalContractTypes);
+
 describe('Price chart: legacy-matching pricing model', () => {
   let admin: string;
   let productId: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
+    admin = await login('admin@example.test');
 
     const product = await productsPOST(makeRequest('POST', '/api/products', {
       token: admin, body: { sku: `PC-SKU-${runId}`, name: 'Price Chart Test Phone', cashPriceMinor: 200000 },
@@ -97,7 +100,7 @@ describe('Price chart: bundle creation across all contract types', () => {
   let productId: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
+    admin = await login('admin@example.test');
     const product = await productsPOST(makeRequest('POST', '/api/products', {
       token: admin, body: { sku: `PCB-SKU-${runId}`, name: 'Bundle Test Phone', cashPriceMinor: 300000 },
     }));
@@ -163,7 +166,7 @@ describe('Product creation: SKU auto-generation and the term-pricing shortcut', 
   let admin: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
+    admin = await login('admin@example.test');
   });
 
   it('auto-generates a SKU when none is supplied', async () => {
@@ -213,7 +216,7 @@ describe('Product setup/edit can also close a Device Loan pricing gap', () => {
   let admin: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
+    admin = await login('admin@example.test');
   });
 
   it('PATCH /api/products/[id] adds missing Deposit + Instalment pricing without touching existing entries', async () => {

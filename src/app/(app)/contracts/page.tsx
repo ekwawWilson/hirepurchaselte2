@@ -65,6 +65,14 @@ export default function ContractsPage() {
   // Fetched so the preview shows the same due dates the server will actually
   // write (contractService.ts reads the same setting at creation).
   const [workingDays, setWorkingDays] = useState<WorkingDays>(DEFAULT_WORKING_DAYS);
+  // Save to Own and Device Loan are only offered once activated in Settings
+  // (the server refuses them otherwise) — hidden until the settings load.
+  const [enabledTypes, setEnabledTypes] = useState({ saveToOwnEnabled: false, deviceLoanEnabled: false });
+  const [typesLoaded, setTypesLoaded] = useState(false);
+  const contractTypeOptions = CONTRACT_TYPE_OPTIONS.filter((o) =>
+    o.value === 'SAVE_TO_OWN' ? enabledTypes.saveToOwnEnabled
+      : o.value === 'DEVICE_LOAN' ? enabledTypes.deviceLoanEnabled
+        : true);
 
   const [customerSearch, setCustomerSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
@@ -107,6 +115,13 @@ export default function ContractsPage() {
     ? (paymentFrequency === 'DAILY' ? parsedTermWeeks * 7 : parsedTermWeeks)
     : 0;
   const instalmentAmountMinor = instalmentCount > 0 ? Math.ceil(financeAmountMinor / instalmentCount) : 0;
+
+  // "Deposit + Instalment contracts", or "Save to Own and Deposit + Instalment
+  // contracts" — only the types this company has activated.
+  const enabledLabels = contractTypeOptions.map((o) => o.label);
+  const enabledTypesSubtitle = `${enabledLabels.length > 1
+    ? `${enabledLabels.slice(0, -1).join(', ')} and ${enabledLabels[enabledLabels.length - 1]}`
+    : enabledLabels[0]} contracts`;
 
   const step1Valid = !!customerId;
   const step2Valid = isDepositInstalment ? !!inventoryItemId : true;
@@ -152,6 +167,12 @@ export default function ContractsPage() {
 
   useEffect(() => {
     loadContracts();
+    // Which types this company offers (Settings > Contract types) — drives both
+    // the page's subtitle and the wizard's type picker.
+    api.get<{ settings: { saveToOwnEnabled: boolean; deviceLoanEnabled: boolean } }>('/settings/contract-types')
+      .then((r) => setEnabledTypes({ saveToOwnEnabled: r.settings.saveToOwnEnabled, deviceLoanEnabled: r.settings.deviceLoanEnabled }))
+      .catch(() => undefined) // falls back to Deposit + Instalment only, which is always allowed
+      .finally(() => setTypesLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -343,9 +364,15 @@ export default function ContractsPage() {
                   <Select value={contractType} onValueChange={setContractType}>
                     <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {CONTRACT_TYPE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                      {contractTypeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  {contractTypeOptions.length < CONTRACT_TYPE_OPTIONS.length && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      {CONTRACT_TYPE_OPTIONS.filter((o) => !contractTypeOptions.includes(o)).map((o) => o.label).join(' and ')}
+                      {' '}not activated — an admin can turn {contractTypeOptions.length === 1 ? 'them' : 'it'} on in Settings.
+                    </p>
+                  )}
                   {isDeviceLoan && (
                     <p className="text-xs text-gray-400 mt-1">Cash is disbursed to the customer — not linked to a product. The customer pays 1% daily interest on the loan amount, or the full amount, via USSD.</p>
                   )}
@@ -610,7 +637,7 @@ export default function ContractsPage() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Contracts</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Save-to-own, deposit + instalment, and device loan contracts</p>
+          <p className="text-sm text-gray-500 mt-0.5">{typesLoaded ? enabledTypesSubtitle : 'Contract accounts'}</p>
         </div>
         {canCreate && (
           <Button onClick={() => { resetWizard(); setShowForm(true); }} size="sm" className="shrink-0">

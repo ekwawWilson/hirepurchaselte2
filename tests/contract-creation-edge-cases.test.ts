@@ -3,8 +3,12 @@ import { prisma } from '@/lib/db/prisma';
 import { generateStraightLineSchedule, generateLoanSchedule } from '@/lib/services/scheduleService';
 import * as idGenerators from '@/lib/utils/idGenerators';
 import { createContract } from '@/lib/services/contractService';
+import { enableOptionalContractTypes } from './helpers';
 
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
+
+// Save to Own and Device Loan must be activated before they can be created.
+beforeAll(enableOptionalContractTypes);
 
 describe('Schedule generation: month-end date rollover', () => {
   // 2025: Jan 31 + 1/2 months clamps to Feb 28 (Fri) / Mar 31 (Mon) — both
@@ -74,7 +78,7 @@ describe('Contract creation: number-collision retry', () => {
   beforeAll(async () => {
     const branch = await prisma.branch.findFirstOrThrow();
     branchId = branch.id;
-    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
+    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@example.test' } });
     adminUserId = admin.id;
   });
 

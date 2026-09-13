@@ -55,8 +55,8 @@ export default function LoginPage() {
               Finance devices.{'\n'}Manage contracts.{'\n'}Stay in control.
             </h1>
             <p className="text-white/70 text-sm leading-relaxed">
-              Save-to-own, deposit + instalment, and device loan contracts — with cash and USSD payments,
-              SMS receipts, and daily reports, all from one dashboard.
+              Customer contracts — with cash and USSD payments, SMS receipts,
+              and daily reports, all from one dashboard.
             </p>
           </div>
         </div>
@@ -107,7 +107,7 @@ export default function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   disabled={isLoading}
-                  placeholder="you@zple.test"
+                  placeholder="you@example.test"
                   className="w-full h-11 px-3.5 border border-gray-200 bg-gray-50 text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition disabled:opacity-50"
                 />
               </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -28,6 +28,9 @@ async function login(email: string): Promise<string> {
   return (await res.json()).token as string;
 }
 
+// Save to Own and Device Loan must be activated before they can be created.
+beforeAll(enableOptionalContractTypes);
+
 describe('Reports', () => {
   let admin: string;
   let cashier: string;
@@ -36,9 +39,9 @@ describe('Reports', () => {
   let productId: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
-    cashier = await login('cashier@zple.test');
-    sales = await login('sales@zple.test');
+    admin = await login('admin@example.test');
+    cashier = await login('cashier@example.test');
+    sales = await login('sales@example.test');
 
     branchId = (await (await branchesGET(makeRequest('GET', '/api/branches', { token: admin }))).json()).branches[0].id;
 

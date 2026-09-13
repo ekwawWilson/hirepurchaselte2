@@ -14,8 +14,12 @@ import { prisma } from '@/lib/db/prisma';
 import { createContract, cancelContract, ContractError } from '@/lib/services/contractService';
 import { postPayment, PaymentError } from '@/lib/services/paymentService';
 import { markDefaultedContracts } from '@/lib/services/overdueService';
+import { enableOptionalContractTypes } from './helpers';
 
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
+
+// Save to Own and Device Loan must be activated before they can be created.
+beforeAll(enableOptionalContractTypes);
 
 describe('Contract-type-specific business rules', () => {
   let branchId: string;
@@ -24,7 +28,7 @@ describe('Contract-type-specific business rules', () => {
   beforeAll(async () => {
     const branch = await prisma.branch.findFirstOrThrow();
     branchId = branch.id;
-    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
+    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@example.test' } });
     adminUserId = admin.id;
   });
 

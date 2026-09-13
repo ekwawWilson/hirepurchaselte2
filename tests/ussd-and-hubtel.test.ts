@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { makeRequest } from './helpers';
+import { makeRequest, enableOptionalContractTypes } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -30,13 +30,16 @@ async function login(email: string): Promise<string> {
   return body.token as string;
 }
 
+// Save to Own and Device Loan must be activated before they can be created.
+beforeAll(enableOptionalContractTypes);
+
 describe('USSD + Hubtel payments', () => {
   let admin: string;
   let cashier: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
-    cashier = await login('cashier@zple.test');
+    admin = await login('admin@example.test');
+    cashier = await login('cashier@example.test');
   });
 
   // SAVE_TO_OWN needs no product/price chart entry/inventory item/branch at

@@ -21,7 +21,7 @@ describe('Payment frequency: DAILY/WEEKLY/MONTHLY schedules', () => {
   beforeAll(async () => {
     const branch = await prisma.branch.findFirstOrThrow();
     branchId = branch.id;
-    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
+    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@example.test' } });
     adminUserId = admin.id;
   });
 

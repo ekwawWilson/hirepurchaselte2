@@ -8,6 +8,8 @@ import { reverseAllPaymentsForContract } from './paymentService';
 import { initiatePreapproval, enableDirectDebit } from './hubtelPreapprovalService';
 import { getLoanSettings } from './loanSettingsService';
 import { getWorkingDays } from './operatingSettingsService';
+import { getContractTypeSettings, isContractTypeEnabled } from './contractTypeSettingsService';
+import { contractTypeLabel } from '../utils';
 import {
   CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
   DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
@@ -76,6 +78,12 @@ async function initiateDirectDebitIfRequested(params: {
 }
 
 export async function createContract(params: CreateContractParams) {
+  // Save to Own and Device Loan are only offered once activated in Settings.
+  // Checked here, not in the route, so every caller (the API, demoSeed) obeys it.
+  if (!isContractTypeEnabled(await getContractTypeSettings(), params.contractType)) {
+    throw new ContractError(`${contractTypeLabel(params.contractType)} is not activated — an admin can turn it on in Settings > Contract types`);
+  }
+
   const customer = await prisma.customer.findUnique({ where: { id: params.customerId } });
   if (!customer) throw new ContractError('Customer not found');
   if (customer.branchId !== params.branchId) throw new ContractError('Customer does not belong to this branch');

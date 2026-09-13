@@ -1,4 +1,17 @@
 import { NextRequest } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+
+/**
+ * Save to Own and Device Loan are off until activated (Settings > Contract
+ * types). Call in beforeAll of any test file that creates them.
+ */
+export async function enableOptionalContractTypes() {
+  await prisma.contractTypeSettings.upsert({
+    where: { id: 'singleton' },
+    create: { id: 'singleton', saveToOwnEnabled: true, deviceLoanEnabled: true },
+    update: { saveToOwnEnabled: true, deviceLoanEnabled: true },
+  });
+}
 
 const BASE = 'http://localhost:3000';
 

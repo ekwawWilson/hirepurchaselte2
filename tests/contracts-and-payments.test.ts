@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 import { accrueDailyLoanInterest } from '@/lib/services/loanService';
 
@@ -36,6 +36,9 @@ function uniqueSerial(label: string) {
   return `IMEI-${label}-${runId}`;
 }
 
+// Save to Own and Device Loan must be activated before they can be created.
+beforeAll(enableOptionalContractTypes);
+
 describe('Contracts + payments: full lifecycle across all three types', () => {
   let admin: string;
   let cashier: string;
@@ -44,9 +47,9 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
   let productId: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
-    cashier = await login('cashier@zple.test');
-    sales = await login('sales@zple.test');
+    admin = await login('admin@example.test');
+    cashier = await login('cashier@example.test');
+    sales = await login('sales@example.test');
 
     const branchesRes = await branchesGET(makeRequest('GET', '/api/branches', { token: admin }));
     const branchesBody = await branchesRes.json();

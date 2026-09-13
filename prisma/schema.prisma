@@ -100,6 +100,7 @@ model User {
   orgSettingsUpdates        OrgSettings[]
   loanSettingsUpdates       LoanSettings[]
   operatingSettingsUpdates  OperatingSettings[]
+  contractTypeSettingsUpdates ContractTypeSettings[]
 
   @@map("users")
 }
@@ -488,7 +489,10 @@ model Penalty {
 // Hubtel USSD payments
 // ---------------------------------------------------------------------------
 
-// status: PENDING | SUCCESS | FAILED
+// status: PENDING | SUCCESS | FAILED | NEEDS_REVIEW
+// NEEDS_REVIEW: Hubtel collected the money but the ledger refused to record
+// it (see hubtelPaymentService.recordSuccessfulHubtelCharge) — staff must
+// refund or post it by hand; the reason is in the audit trail.
 // channel: USSD (customer-initiated, one-off) | DIRECT_DEBIT (merchant-initiated
 // against an APPROVED mandate — see HubtelPreapproval). Retry fields are only ever
 // populated for DIRECT_DEBIT: a USSD charge failing just ends the customer's session,
@@ -729,4 +733,25 @@ model OperatingSettings {
   updatedBy User? @relation(fields: [updatedById], references: [id])
 
   @@map("operating_settings")
+}
+
+// Which optional contract types the business offers — one row (id pinned to
+// "singleton", same convention as OrgSettings), edited from
+// Settings > Contract types. DEPOSIT_INSTALMENT is always offered; SAVE_TO_OWN
+// and DEVICE_LOAN are off until an admin activates them.
+//
+// Gates only the CREATION of new contracts (contractService.createContract).
+// Contracts of a type that is later deactivated keep working: payments,
+// withdrawals, USSD, cancellation and every report are unaffected, so no
+// customer is ever cut off from money they already hold with the business.
+model ContractTypeSettings {
+  id                String   @id @default("singleton")
+  saveToOwnEnabled  Boolean  @default(false)
+  deviceLoanEnabled Boolean  @default(false)
+  updatedAt         DateTime @updatedAt
+  updatedById       String?
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("contract_type_settings")
 }

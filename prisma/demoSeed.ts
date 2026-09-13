@@ -22,6 +22,7 @@ import { createContract } from '../src/lib/services/contractService';
 import { postPayment } from '../src/lib/services/paymentService';
 import { createPriceChartEntry } from '../src/lib/services/priceChartService';
 import { receiveInventoryItem } from '../src/lib/services/inventoryService';
+import { updateContractTypeSettings } from '../src/lib/services/contractTypeSettingsService';
 import { generateProductSku, generateMembershipId } from '../src/lib/utils/idGenerators';
 
 const prisma = new PrismaClient();
@@ -46,7 +47,7 @@ const CUSTOMERS = [
 async function main() {
   const branch = await prisma.branch.findUnique({ where: { code: 'MAIN' } });
   if (!branch) throw new Error('MAIN branch not found — run `npm run db:seed` first');
-  const admin = await prisma.user.findUnique({ where: { email: 'admin@zple.test' } });
+  const admin = await prisma.user.findUnique({ where: { email: 'admin@example.test' } });
   if (!admin) throw new Error('Seeded admin user not found — run `npm run db:seed` first');
 
   const categoryByName = new Map<string, string>();
@@ -108,6 +109,10 @@ async function main() {
     { contractType: 'DEVICE_LOAN', customerIdx: 4 },
     { contractType: 'DEVICE_LOAN', customerIdx: 5 },
   ];
+
+  // Both optional types are off by default (Settings > Contract types) — the
+  // demo shows every type, so it activates them before creating any.
+  await updateContractTypeSettings({ saveToOwnEnabled: true, deviceLoanEnabled: true, updatedById: admin.id });
 
   let contractsCreated = 0;
   let paymentsPosted = 0;

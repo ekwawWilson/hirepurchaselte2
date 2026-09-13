@@ -11,7 +11,7 @@
  *    collections run.
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { makeRequest } from './helpers';
+import { makeRequest, enableOptionalContractTypes } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -41,11 +41,14 @@ async function login(email: string): Promise<string> {
   return (await res.json()).token as string;
 }
 
+// Save to Own and Device Loan must be activated before they can be created.
+beforeAll(enableOptionalContractTypes);
+
 describe('Customer registration: three phone slots', () => {
   let cashier: string;
 
   beforeAll(async () => {
-    cashier = await login('cashier@zple.test');
+    cashier = await login('cashier@example.test');
   });
 
   it('rejects a customer with all three phone slots empty', async () => {
@@ -87,7 +90,7 @@ describe('Hubtel mobile money verification (mock mode)', () => {
   let cashier: string;
 
   beforeAll(async () => {
-    cashier = await login('cashier@zple.test');
+    cashier = await login('cashier@example.test');
   });
 
   it('confirms a registered number and surfaces the account holder\'s name', async () => {
@@ -130,7 +133,7 @@ describe('Hubtel Direct Debit', () => {
   beforeAll(async () => {
     const branch = await prisma.branch.findFirstOrThrow();
     branchId = branch.id;
-    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@zple.test' } });
+    const admin = await prisma.user.findFirstOrThrow({ where: { email: 'admin@example.test' } });
     adminUserId = admin.id;
     // runDirectDebitCollections is a no-op on a non-working day
     // (collectionsService.ts), so without this the collection tests below

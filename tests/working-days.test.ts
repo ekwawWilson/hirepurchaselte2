@@ -139,8 +139,8 @@ describe('Working days: settings API', () => {
   let cashier: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
-    cashier = await login('cashier@zple.test');
+    admin = await login('admin@example.test');
+    cashier = await login('cashier@example.test');
   });
 
   it('GET needs only authentication — the contract wizard preview reads it as any staff user', async () => {
