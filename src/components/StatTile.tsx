@@ -33,7 +33,7 @@ export function StatTile({
         </div>
         <div className="min-w-0">
           <p className="text-xs text-gray-500">{label}</p>
-          <p className="text-lg font-semibold text-gray-900 truncate">{value}</p>
+          <p className="text-base sm:text-lg font-semibold text-gray-900 truncate">{value}</p>
           {caption && <p className="text-xs text-gray-400 mt-0.5">{caption}</p>}
         </div>
       </CardContent>

@@ -126,6 +126,14 @@ model Customer {
   nationalId     String?
   dateOfBirth    DateTime?
   photoUrl       String?
+  // Customer portal (src/app/portal) — a customer signs in with any of their
+  // registered phone numbers. Until they set their own password, the phone
+  // number itself is accepted and mustChangePassword forces a change at the
+  // first sign-in, so an existing customer needs no staff action to get in.
+  // isActivated flips true once they have chosen their own password.
+  passwordHash       String?
+  mustChangePassword Boolean   @default(true)
+  portalLastLoginAt  DateTime?
   guarantorName  String?
   guarantorPhone String?
   branchId       String
