@@ -119,11 +119,11 @@ export const BRANCH_SCOPED_ROLES: RoleName[] = ['BRANCH_MANAGER', 'CASHIER', 'SA
 export const SEED_PASSWORD = 'Passw0rd!123';
 
 export const DEMO_USERS: Array<{ role: RoleName; email: string; firstName: string; lastName: string }> = [
-  { role: 'SUPER_ADMIN', email: 'superadmin@zple.test', firstName: 'Super', lastName: 'Admin' },
-  { role: 'ADMIN', email: 'admin@zple.test', firstName: 'System', lastName: 'Admin' },
-  { role: 'BRANCH_MANAGER', email: 'branchmanager@zple.test', firstName: 'Branch', lastName: 'Manager' },
-  { role: 'CASHIER', email: 'cashier@zple.test', firstName: 'Front', lastName: 'Cashier' },
-  { role: 'SALES', email: 'sales@zple.test', firstName: 'Sales', lastName: 'Rep' },
-  { role: 'STORE_KEEPER', email: 'storekeeper@zple.test', firstName: 'Store', lastName: 'Keeper' },
-  { role: 'AUDITOR', email: 'auditor@zple.test', firstName: 'System', lastName: 'Auditor' },
+  { role: 'SUPER_ADMIN', email: 'superadmin@example.test', firstName: 'Super', lastName: 'Admin' },
+  { role: 'ADMIN', email: 'admin@example.test', firstName: 'System', lastName: 'Admin' },
+  { role: 'BRANCH_MANAGER', email: 'branchmanager@example.test', firstName: 'Branch', lastName: 'Manager' },
+  { role: 'CASHIER', email: 'cashier@example.test', firstName: 'Front', lastName: 'Cashier' },
+  { role: 'SALES', email: 'sales@example.test', firstName: 'Sales', lastName: 'Rep' },
+  { role: 'STORE_KEEPER', email: 'storekeeper@example.test', firstName: 'Store', lastName: 'Keeper' },
+  { role: 'AUDITOR', email: 'auditor@example.test', firstName: 'System', lastName: 'Auditor' },
 ];

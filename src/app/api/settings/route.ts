@@ -32,6 +32,8 @@ export async function PATCH(req: NextRequest) {
     logoUrl: ((body.logoUrl as string) ?? '').trim() || null,
     updatedById: auth.user.id,
   });
-  await logAudit({ userId: auth.user.id, action: 'SETTINGS_UPDATE', entityType: 'OrgSettings', entityId: settings.id, newValues: settings });
+  // An uploaded logo is a data URL of up to a few hundred KB — noted, not copied, in the audit trail.
+  const auditedLogo = settings.logoUrl?.startsWith('data:') ? '(uploaded image)' : settings.logoUrl;
+  await logAudit({ userId: auth.user.id, action: 'SETTINGS_UPDATE', entityType: 'OrgSettings', entityId: settings.id, newValues: { ...settings, logoUrl: auditedLogo } });
   return NextResponse.json({ settings });
 }

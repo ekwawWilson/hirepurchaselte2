@@ -73,13 +73,13 @@ npm run dev                    # http://localhost:3000 — pages and API routes,
 
 | Role | Email |
 |---|---|
-| SUPER_ADMIN | superadmin@zple.test |
-| ADMIN | admin@zple.test |
-| BRANCH_MANAGER | branchmanager@zple.test |
-| CASHIER | cashier@zple.test |
-| SALES | sales@zple.test |
-| STORE_KEEPER | storekeeper@zple.test |
-| AUDITOR | auditor@zple.test |
+| SUPER_ADMIN | superadmin@example.test |
+| ADMIN | admin@example.test |
+| BRANCH_MANAGER | branchmanager@example.test |
+| CASHIER | cashier@example.test |
+| SALES | sales@example.test |
+| STORE_KEEPER | storekeeper@example.test |
+| AUDITOR | auditor@example.test |
 
 The company name/logo shown in the browser tab, navbar, and reports is set
 separately per environment from **Settings** (SUPER_ADMIN/ADMIN only) — it's

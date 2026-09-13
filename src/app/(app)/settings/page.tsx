@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useOrgSettingsStore } from '@/lib/orgSettingsStore';
-import { APP_NAME } from '@/lib/constants/branding';
+import { APP_NAME, MAX_LOGO_BYTES, UPLOADABLE_LOGO_TYPES } from '@/lib/constants/branding';
 import { useToast } from '@/hooks/useToast';
 import { companyInitials } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ export default function SettingsPage() {
   const setSettings = useOrgSettingsStore((s) => s.setSettings);
   const [form, setForm] = useState({ companyName: '', address: '', phone: '', email: '', logoUrl: '' });
   const [saving, setSaving] = useState(false);
+  const logoFileInput = useRef<HTMLInputElement>(null);
 
   const [loanForm, setLoanForm] = useState({ dailyInterestPercent: '1', interestGraceDays: '0' });
   const [loanSaving, setLoanSaving] = useState(false);
@@ -29,8 +30,14 @@ export default function SettingsPage() {
   const [workingDays, setWorkingDays] = useState({ worksSaturday: false, worksSunday: false, acceptsPaymentsOnClosedDays: true });
   const [workingDaysSaving, setWorkingDaysSaving] = useState(false);
 
+  const [contractTypes, setContractTypes] = useState({ saveToOwnEnabled: false, deviceLoanEnabled: false });
+  const [contractTypesSaving, setContractTypesSaving] = useState(false);
+
   useEffect(() => {
     if (!canManage) return;
+    api.get<{ settings: { saveToOwnEnabled: boolean; deviceLoanEnabled: boolean } }>('/settings/contract-types')
+      .then((r) => setContractTypes({ saveToOwnEnabled: r.settings.saveToOwnEnabled, deviceLoanEnabled: r.settings.deviceLoanEnabled }))
+      .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load contract types', variant: 'destructive' }));
     api.get<{ settings: { dailyInterestRateBps: number; interestGraceDays: number } }>('/settings/loan-terms')
       .then((r) => setLoanForm({
         dailyInterestPercent: (r.settings.dailyInterestRateBps / 100).toString(),
@@ -71,6 +78,24 @@ export default function SettingsPage() {
     }
   }
 
+  function onLogoFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // lets the same file be chosen again after removing it
+    if (!file) return;
+    if (!(UPLOADABLE_LOGO_TYPES as readonly string[]).includes(file.type)) {
+      toast({ title: 'Unsupported image', description: 'Upload a PNG or JPEG logo.', variant: 'destructive' });
+      return;
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      toast({ title: 'Image too large', description: `The logo must be ${Math.round(MAX_LOGO_BYTES / 1024)} KB or smaller.`, variant: 'destructive' });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setForm((f) => ({ ...f, logoUrl: String(reader.result) }));
+    reader.onerror = () => toast({ title: 'Error', description: 'Could not read that image.', variant: 'destructive' });
+    reader.readAsDataURL(file);
+  }
+
   async function onSaveLoanTerms(e: React.FormEvent) {
     e.preventDefault();
     setLoanSaving(true);
@@ -99,6 +124,22 @@ export default function SettingsPage() {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save working days', variant: 'destructive' });
     } finally {
       setWorkingDaysSaving(false);
+    }
+  }
+
+  async function onSaveContractTypes(e: React.FormEvent) {
+    e.preventDefault();
+    setContractTypesSaving(true);
+    try {
+      await api.patch('/settings/contract-types', contractTypes);
+      toast({
+        title: 'Contract types saved',
+        description: 'Controls which types can be chosen for new contracts — existing contracts keep working either way.',
+      });
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save contract types', variant: 'destructive' });
+    } finally {
+      setContractTypesSaving(false);
     }
   }
 
@@ -141,14 +182,33 @@ export default function SettingsPage() {
               />
             </div>
             <div className="col-span-2">
-              <Label>Logo URL (optional)</Label>
-              <Input
-                className="mt-1.5"
-                placeholder="https://example.com/logo.png"
-                value={form.logoUrl}
-                onChange={(e) => setForm({ ...form, logoUrl: e.target.value })}
-              />
-              <p className="text-xs text-gray-400 mt-1">Used in place of the initials badge wherever the logo appears. Leave blank to use initials.</p>
+              <Label>Logo (optional)</Label>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => logoFileInput.current?.click()}>
+                  Upload image
+                </Button>
+                <input ref={logoFileInput} type="file" accept={UPLOADABLE_LOGO_TYPES.join(',')} className="hidden" onChange={onLogoFileChosen} />
+                {form.logoUrl && (
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setForm({ ...form, logoUrl: '' })}>Remove logo</Button>
+                )}
+              </div>
+              {form.logoUrl.startsWith('data:') ? (
+                <p className="text-xs text-gray-500 mt-2">
+                  {form.logoUrl === (settings.logoUrl ?? '') ? 'Using an uploaded image.' : 'New image chosen — click Save changes to apply it.'}
+                </p>
+              ) : (
+                <Input
+                  className="mt-2"
+                  placeholder="or paste a link: https://example.com/logo.png"
+                  value={form.logoUrl}
+                  onChange={(e) => setForm({ ...form, logoUrl: e.target.value })}
+                />
+              )}
+              <p className="text-xs text-gray-400 mt-1">
+                PNG or JPEG, up to {Math.round(MAX_LOGO_BYTES / 1024)} KB — a square image works best. Shown in the navbar, on
+                reports and the login screen, and used as the browser tab icon and installed-app icon. Without a logo, the
+                company&apos;s initials are used everywhere instead.
+              </p>
             </div>
             <div className="col-span-2">
               <Label>Address (optional)</Label>
@@ -189,6 +249,38 @@ export default function SettingsPage() {
             </div>
           </div>
           <p className="text-xs text-gray-400 mt-3">This is how the navbar will look. The browser tab title and report headers update the same way.</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Contract types</CardTitle></CardHeader>
+        <CardContent>
+          <form className="space-y-4" onSubmit={onSaveContractTypes}>
+            <p className="text-xs text-gray-400">
+              Deposit + Instalment is always available. Activate the other types to offer them when creating a
+              contract. Turning a type off only stops new contracts of that type — existing ones still take
+              payments and withdrawals as normal.
+            </p>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={contractTypes.saveToOwnEnabled}
+                  onChange={(e) => setContractTypes({ ...contractTypes, saveToOwnEnabled: e.target.checked })}
+                />
+                Activate Save to Own
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={contractTypes.deviceLoanEnabled}
+                  onChange={(e) => setContractTypes({ ...contractTypes, deviceLoanEnabled: e.target.checked })}
+                />
+                Activate Device Loan
+              </label>
+            </div>
+            <Button type="submit" disabled={contractTypesSaving}>{contractTypesSaving ? 'Saving...' : 'Save contract types'}</Button>
+          </form>
         </CardContent>
       </Card>
 

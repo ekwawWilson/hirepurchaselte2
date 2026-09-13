@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { makeRequest } from './helpers';
+import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { GET as settingsGET, PATCH as settingsPATCH } from '@/app/api/settings/route';
@@ -24,8 +25,8 @@ describe('Org settings', () => {
   let cashier: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
-    cashier = await login('cashier@zple.test');
+    admin = await login('admin@example.test');
+    cashier = await login('cashier@example.test');
   });
 
   it('GET requires no auth at all — needed for pre-login branding', async () => {
@@ -67,6 +68,43 @@ describe('Org settings', () => {
     expect(settings.companyName).toBe('Accra Mobile Finance');
     expect(settings.email).toBe('ops@amf.test');
   });
+
+  it('accepts an uploaded PNG/JPEG logo or an https link, and rejects anything else', async () => {
+    // A 1x1 transparent PNG.
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const patch = (logoUrl: string) => settingsPATCH(makeRequest('PATCH', '/api/settings', {
+      token: admin, body: { companyName: 'Accra Mobile Finance', logoUrl },
+    }));
+
+    const uploaded = await patch(png);
+    expect(uploaded.status).toBe(200);
+    expect((await uploaded.json()).settings.logoUrl).toBe(png);
+
+    expect((await patch('https://example.com/logo.png')).status).toBe(200);
+
+    const gif = await patch('data:image/gif;base64,R0lGODlhAQABAAAAACw=');
+    expect(gif.status).toBe(400);
+    expect((await gif.json()).error).toMatch(/PNG or JPEG/);
+
+    // Declared as PNG, but the bytes aren't one.
+    const fakePng = await patch(`data:image/png;base64,${Buffer.from('definitely not an image').toString('base64')}`);
+    expect(fakePng.status).toBe(400);
+
+    const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const tooLarge = await patch(`data:image/png;base64,${Buffer.concat([pngSignature, Buffer.alloc(400 * 1024)]).toString('base64')}`);
+    expect(tooLarge.status).toBe(400);
+    expect((await tooLarge.json()).error).toMatch(/KB or smaller/);
+
+    // A path to a bundled file is no longer valid — there are none.
+    expect((await patch('/logo.jpeg')).status).toBe(400);
+
+    // The audit trail notes the upload without copying the image into it.
+    await patch(png);
+    const audit = await prisma.auditLog.findFirst({ where: { entityType: 'OrgSettings' }, orderBy: { createdAt: 'desc' } });
+    expect(JSON.parse(audit!.newValues!).logoUrl).toBe('(uploaded image)');
+
+    await patch('');
+  });
 });
 
 /**
@@ -81,8 +119,8 @@ describe('Loan payment terms settings', () => {
   let cashier: string;
 
   beforeAll(async () => {
-    admin = await login('admin@zple.test');
-    cashier = await login('cashier@zple.test');
+    admin = await login('admin@example.test');
+    cashier = await login('cashier@example.test');
   });
 
   it('GET requires settings.manage — CASHIER gets 403', async () => {

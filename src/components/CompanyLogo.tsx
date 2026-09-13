@@ -10,8 +10,8 @@ interface CompanyLogoProps {
 }
 
 /**
- * Renders the configured company logo (Settings > company details, or the
- * application default — see orgSettingsStore.ts), falling back to `fallback`
+ * Renders the company logo set in Settings > company details (there is no
+ * built-in default logo — see orgSettingsStore.ts), falling back to `fallback`
  * (an initials badge everywhere it's used) both when no logoUrl is set and
  * when the configured one fails to load. Without the onError handling, a
  * stale/broken URL (e.g. Settings still pointing at an image file that no

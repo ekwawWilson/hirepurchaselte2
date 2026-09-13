@@ -24,10 +24,11 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
     display: 'standalone',
     background_color: '#ffffff',
     theme_color: '#1e3a8a',
+    // Drawn from Settings (company logo, or its initials) — see app-icon/[file]/route.ts.
     icons: [
-      { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
-      { src: '/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      { src: '/app-icon/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/app-icon/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { src: '/app-icon/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   };
 }

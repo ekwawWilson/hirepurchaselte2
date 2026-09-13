@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import { api } from './apiClient';
-import { APP_NAME, APP_LOGO_URL } from './constants/branding';
+import { APP_NAME } from './constants/branding';
 
 export interface OrgSettings {
   companyName: string;
@@ -12,7 +12,7 @@ export interface OrgSettings {
   logoUrl: string | null;
 }
 
-const DEFAULTS: OrgSettings = { companyName: APP_NAME, address: null, phone: null, email: null, logoUrl: APP_LOGO_URL };
+const DEFAULTS: OrgSettings = { companyName: APP_NAME, address: null, phone: null, email: null, logoUrl: null };
 
 interface OrgSettingsState {
   settings: OrgSettings;
