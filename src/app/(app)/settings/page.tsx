@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { HubtelDiagnostics } from '@/components/settings/HubtelDiagnostics';
 import { CompanyLogo } from '@/components/CompanyLogo';
+import { AppIconCard } from '@/components/settings/AppIconCard';
 
 export default function SettingsPage() {
   const canManage = useAuthStore((s) => s.hasPermission('settings.manage'));
@@ -205,9 +206,9 @@ export default function SettingsPage() {
                 />
               )}
               <p className="text-xs text-gray-400 mt-1">
-                PNG or JPEG, up to {Math.round(MAX_LOGO_BYTES / 1024)} KB — a square image works best. Shown in the navbar, on
-                reports and the login screen, and used as the browser tab icon and installed-app icon. Without a logo, the
-                company&apos;s initials are used everywhere instead.
+                PNG or JPEG, up to {Math.round(MAX_LOGO_BYTES / 1024)} KB. Shown in the navbar, on reports and the login
+                screen. Also used as the app icon unless one is uploaded below. Without a logo, the company&apos;s initials
+                are used instead.
               </p>
             </div>
             <div className="col-span-2">
@@ -251,6 +252,8 @@ export default function SettingsPage() {
           <p className="text-xs text-gray-400 mt-3">This is how the navbar will look. The browser tab title and report headers update the same way.</p>
         </CardContent>
       </Card>
+
+      <AppIconCard companyName={settings.companyName} />
 
       <Card>
         <CardHeader><CardTitle>Contract types</CardTitle></CardHeader>

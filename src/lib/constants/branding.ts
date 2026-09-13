@@ -19,3 +19,7 @@ export const APP_THEME_COLOR = '#1e3a8a';
  */
 export const MAX_LOGO_BYTES = 300 * 1024;
 export const UPLOADABLE_LOGO_TYPES = ['image/png', 'image/jpeg'] as const;
+
+/** The uploaded app icon is squared and resized to this in the browser before upload. */
+export const APP_ICON_SIZE = 512;
+export const MAX_APP_ICON_BYTES = 400 * 1024;

@@ -1,5 +1,5 @@
 import { ImageResponse } from 'next/og';
-import { getOrgSettings, parseLogoDataUrl } from './orgSettingsService';
+import { getAppIconSource, parseLogoDataUrl } from './orgSettingsService';
 import { detectImageType } from '../imageData';
 import { APP_THEME_COLOR } from '../constants/branding';
 import { companyInitials } from '../utils';
@@ -30,18 +30,30 @@ async function loadLogo(logoUrl: string | null): Promise<string | null> {
   }
 }
 
-function iconElement(params: { size: number; maskable: boolean; logo: string | null; initials: string }) {
-  const { size, maskable, logo, initials } = params;
-  // A maskable icon is cropped to a circle-ish shape by the OS, so its content
-  // stays inside the central 80% safe zone on a full-bleed background.
-  const inner = Math.round(size * (maskable ? 0.8 : 1));
-  const radius = maskable ? 0 : Math.round(size * 0.2);
+type IconArt = { kind: 'icon'; src: string } | { kind: 'logo'; src: string } | { kind: 'initials'; initials: string };
 
-  if (logo) {
+function iconElement(params: { size: number; maskable: boolean; art: IconArt; flat?: boolean }) {
+  const { size, maskable, art } = params;
+  // A maskable icon is cropped to a circle-ish shape by the OS, so its content
+  // stays inside the central 80% safe zone on a full-bleed background. A flat
+  // icon (Apple's) gets square corners too: iOS rounds them itself.
+  const inner = Math.round(size * (maskable ? 0.8 : 1));
+  const radius = maskable || params.flat ? 0 : Math.round(size * 0.2);
+
+  if (art.kind === 'icon') {
+    // A dedicated app icon is already square: it fills the whole tile.
+    return (
+      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#ffffff', borderRadius: radius, overflow: 'hidden' }}>
+        {/* eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text */}
+        <img src={art.src} width={inner} height={inner} style={{ objectFit: 'cover' }} />
+      </div>
+    );
+  }
+  if (art.kind === 'logo') {
     return (
       <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#ffffff', borderRadius: radius }}>
         {/* eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text */}
-        <img src={logo} width={inner} height={inner} style={{ objectFit: 'contain' }} />
+        <img src={art.src} width={inner} height={inner} style={{ objectFit: 'contain' }} />
       </div>
     );
   }
@@ -53,38 +65,46 @@ function iconElement(params: { size: number; maskable: boolean; logo: string | n
         fontSize: Math.round(inner * 0.42), fontWeight: 700, letterSpacing: -Math.round(size * 0.01),
       }}
     >
-      {initials}
+      {art.initials}
     </div>
   );
 }
 
 /**
- * Renders the favicon/install icon from Settings: the company logo when one
- * is set and loads, otherwise the company's initials on the brand colour.
- * Rendered eagerly so a logo that can't be decoded falls back to initials
- * instead of serving a broken image.
+ * Renders the favicon / install / home-screen icon from Settings: the
+ * uploaded app icon, else the company logo, else the company's initials on
+ * the brand colour. Rendered eagerly so an image that can't be decoded falls
+ * through to the next choice instead of serving a broken icon.
  */
-export async function renderAppIcon(params: { size: number; maskable?: boolean }): Promise<Response> {
-  const { companyName, logoUrl } = await getOrgSettings();
-  const initials = companyInitials(companyName);
+export async function renderAppIcon(params: { size: number; maskable?: boolean; flat?: boolean }): Promise<Response> {
+  const { companyName, logoUrl, appIconUrl } = await getAppIconSource();
   const maskable = params.maskable ?? false;
   const options = { width: params.size, height: params.size };
 
-  let png: ArrayBuffer | null = null;
+  const candidates: IconArt[] = [];
+  if (appIconUrl && parseLogoDataUrl(appIconUrl)) candidates.push({ kind: 'icon', src: appIconUrl });
   const logo = await loadLogo(logoUrl);
-  if (logo) {
+  if (logo) candidates.push({ kind: 'logo', src: logo });
+
+  let png: ArrayBuffer | null = null;
+  for (const art of candidates) {
     try {
-      png = await new ImageResponse(iconElement({ size: params.size, maskable, logo, initials }), options).arrayBuffer();
+      png = await new ImageResponse(iconElement({ size: params.size, maskable, art, flat: params.flat }), options).arrayBuffer();
+      break;
     } catch (e) {
-      console.error('[app-icon] logo could not be rendered, using initials:', e);
+      console.error(`[app-icon] ${art.kind} could not be rendered, trying the next choice:`, e);
     }
   }
-  png ??= await new ImageResponse(iconElement({ size: params.size, maskable, logo: null, initials }), options).arrayBuffer();
+  png ??= await new ImageResponse(
+    iconElement({ size: params.size, maskable, art: { kind: 'initials', initials: companyInitials(companyName) }, flat: params.flat }),
+    options,
+  ).arrayBuffer();
 
   return new Response(png, {
     headers: {
       'Content-Type': 'image/png',
-      // Short, so a logo changed in Settings shows up within minutes.
+      // Short, so an icon changed in Settings shows up within minutes; URLs
+      // in the manifest also carry a version that changes on every save.
       'Cache-Control': 'public, max-age=300',
     },
   });

@@ -1,6 +1,6 @@
 import { prisma } from '../db/prisma';
 import { parseImageDataUrl } from '../imageData';
-import { APP_NAME, MAX_LOGO_BYTES, UPLOADABLE_LOGO_TYPES } from '../constants/branding';
+import { APP_NAME, MAX_LOGO_BYTES, MAX_APP_ICON_BYTES, UPLOADABLE_LOGO_TYPES } from '../constants/branding';
 
 /**
  * Always exactly one row — a single-tenant "who is this business" record
@@ -64,4 +64,39 @@ export function validateOrgSettingsBody(body: Record<string, unknown>): string |
  */
 export function parseLogoDataUrl(logoUrl: string) {
   return parseImageDataUrl(logoUrl, UPLOADABLE_LOGO_TYPES);
+}
+
+/**
+ * Everything the app icons are drawn from. `version` changes whenever
+ * Settings are saved, so icon URLs carrying it stop matching a stale copy an
+ * installed app or browser has cached.
+ */
+export async function getAppIconSource() {
+  const row = await prisma.orgSettings.findUnique({
+    where: { id: SINGLETON_ID },
+    select: { companyName: true, logoUrl: true, appIconUrl: true, updatedAt: true },
+  });
+  return {
+    companyName: row?.companyName ?? DEFAULTS.companyName,
+    logoUrl: row?.logoUrl ?? null,
+    appIconUrl: row?.appIconUrl ?? null,
+    version: row ? row.updatedAt.getTime().toString(36) : '0',
+  };
+}
+
+/** Null if the app icon is an acceptable uploaded image, else why not. */
+export function validateAppIcon(appIconUrl: string): string | null {
+  const icon = parseImageDataUrl(appIconUrl, UPLOADABLE_LOGO_TYPES);
+  if (!icon) return 'The app icon must be an uploaded PNG or JPEG image';
+  if (icon.bytes.length > MAX_APP_ICON_BYTES) return `The app icon must be ${Math.round(MAX_APP_ICON_BYTES / 1024)} KB or smaller`;
+  return null;
+}
+
+export async function setAppIcon(appIconUrl: string | null, updatedById: string) {
+  return prisma.orgSettings.upsert({
+    where: { id: SINGLETON_ID },
+    create: { id: SINGLETON_ID, ...DEFAULTS, appIconUrl, updatedById },
+    update: { appIconUrl, updatedById },
+    select: { updatedAt: true },
+  });
 }

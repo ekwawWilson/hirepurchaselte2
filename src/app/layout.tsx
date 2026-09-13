@@ -3,8 +3,9 @@ import { Inter, Plus_Jakarta_Sans, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { InstallAppButton } from "@/components/shared/InstallAppButton";
+import { ServiceWorkerRegister } from "@/components/shared/ServiceWorkerRegister";
 import { getOrgSettings } from "@/lib/services/orgSettingsService";
-import { APP_NAME } from "@/lib/constants/branding";
+import { APP_NAME, APP_THEME_COLOR } from "@/lib/constants/branding";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
 const jakarta = Plus_Jakarta_Sans({ variable: "--font-jakarta", subsets: ["latin"], weight: ["600", "700", "800"] });
@@ -23,7 +24,7 @@ export const dynamic = "force-dynamic";
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#1e3a8a",
+  themeColor: APP_THEME_COLOR,
 };
 
 // Reads the client's own company name straight from the DB (server component,
@@ -34,6 +35,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: companyName === APP_NAME ? APP_NAME : `${companyName} · ${APP_NAME}`,
     description: "Hire-purchase management system",
+    // iOS reads these rather than the manifest when adding to the home screen.
+    appleWebApp: { capable: true, title: companyName, statusBarStyle: "default" },
+    applicationName: companyName,
   };
 }
 
@@ -43,6 +47,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         {children}
         <Toaster />
+        <ServiceWorkerRegister />
         {/* Above the mobile tab bar on phones (bottom-20), in the corner on desktop.
             Legacy used bottom-4 everywhere, which covered its own "More" tab. */}
         <div className="fixed bottom-20 right-4 z-40 lg:bottom-4">

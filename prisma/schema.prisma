@@ -679,6 +679,11 @@ model OrgSettings {
   phone       String?
   email       String?
   logoUrl     String?
+  // The installed-app / home-screen / browser-tab icon: a square PNG or JPEG
+  // (resized to 512x512 in the browser) stored inline. Kept apart from the
+  // logo because a wide logo makes a poor square icon, and out of the public
+  // GET /api/settings every page loads. Falls back to the logo, then initials.
+  appIconUrl  String?
   updatedAt   DateTime @updatedAt
   updatedById String?
 
