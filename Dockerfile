@@ -46,6 +46,11 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
+# The TypeScript sources, for the one script that runs against a live database:
+# prisma/runSyncRbac.ts imports the permission catalogue from src/lib/constants/rbac.
+# CI used to run it from a checkout; a container deploy has only what is copied here.
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/next.config.ts ./next.config.ts
 
