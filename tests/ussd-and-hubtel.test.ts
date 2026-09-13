@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { makeRequest, enableOptionalContractTypes } from './helpers';
+import { makeRequest, enableOptionalContractTypes, registrationFields } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -49,7 +49,7 @@ describe('USSD + Hubtel payments', () => {
     let custId = opts.customerId;
     if (!custId) {
       const customer = await customersPOST(makeRequest('POST', '/api/customers', {
-        token: cashier, body: { firstName: 'Ussd', lastName: 'Tester', phone },
+        token: cashier, body: { ...registrationFields(), firstName: 'Ussd', lastName: 'Tester', phone },
       }));
       custId = (await customer.json()).customer.id;
     }
@@ -483,7 +483,7 @@ describe('USSD + Hubtel payments', () => {
   it('DEVICE_LOAN\'s prompt offers only the currently-owed option(s) — no schedule, no free-typed amount', async () => {
     const phone = uniquePhone();
     const customer = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Ussd', lastName: 'Loan', phone },
+      token: cashier, body: { ...registrationFields(), firstName: 'Ussd', lastName: 'Loan', phone },
     }));
     const customerId = (await customer.json()).customer.id;
     // DEVICE_LOAN disburses cash directly — not linked to a product or
@@ -530,7 +530,7 @@ describe('USSD + Hubtel payments', () => {
   it('an invalid DEVICE_LOAN option is rejected instead of accepted as a free-typed amount', async () => {
     const phone = uniquePhone();
     const customer = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Ussd', lastName: 'BadOption', phone },
+      token: cashier, body: { ...registrationFields(), firstName: 'Ussd', lastName: 'BadOption', phone },
     }));
     const customerId = (await customer.json()).customer.id;
     await contractsPOST(makeRequest('POST', '/api/contracts', {

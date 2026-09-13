@@ -34,3 +34,20 @@ export function makeRequest(
 export function makeParams<T extends Record<string, string>>(params: T): { params: Promise<T> } {
   return { params: Promise.resolve(params) };
 }
+
+/**
+ * A minimal JPEG (just the SOI marker and a few bytes) — enough for
+ * validateCustomerPhoto, which checks the file signature and size, not that
+ * the picture decodes.
+ */
+export const TEST_PHOTO_DATA_URL = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9]).toString('base64')}`;
+
+/** Everything customer registration requires besides a name and phone number. */
+export function registrationFields() {
+  return {
+    address: '12 Test Street, Accra',
+    occupation: 'Trader',
+    workAddress: 'Makola Market, Accra',
+    photoUrl: TEST_PHOTO_DATA_URL,
+  };
+}

@@ -122,9 +122,13 @@ model Customer {
   phone2         String?   @unique
   phone3         String?   @unique
   email          String?
-  address        String?
+  address        String? // residential address — asked for at registration
+  occupation     String?
+  workAddress    String?
   nationalId     String?
   dateOfBirth    DateTime?
+  // A passport-sized JPEG (210x270) stored inline as a data URL, resized in
+  // the browser before upload — see CustomerPhotoField and validateCustomerPhoto.
   photoUrl       String?
   // Customer portal (src/app/portal) — a customer signs in with any of their
   // registered phone numbers. Until they set their own password, the phone

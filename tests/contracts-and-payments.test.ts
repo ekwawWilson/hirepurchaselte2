@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams, enableOptionalContractTypes } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes, registrationFields } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 import { accrueDailyLoanInterest } from '@/lib/services/loanService';
 
@@ -65,7 +65,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
   async function makeCustomer(label: string) {
     const res = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Test', lastName: label, phone: uniquePhone() },
+      token: cashier, body: { ...registrationFields(), firstName: 'Test', lastName: label, phone: uniquePhone() },
     }));
     expect(res.status).toBe(201);
     return (await res.json()).customer.id as string;

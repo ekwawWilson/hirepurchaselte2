@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
 import { verifyMobileMoneyNumber } from '@/lib/services/hubtelVerificationService';
 import { MOBILE_MONEY_NETWORKS } from '@/lib/constants/contracts';
+import { networkForPhone } from '@/lib/constants/customers';
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -9,8 +10,14 @@ export async function POST(req: NextRequest) {
   const perm = requirePermission(auth.user, 'customer.create', 'customer.update', 'customer.view');
   if (!perm.authorized) return perm.error;
 
-  const { phone, network } = (await req.json()) as { phone?: string; network?: string };
+  const { phone, network: networkInput } = (await req.json()) as { phone?: string; network?: string };
   if (!phone) return NextResponse.json({ error: 'phone is required' }, { status: 400 });
+  // Staff no longer pick a network: it is read from the number's prefix
+  // unless one is given explicitly.
+  const network = networkInput ?? networkForPhone(phone);
+  if (!network) {
+    return NextResponse.json({ error: 'This does not look like a Ghana mobile number — check the first digits' }, { status: 400 });
+  }
   // This is a read-only verification lookup, not a direct-debit mandate — so it
   // validates against every network Hubtel supports for that (MOBILE_MONEY_NETWORKS),
   // not DIRECT_DEBIT_NETWORKS, which excludes AirtelTigo for an unrelated reason

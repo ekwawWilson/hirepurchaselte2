@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams, enableOptionalContractTypes } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes, registrationFields } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -54,7 +54,7 @@ describe('Reports', () => {
   async function setupContract(label: string, contractType: string = 'SAVE_TO_OWN') {
     const phone = uniquePhone();
     const customer = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Report', lastName: label, phone },
+      token: cashier, body: { ...registrationFields(), firstName: 'Report', lastName: label, phone },
     }));
     const custId = (await customer.json()).customer.id;
 

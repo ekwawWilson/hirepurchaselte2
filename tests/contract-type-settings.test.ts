@@ -4,7 +4,7 @@
  * never the contracts that already exist.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { makeRequest, enableOptionalContractTypes } from './helpers';
+import { makeRequest, enableOptionalContractTypes, registrationFields } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { POST as customersPOST } from '@/app/api/customers/route';
@@ -40,7 +40,7 @@ describe('Contract type activation', () => {
   async function makeCustomer() {
     counter += 1;
     const res = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Type', lastName: 'Toggle', phone: `029${runId}${counter}` },
+      token: cashier, body: { ...registrationFields(), firstName: 'Type', lastName: 'Toggle', phone: `029${runId}${counter}` },
     }));
     return (await res.json()).customer.id as string;
   }

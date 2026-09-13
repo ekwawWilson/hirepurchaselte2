@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { CUSTOMER_SUMMARY_SELECT } from '@/lib/services/customerService';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
 import {
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
 
   const contracts = await prisma.contract.findMany({
     where,
-    include: { customer: true, product: true, inventoryItem: true },
+    include: { customer: { select: CUSTOMER_SUMMARY_SELECT }, product: true, inventoryItem: true },
     orderBy: { createdAt: 'desc' },
     take: 200,
   });

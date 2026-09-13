@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { CUSTOMER_DETAIL_SELECT } from '@/lib/services/customerService';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
 import { getDeviceLoanState } from '@/lib/services/paymentService';
@@ -13,7 +14,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const contract = await prisma.contract.findUnique({
     where: { id },
     include: {
-      customer: true,
+      customer: { select: CUSTOMER_DETAIL_SELECT },
       product: true,
       inventoryItem: true,
       instalments: { orderBy: { instalmentNo: 'asc' } },

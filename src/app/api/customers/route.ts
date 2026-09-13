@@ -3,7 +3,10 @@ import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
 import { generateMembershipId } from '@/lib/utils/idGenerators';
 import { logAudit } from '@/lib/services/auditService';
-import { validateAtLeastOnePhone, assertPhonesNotTaken } from '@/lib/services/customerService';
+import {
+  assertPhonesNotTaken, validateRegistration, registrationBranch,
+  CUSTOMER_SUMMARY_SELECT, CUSTOMER_DETAIL_SELECT,
+} from '@/lib/services/customerService';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -30,10 +33,16 @@ export async function GET(req: NextRequest) {
     ];
   }
 
-  const customers = await prisma.customer.findMany({ where, orderBy: { createdAt: 'desc' }, take: 100 });
+  const customers = await prisma.customer.findMany({ where, select: CUSTOMER_SUMMARY_SELECT, orderBy: { createdAt: 'desc' }, take: 100 });
   return NextResponse.json({ customers });
 }
 
+/**
+ * Registration takes one phone number (the network is read from its prefix
+ * when it is verified), a passport photo, and residential address,
+ * occupation and work address. The branch is never chosen: it is the
+ * registering user's own (customerService.registrationBranch).
+ */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if ('error' in auth) return auth.error;
@@ -41,48 +50,46 @@ export async function POST(req: NextRequest) {
   if (!perm.authorized) return perm.error;
   const user = auth.user;
 
-  const {
-    firstName, lastName, phone, phone2, phone3, email, address, nationalId, dateOfBirth,
-    photoUrl, guarantorName, guarantorPhone, branchId: branchIdInput,
-  } = (await req.json()) as Record<string, string | undefined>;
+  const body = (await req.json().catch(() => ({}))) as Record<string, string | undefined>;
+  const invalid = validateRegistration(body);
+  if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
 
-  if (!firstName || !lastName) {
-    return NextResponse.json({ error: 'firstName and lastName are required' }, { status: 400 });
+  const branch = await registrationBranch(user);
+  if (!branch) {
+    return NextResponse.json({
+      error: 'Your account is not assigned to a branch. Assign yourself a branch under Users before registering customers.',
+    }, { status: 400 });
   }
-  const phoneError = validateAtLeastOnePhone({ phone, phone2, phone3 });
-  if (phoneError) return NextResponse.json({ error: phoneError }, { status: 400 });
 
-  const branchId = user.branchId ?? branchIdInput;
-  if (!branchId) return NextResponse.json({ error: 'branchId is required for an all-branch user' }, { status: 400 });
-
-  const branch = await prisma.branch.findUnique({ where: { id: branchId } });
-  if (!branch) return NextResponse.json({ error: 'Unknown branchId' }, { status: 400 });
-
-  const clashError = await assertPhonesNotTaken({ phone, phone2, phone3 });
+  const phone = body.phone!.trim();
+  const clashError = await assertPhonesNotTaken({ phone });
   if (clashError) return NextResponse.json({ error: clashError }, { status: 409 });
-
-  const membershipId = await generateMembershipId(branch.code);
 
   const customer = await prisma.customer.create({
     data: {
-      membershipId,
-      firstName,
-      lastName,
-      phone: phone || null,
-      phone2: phone2 || null,
-      phone3: phone3 || null,
-      email: email || null,
-      address: address || null,
-      nationalId: nationalId || null,
-      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-      photoUrl: photoUrl || null,
-      guarantorName: guarantorName || null,
-      guarantorPhone: guarantorPhone || null,
-      branchId,
+      membershipId: await generateMembershipId(branch.code),
+      firstName: body.firstName!.trim(),
+      lastName: body.lastName!.trim(),
+      phone,
+      address: body.address!.trim(),
+      occupation: body.occupation!.trim(),
+      workAddress: body.workAddress!.trim(),
+      photoUrl: body.photoUrl!,
+      email: body.email?.trim() || null,
+      nationalId: body.nationalId?.trim() || null,
+      dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null,
+      guarantorName: body.guarantorName?.trim() || null,
+      guarantorPhone: body.guarantorPhone?.trim() || null,
+      branchId: branch.id,
       createdById: user.id,
     },
+    select: CUSTOMER_DETAIL_SELECT,
   });
 
-  await logAudit({ userId: user.id, action: 'CUSTOMER_CREATE', entityType: 'Customer', entityId: customer.id, newValues: customer });
+  // The audit log records that a photo was taken, not the image itself.
+  await logAudit({
+    userId: user.id, action: 'CUSTOMER_CREATE', entityType: 'Customer', entityId: customer.id,
+    newValues: { ...customer, photoUrl: '[photo]' },
+  });
   return NextResponse.json({ customer }, { status: 201 });
 }

@@ -11,12 +11,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { UserRound } from 'lucide-react';
 import { PhoneVerifyField } from '@/components/PhoneVerifyField';
+import { CustomerPhotoField } from '@/components/CustomerPhotoField';
+import { Textarea } from '@/components/ui/textarea';
 
 interface Customer {
   id: string; membershipId: string; firstName: string; lastName: string;
   phone: string | null; phone2: string | null; phone3: string | null;
   email: string | null; address: string | null; nationalId: string | null;
+  occupation: string | null; workAddress: string | null; photoUrl: string | null;
   guarantorName: string | null; guarantorPhone: string | null; createdAt: string;
 }
 interface Contract {
@@ -32,7 +36,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ phone: '', phone2: '', phone3: '', email: '', address: '', nationalId: '', guarantorName: '', guarantorPhone: '' });
+  const [form, setForm] = useState({ phone: '', email: '', address: '', occupation: '', workAddress: '', photoUrl: '', nationalId: '', guarantorName: '', guarantorPhone: '' });
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -44,8 +48,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       setCustomer(customer);
       setContracts(contracts);
       setForm({
-        phone: customer.phone ?? '', phone2: customer.phone2 ?? '', phone3: customer.phone3 ?? '',
+        phone: customer.phone ?? '',
         email: customer.email ?? '', address: customer.address ?? '', nationalId: customer.nationalId ?? '',
+        occupation: customer.occupation ?? '', workAddress: customer.workAddress ?? '', photoUrl: customer.photoUrl ?? '',
         guarantorName: customer.guarantorName ?? '', guarantorPhone: customer.guarantorPhone ?? '',
       });
     } catch (e) {
@@ -60,13 +65,17 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.phone.trim() && !form.phone2.trim() && !form.phone3.trim()) {
-      toast({ title: 'At least one phone number is required', variant: 'destructive' });
+    // A customer registered before single-number registration may hold their
+    // number only in phone2/phone3, which still count on the server.
+    if (!form.phone.trim() && !customer?.phone2 && !customer?.phone3) {
+      toast({ title: 'A phone number is required', variant: 'destructive' });
       return;
     }
     setSaving(true);
     try {
-      await api.patch(`/customers/${id}`, form);
+      // Leave the stored photo alone unless it was changed or removed here.
+      const { photoUrl, ...rest } = form;
+      await api.patch(`/customers/${id}`, photoUrl === (customer?.photoUrl ?? '') ? rest : form);
       toast({ title: 'Customer updated' });
       setEditing(false);
       await load();
@@ -83,10 +92,18 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="max-w-3xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="w-[70px] h-[90px] shrink-0 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center">
+            {customer.photoUrl
+              // eslint-disable-next-line @next/next/no-img-element -- a data URL; next/image adds nothing here
+              ? <img src={customer.photoUrl} alt={`${customer.firstName} ${customer.lastName}`} className="h-full w-full object-cover" />
+              : <UserRound className="h-8 w-8 text-gray-300" />}
+          </div>
+          <div className="min-w-0">
           <h1 className="text-2xl font-bold text-gray-900">{customer.firstName} {customer.lastName}</h1>
           <p className="text-sm text-gray-500 mt-0.5">{customer.membershipId} &middot; {customer.phone ?? customer.phone2 ?? customer.phone3} &middot; Registered {formatDate(customer.createdAt)}</p>
+          </div>
         </div>
         {canUpdate && !editing && <Button variant="outline" onClick={() => setEditing(true)}>Edit</Button>}
       </div>
@@ -97,12 +114,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           {editing ? (
             <form className="grid grid-cols-2 gap-4" onSubmit={onSave}>
               <div className="col-span-2">
-                <p className="text-xs text-gray-500 mb-2">At least one phone number is required.</p>
-                <div className="grid grid-cols-1 gap-3">
-                  <PhoneVerifyField label="Phone 1" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
-                  <PhoneVerifyField label="Phone 2 (optional)" value={form.phone2} onChange={(v) => setForm({ ...form, phone2: v })} />
-                  <PhoneVerifyField label="Phone 3 (optional)" value={form.phone3} onChange={(v) => setForm({ ...form, phone3: v })} />
-                </div>
+                <CustomerPhotoField value={form.photoUrl} onChange={(v) => setForm({ ...form, photoUrl: v })} />
+              </div>
+              <div className="col-span-2">
+                <PhoneVerifyField label="Phone number" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
               </div>
               <div>
                 <Label>Email</Label>
@@ -113,8 +128,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 <Input className="mt-1.5" value={form.nationalId} onChange={(e) => setForm({ ...form, nationalId: e.target.value })} />
               </div>
               <div className="col-span-2">
-                <Label>Address</Label>
-                <Input className="mt-1.5" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+                <Label>Residential address</Label>
+                <Textarea rows={2} className="mt-1.5" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+              </div>
+              <div className="col-span-2">
+                <Label>Occupation</Label>
+                <Input className="mt-1.5" value={form.occupation} onChange={(e) => setForm({ ...form, occupation: e.target.value })} />
+              </div>
+              <div className="col-span-2">
+                <Label>Work address</Label>
+                <Textarea rows={2} className="mt-1.5" value={form.workAddress} onChange={(e) => setForm({ ...form, workAddress: e.target.value })} />
               </div>
               <div>
                 <Label>Guarantor name</Label>
@@ -131,12 +154,15 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             </form>
           ) : (
             <div className="grid grid-cols-2 gap-4 text-sm">
-              <div><p className="text-xs text-gray-500">Phone 1</p><p className="text-gray-900">{customer.phone ?? '—'}</p></div>
-              <div><p className="text-xs text-gray-500">Phone 2</p><p className="text-gray-900">{customer.phone2 ?? '—'}</p></div>
-              <div><p className="text-xs text-gray-500">Phone 3</p><p className="text-gray-900">{customer.phone3 ?? '—'}</p></div>
+              <div><p className="text-xs text-gray-500">Phone number</p><p className="text-gray-900">{customer.phone ?? customer.phone2 ?? customer.phone3 ?? '—'}</p></div>
+              {(customer.phone2 || customer.phone3) && customer.phone && (
+                <div><p className="text-xs text-gray-500">Other numbers (from earlier registration)</p><p className="text-gray-900">{[customer.phone2, customer.phone3].filter(Boolean).join(', ')}</p></div>
+              )}
               <div><p className="text-xs text-gray-500">Email</p><p className="text-gray-900">{customer.email ?? '—'}</p></div>
               <div><p className="text-xs text-gray-500">National ID</p><p className="text-gray-900">{customer.nationalId ?? '—'}</p></div>
-              <div className="col-span-2"><p className="text-xs text-gray-500">Address</p><p className="text-gray-900">{customer.address ?? '—'}</p></div>
+              <div className="col-span-2"><p className="text-xs text-gray-500">Residential address</p><p className="text-gray-900 whitespace-pre-line">{customer.address ?? '—'}</p></div>
+              <div><p className="text-xs text-gray-500">Occupation</p><p className="text-gray-900">{customer.occupation ?? '—'}</p></div>
+              <div className="col-span-2"><p className="text-xs text-gray-500">Work address</p><p className="text-gray-900 whitespace-pre-line">{customer.workAddress ?? '—'}</p></div>
               <div><p className="text-xs text-gray-500">Guarantor</p><p className="text-gray-900">{customer.guarantorName ?? '—'}</p></div>
               <div><p className="text-xs text-gray-500">Guarantor phone</p><p className="text-gray-900">{customer.guarantorPhone ?? '—'}</p></div>
             </div>

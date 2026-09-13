@@ -1,4 +1,5 @@
 import { prisma } from '../db/prisma';
+import { CUSTOMER_SUMMARY_SELECT } from './customerService';
 import { getDeviceLoanState } from './paymentService';
 
 /** Optional branch scoping (server-applied only, per RBAC — never client-trusted beyond what the caller already resolved). */
@@ -202,7 +203,7 @@ export async function inventoryPositionReport(scope: Scope) {
 export async function devicesPendingReleaseReport(scope: Scope) {
   return prisma.contract.findMany({
     where: { contractType: 'SAVE_TO_OWN', status: 'COMPLETED', ...(scope.branchId && { branchId: scope.branchId }) },
-    include: { customer: true, inventoryItem: true },
+    include: { customer: { select: CUSTOMER_SUMMARY_SELECT }, inventoryItem: true },
     orderBy: { completedAt: 'asc' },
   });
 }

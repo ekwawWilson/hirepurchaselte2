@@ -11,7 +11,7 @@
  *    collections run.
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { makeRequest, enableOptionalContractTypes } from './helpers';
+import { makeRequest, enableOptionalContractTypes, registrationFields } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -44,45 +44,73 @@ async function login(email: string): Promise<string> {
 // Save to Own and Device Loan must be activated before they can be created.
 beforeAll(enableOptionalContractTypes);
 
-describe('Customer registration: three phone slots', () => {
+describe('Customer registration', () => {
   let cashier: string;
+  let cashierBranchId: string;
 
   beforeAll(async () => {
     cashier = await login('cashier@example.test');
+    cashierBranchId = (await prisma.user.findUniqueOrThrow({ where: { email: 'cashier@example.test' } })).branchId!;
   });
 
-  it('rejects a customer with all three phone slots empty', async () => {
+  it('requires a phone number, photo, residential address, occupation and work address', async () => {
     const res = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'No', lastName: 'Phone' },
+      token: cashier, body: { firstName: 'Nothing', lastName: 'Else' },
     }));
     expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toMatch(/at least one phone/i);
+    const { error } = await res.json();
+    for (const field of ['Phone number', 'Residential address', 'Occupation', 'Work address', 'Customer photo']) {
+      expect(error).toContain(field);
+    }
   });
 
-  it('accepts a customer with only the second phone slot filled', async () => {
+  it('registers with one number, records home and work, and puts the customer in the user\'s own branch', async () => {
     const res = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Only', lastName: 'Phone2', phone2: uniquePhone() },
+      token: cashier,
+      // A branchId in the body is ignored: the branch always comes from the user.
+      body: { ...registrationFields(), firstName: 'Single', lastName: 'Number', phone: uniquePhone(), branchId: 'some-other-branch' },
     }));
     expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body.customer.phone).toBeNull();
-    expect(body.customer.phone2).toBeTruthy();
+    const { customer } = await res.json();
+    expect(customer.branchId).toBe(cashierBranchId);
+    expect(customer.phone2).toBeNull();
+    expect(customer.occupation).toBe('Trader');
+    expect(customer.workAddress).toBe('Makola Market, Accra');
+    expect(customer.photoUrl).toMatch(/^data:image\/jpeg;base64,/);
+    expect(customer).not.toHaveProperty('passwordHash');
   });
 
-  it('rejects a phone number already registered to another customer in a DIFFERENT slot', async () => {
-    const sharedNumber = uniquePhone();
-    const first = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'First', lastName: 'Holder', phone: sharedNumber },
+  it('refuses a photo that is not really a JPEG, or is too large', async () => {
+    const png = `data:image/jpeg;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64')}`;
+    const notJpeg = await customersPOST(makeRequest('POST', '/api/customers', {
+      token: cashier, body: { ...registrationFields(), firstName: 'Bad', lastName: 'Photo', phone: uniquePhone(), photoUrl: png },
     }));
-    expect(first.status).toBe(201);
+    expect(notJpeg.status).toBe(400);
 
-    // Same physical number, but offered as customer B's phone2/phone3 this time —
-    // the schema's per-column @unique constraints alone wouldn't catch this.
-    const second = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Second', lastName: 'Claimant', phone2: sharedNumber },
+    const huge = `data:image/jpeg;base64,${Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(200 * 1024)]).toString('base64')}`;
+    const tooBig = await customersPOST(makeRequest('POST', '/api/customers', {
+      token: cashier, body: { ...registrationFields(), firstName: 'Huge', lastName: 'Photo', phone: uniquePhone(), photoUrl: huge },
     }));
-    expect(second.status).toBe(409);
+    expect(tooBig.status).toBe(400);
+    expect((await tooBig.json()).error).toMatch(/KB or smaller/);
+  });
+
+  it('rejects a number an earlier customer holds in any of their slots', async () => {
+    // Customers registered before single-number registration may hold a
+    // second number; a new registration must not reuse it.
+    const sharedNumber = uniquePhone();
+    await prisma.customer.create({
+      data: {
+        membershipId: `LEGACY-${sharedNumber}`, firstName: 'Earlier', lastName: 'Holder',
+        phone: uniquePhone(), phone2: sharedNumber, branchId: cashierBranchId,
+        createdById: (await prisma.user.findUniqueOrThrow({ where: { email: 'cashier@example.test' } })).id,
+      },
+    });
+
+    const res = await customersPOST(makeRequest('POST', '/api/customers', {
+      token: cashier, body: { ...registrationFields(), firstName: 'Second', lastName: 'Claimant', phone: sharedNumber },
+    }));
+    expect(res.status).toBe(409);
   });
 });
 
@@ -96,7 +124,7 @@ describe('Hubtel mobile money verification (mock mode)', () => {
   it('confirms a registered number and surfaces the account holder\'s name', async () => {
     const phone = uniquePhone();
     await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { firstName: 'Verify', lastName: 'Target', phone },
+      token: cashier, body: { ...registrationFields(), firstName: 'Verify', lastName: 'Target', phone },
     }));
 
     const result = await verifyMobileMoneyNumber({ msisdn: phone, network: 'MTN', requestedById: 'test-user' });
@@ -116,6 +144,18 @@ describe('Hubtel mobile money verification (mock mode)', () => {
     }));
     expect(res.status).toBe(200);
     expect((await res.json()).verified).toBe(true);
+  });
+
+  it('POST /api/customers/verify-phone reads the network from the number when none is given', async () => {
+    const ok = await verifyPhonePOST(makeRequest('POST', '/api/customers/verify-phone', {
+      token: cashier, body: { phone: '0244123456' },
+    }));
+    expect(ok.status).toBe(200);
+
+    const unknownPrefix = await verifyPhonePOST(makeRequest('POST', '/api/customers/verify-phone', {
+      token: cashier, body: { phone: '0314123456' },
+    }));
+    expect(unknownPrefix.status).toBe(400);
   });
 
   it('POST /api/customers/verify-phone still rejects a genuinely unknown network', async () => {

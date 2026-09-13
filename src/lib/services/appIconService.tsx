@@ -1,5 +1,6 @@
 import { ImageResponse } from 'next/og';
-import { getOrgSettings, parseLogoDataUrl, detectImageType } from './orgSettingsService';
+import { getOrgSettings, parseLogoDataUrl } from './orgSettingsService';
+import { detectImageType } from '../imageData';
 import { APP_THEME_COLOR } from '../constants/branding';
 import { companyInitials } from '../utils';
 
