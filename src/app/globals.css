@@ -7,10 +7,12 @@
   --card-foreground: 222 47% 11%;
   --popover: 0 0% 100%;
   --popover-foreground: 222 47% 11%;
-  /* Deeper than the previous 221 83% 53% — matches the legacy hirepurchase app's
-     primary more closely, still the same blue family (single source of truth for
-     sidebar/topbar/stat-card accents). */
-  --primary: 222 84% 35%;
+  /* Tailwind blue-600. The legacy hirepurchase app DECLARES a deeper 222 84% 35%
+     primary, but never maps it into Tailwind's theme (it has no @theme block), so
+     that value never renders — every accent legacy actually shows (sidebar
+     highlight, avatars, logo badge, tab underline) is a hardcoded blue-600.
+     This is that colour, set once, so HP-Lite looks the way legacy looks. */
+  --primary: 221 83% 53%;
   --primary-foreground: 210 40% 98%;
   --secondary: 210 16% 93%;
   --secondary-foreground: 222 47% 20%;
@@ -22,7 +24,7 @@
   --destructive-foreground: 210 40% 98%;
   --border: 214 20% 88%;
   --input: 214 20% 88%;
-  --ring: 222 84% 35%;
+  --ring: 221 83% 53%;
   /* Rounded, human-app feel (legacy hirepurchase reference) — was 0rem (deliberately
      square, matching a different reference app) earlier this project. */
   --radius: 0.75rem;
@@ -32,7 +34,7 @@
   --sidebar-border: 215 25% 20%;
   --sidebar-text: 215 20% 65%;
   --sidebar-text-active: 0 0% 100%;
-  --sidebar-active-bg: 222 84% 35%;
+  --sidebar-active-bg: 221 83% 53%;
   --sidebar-hover-bg: 215 25% 20%;
 
   /* Topbar */
@@ -61,9 +63,6 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 0.25rem);
-  --radius-sm: calc(var(--radius) - 0.5rem);
   --font-sans: var(--font-inter), "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-heading: var(--font-jakarta), var(--font-inter), system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;

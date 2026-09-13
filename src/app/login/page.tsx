@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, AlertCircle, Shield } from 'lucide-react';
@@ -51,7 +52,7 @@ export default function LoginPage() {
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-300 mb-3">
               Hire Purchase Management
             </p>
-            <h1 className="text-3xl font-black leading-tight mb-3">
+            <h1 className="text-3xl font-black leading-tight mb-3 whitespace-pre-line">
               Finance devices.{'\n'}Manage contracts.{'\n'}Stay in control.
             </h1>
             <p className="text-white/70 text-sm leading-relaxed">
@@ -154,8 +155,10 @@ export default function LoginPage() {
               </button>
             </form>
 
-            <div className="mt-6 pt-5 border-t border-gray-100 flex items-center justify-between">
-              <span className="text-xs text-gray-300">Seeded password: Passw0rd!123</span>
+            <div className="mt-6 pt-5 border-t border-gray-100 flex items-center justify-between gap-3">
+              <Link href="/portal/login" className="text-xs text-gray-500 hover:text-primary transition-colors">
+                Customer? Sign in here &rarr;
+              </Link>
               <p className="text-xs text-gray-300">Staff access only</p>
             </div>
           </div>

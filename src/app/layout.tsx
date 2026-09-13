@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, Plus_Jakarta_Sans, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { InstallAppButton } from "@/components/shared/InstallAppButton";
 import { getOrgSettings } from "@/lib/services/orgSettingsService";
 import { APP_NAME } from "@/lib/constants/branding";
 
@@ -42,6 +43,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         {children}
         <Toaster />
+        {/* Above the mobile tab bar on phones (bottom-20), in the corner on desktop.
+            Legacy used bottom-4 everywhere, which covered its own "More" tab. */}
+        <div className="fixed bottom-20 right-4 z-40 lg:bottom-4">
+          <InstallAppButton />
+        </div>
       </body>
     </html>
   );

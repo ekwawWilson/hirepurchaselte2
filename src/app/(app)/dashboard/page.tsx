@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Users, FileText, Banknote, AlertCircle, Plus, Warehouse } from 'lucide-react';
+import { AlertCircle, ArrowRight, Banknote, ChevronRight, FileText, Plus, Warehouse } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
-import { formatCurrency } from '@/lib/utils';
+import { useAuthStore } from '@/lib/authStore';
+import { formatCurrency, formatDate, contractTypeLabel, getStatusColor, cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
 
 interface DashboardSummary {
   todayCashMinor: number;
@@ -14,6 +16,18 @@ interface DashboardSummary {
   stockAvailable: number;
 }
 
+interface RecentContract {
+  id: string;
+  contractNumber: string;
+  contractType: string;
+  status: string;
+  totalPaidMinor: number;
+  createdAt: string;
+  customer: { firstName: string; lastName: string };
+  product: { name: string } | null;
+}
+
+/** Legacy's stat card: label with a tinted icon chip to its right, the figure below. */
 function StatCard({
   title, value, icon: Icon, iconClass, iconBg, subtitle, href, highlight,
 }: {
@@ -23,43 +37,72 @@ function StatCard({
   return (
     <Link
       href={href}
-      className="flex min-w-0 flex-col gap-3 bg-white shadow-sm ring-1 ring-black/5 p-5 hover:shadow-md hover:-translate-y-px transition-all"
+      className={cn(
+        'flex min-w-0 flex-col gap-3 rounded-xl border bg-white p-4 transition-all hover:shadow-md hover:-translate-y-px',
+        highlight ? 'border-red-200 ring-1 ring-red-100' : 'border-gray-100',
+      )}
     >
-      <div className={`flex h-9 w-9 shrink-0 items-center justify-center ${iconBg}`}>
-        <Icon className={`h-4.5 w-4.5 ${iconClass}`} strokeWidth={1.75} />
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">{title}</span>
+        <div className={cn('p-1.5 sm:p-2 rounded-lg shrink-0', iconBg)}>
+          <Icon className={cn('h-4 w-4 sm:h-5 sm:w-5', iconClass)} />
+        </div>
       </div>
-      <p className={`text-xl sm:text-2xl font-bold tracking-tight break-words ${highlight ? 'text-red-600' : 'text-gray-900'}`}>{value}</p>
-      <p className="text-xs font-medium text-gray-500 -mt-2">{title}</p>
-      {subtitle && <p className="text-xs text-gray-400 border-t border-gray-100 pt-2.5 truncate">{subtitle}</p>}
+      <div className="min-w-0">
+        <p className={cn('truncate text-lg sm:text-2xl font-bold', highlight ? 'text-red-600' : 'text-gray-900')} title={value}>
+          {value}
+        </p>
+        {subtitle && <p className="text-xs text-gray-400 mt-0.5 truncate">{subtitle}</p>}
+      </div>
     </Link>
   );
 }
 
-function QuickAction({
-  href, label, description, colorClass, labelClass, descClass, icon,
-}: {
-  href: string; label: string; description: string; colorClass: string; labelClass: string; descClass: string; icon: React.ReactNode;
+/** Legacy's quick action: a tinted card with a plus, a title and a line of detail. */
+function QuickAction({ href, label, description, tone }: {
+  href: string; label: string; description: string; tone: 'blue' | 'emerald' | 'purple';
 }) {
+  const tones = {
+    blue: { card: 'bg-blue-50/80 border-blue-100 hover:bg-blue-50', title: 'text-blue-900', text: 'text-blue-600' },
+    emerald: { card: 'bg-emerald-50/80 border-emerald-100 hover:bg-emerald-50', title: 'text-emerald-900', text: 'text-emerald-600' },
+    purple: { card: 'bg-purple-50/80 border-purple-100 hover:bg-purple-50', title: 'text-purple-900', text: 'text-purple-600' },
+  }[tone];
+
   return (
-    <Link href={href} className={`flex items-center gap-3 p-4 shadow-sm ring-1 ring-black/5 transition-colors ${colorClass}`}>
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center bg-white/70">{icon}</div>
-      <div className="min-w-0">
-        <p className={`text-sm font-semibold ${labelClass}`}>{label}</p>
-        <p className={`text-xs ${descClass}`}>{description}</p>
+    <Link href={href} className={cn('group flex items-center gap-4 rounded-xl border p-4 transition-colors', tones.card)}>
+      <Plus className={cn('h-5 w-5 shrink-0', tones.text)} />
+      <div className="min-w-0 flex-1">
+        <p className={cn('text-sm font-semibold truncate', tones.title)}>{label}</p>
+        <p className={cn('text-xs truncate', tones.text)}>{description}</p>
       </div>
+      <ChevronRight className="h-4 w-4 text-gray-400 shrink-0 transition-transform group-hover:translate-x-0.5" />
     </Link>
   );
 }
 
 export default function DashboardPage() {
+  const canViewContracts = useAuthStore((s) => s.hasPermission('contract.view'));
   const [stats, setStats] = useState<DashboardSummary | null>(null);
+  const [recent, setRecent] = useState<RecentContract[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function load() {
+    setError(null);
     api.get<DashboardSummary>('/dashboard')
       .then(setStats)
       .catch((e) => setError(e instanceof ApiError ? e.message : 'Could not load dashboard statistics'));
+  }
+
+  useEffect(() => {
+    load();
   }, []);
+
+  useEffect(() => {
+    if (!canViewContracts) return;
+    api.get<{ contracts: RecentContract[] }>('/contracts')
+      .then((r) => setRecent(r.contracts.slice(0, 5)))
+      .catch(() => setRecent([]));
+  }, [canViewContracts]);
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -69,9 +112,10 @@ export default function DashboardPage() {
       </div>
 
       {error && (
-        <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200">
-          <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-red-700">{error}</p>
+        <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
+          <AlertCircle className="h-5 w-5 text-red-500 shrink-0" />
+          <p className="flex-1 text-sm text-red-700">{error}</p>
+          <button onClick={load} className="text-sm font-medium text-red-700 underline hover:text-red-900">Retry</button>
         </div>
       )}
 
@@ -82,74 +126,80 @@ export default function DashboardPage() {
       )}
 
       {stats && (
-        <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            <StatCard title="Today's Cash" value={formatCurrency(stats.todayCashMinor)} icon={Banknote} iconClass="text-primary" iconBg="bg-blue-50" href="/reports/daily-cash" />
-            <StatCard
-              title="Today's Contracts"
-              value={String(stats.todayContractsCount)}
-              subtitle={formatCurrency(stats.todayContractsValueMinor)}
-              icon={FileText}
-              iconClass="text-emerald-600"
-              iconBg="bg-emerald-50"
-              href="/contracts"
-            />
-            <StatCard
-              title="Arrears"
-              value={formatCurrency(stats.arrearsTotalMinor)}
-              icon={AlertCircle}
-              iconClass="text-red-600"
-              iconBg="bg-red-50"
-              href="/reports"
-              highlight={stats.arrearsTotalMinor > 0}
-            />
-            <StatCard title="Items in Stock" value={String(stats.stockAvailable)} icon={Warehouse} iconClass="text-purple-600" iconBg="bg-purple-50" href="/inventory" />
-          </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <StatCard title="Today's Cash" value={formatCurrency(stats.todayCashMinor)} icon={Banknote} iconClass="text-blue-600" iconBg="bg-blue-50" href="/reports/daily-cash" />
+          <StatCard
+            title="Today's Contracts"
+            value={String(stats.todayContractsCount)}
+            subtitle={formatCurrency(stats.todayContractsValueMinor)}
+            icon={FileText}
+            iconClass="text-emerald-600"
+            iconBg="bg-emerald-50"
+            href="/contracts"
+          />
+          <StatCard
+            title="Arrears"
+            value={formatCurrency(stats.arrearsTotalMinor)}
+            icon={AlertCircle}
+            iconClass="text-red-600"
+            iconBg="bg-red-50"
+            href="/reports/arrears-ageing"
+            highlight={stats.arrearsTotalMinor > 0}
+          />
+          <StatCard title="Items in Stock" value={String(stats.stockAvailable)} icon={Warehouse} iconClass="text-purple-600" iconBg="bg-purple-50" href="/inventory" />
+        </div>
+      )}
 
-          <div>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <QuickAction
-                href="/customers"
-                label="Register Customer"
-                description="Create account & membership ID"
-                colorClass="bg-blue-50 hover:bg-blue-100"
-                labelClass="text-blue-900"
-                descClass="text-primary"
-                icon={<Plus className="h-5 w-5 text-primary" />}
-              />
-              <QuickAction
-                href="/contracts"
-                label="New Contract"
-                description="Start a hire purchase contract"
-                colorClass="bg-emerald-50 hover:bg-emerald-100"
-                labelClass="text-emerald-900"
-                descClass="text-emerald-600"
-                icon={<Plus className="h-5 w-5 text-emerald-600" />}
-              />
-              <QuickAction
-                href="/products"
-                label="Add Product"
-                description="Add products to the catalogue"
-                colorClass="bg-purple-50 hover:bg-purple-100"
-                labelClass="text-purple-900"
-                descClass="text-purple-600"
-                icon={<Plus className="h-5 w-5 text-purple-600" />}
-              />
-            </div>
-          </div>
+      <section>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <QuickAction href="/customers" label="Register Customer" description="Create account & membership ID" tone="blue" />
+          <QuickAction href="/contracts" label="New Contract" description="Start a hire purchase contract" tone="emerald" />
+          <QuickAction href="/products" label="Add Product" description="Add products to the catalogue" tone="purple" />
+        </div>
+      </section>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Link href="/customers" className="flex items-center gap-3 bg-white shadow-sm ring-1 ring-black/5 p-4 hover:bg-gray-50 transition-colors">
-              <Users className="h-5 w-5 text-gray-400" />
-              <span className="text-sm font-medium text-gray-700">Browse customers</span>
-            </Link>
-            <Link href="/ussd-simulator" className="flex items-center gap-3 bg-white shadow-sm ring-1 ring-black/5 p-4 hover:bg-gray-50 transition-colors">
-              <Banknote className="h-5 w-5 text-gray-400" />
-              <span className="text-sm font-medium text-gray-700">Try the USSD payment simulator</span>
+      {canViewContracts && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Recent Contracts</h2>
+            <Link href="/contracts" className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+              View all <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
-        </>
+
+          <div className="rounded-2xl border border-white/60 bg-white/90 shadow-[0_20px_45px_-22px_rgba(15,23,42,0.35)] overflow-hidden">
+            {recent === null ? (
+              <div className="flex h-32 items-center justify-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+              </div>
+            ) : recent.length === 0 ? (
+              <div className="py-12 text-center">
+                <FileText className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No contracts yet</p>
+                <p className="text-xs text-gray-400 mt-0.5">Recent contracts will appear here</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {recent.map((c) => (
+                  <Link key={c.id} href={`/contracts/${c.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50/80 transition-colors">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{c.customer.firstName} {c.customer.lastName}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        <span className="font-mono">{c.contractNumber}</span> · {c.product?.name ?? contractTypeLabel(c.contractType)} · {formatDate(c.createdAt)}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-sm font-semibold text-gray-900">{formatCurrency(c.totalPaidMinor)}</p>
+                      <Badge className={getStatusColor(c.status)}>{c.status.replace(/_/g, ' ')}</Badge>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
       )}
     </div>
   );

@@ -1,14 +1,13 @@
 import type { LucideIcon } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 const COLOR_MAP = {
-  blue: 'bg-blue-100 text-primary',
-  emerald: 'bg-emerald-100 text-emerald-600',
-  amber: 'bg-amber-100 text-amber-600',
-  red: 'bg-red-100 text-red-600',
-  purple: 'bg-purple-100 text-purple-600',
-  gray: 'bg-gray-100 text-gray-600',
+  blue: 'bg-blue-50 text-blue-600',
+  emerald: 'bg-emerald-50 text-emerald-600',
+  amber: 'bg-amber-50 text-amber-600',
+  red: 'bg-red-50 text-red-600',
+  purple: 'bg-purple-50 text-purple-600',
+  gray: 'bg-gray-50 text-gray-600',
 } as const;
 
 /**
@@ -26,17 +25,17 @@ export function StatTile({
   caption?: string;
 }) {
   return (
-    <Card>
-      <CardContent className="p-4 flex items-start gap-3">
-        <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center shrink-0', COLOR_MAP[color])}>
-          <Icon className="h-5 w-5" />
+    <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-gray-100 bg-white p-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">{label}</span>
+        <div className={cn('p-1.5 sm:p-2 rounded-lg shrink-0', COLOR_MAP[color])}>
+          <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
         </div>
-        <div className="min-w-0">
-          <p className="text-xs text-gray-500">{label}</p>
-          <p className="text-base sm:text-lg font-semibold text-gray-900 truncate">{value}</p>
-          {caption && <p className="text-xs text-gray-400 mt-0.5">{caption}</p>}
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-base sm:text-xl font-bold text-gray-900" title={value}>{value}</p>
+        {caption && <p className="text-xs text-gray-400 mt-0.5 truncate">{caption}</p>}
+      </div>
+    </div>
   );
 }
