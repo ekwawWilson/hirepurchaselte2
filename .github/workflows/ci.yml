@@ -16,7 +16,6 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/${{ github.repository_owner }}/hplite
 
 jobs:
   check:
@@ -78,6 +77,12 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      # Registry names must be lowercase, and the owner (ekwawWilson) is not —
+      # workflow expressions have no lowercase function, so do it in shell.
+      - name: Image name
+        run: echo "IMAGE=${REGISTRY}/${OWNER,,}/hplite" >> "$GITHUB_ENV"
+        env:
+          OWNER: ${{ github.repository_owner }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
