@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { CUSTOMER_DETAIL_SELECT } from '@/lib/services/customerService';
 import { prisma } from '@/lib/db/prisma';
-import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
+import { requireAuth, requirePermission, assertBranchAccess, assertOwnRecordAccess } from '@/lib/auth/rbac';
 import { getDeviceLoanState } from '@/lib/services/paymentService';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,6 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   });
   if (!contract) return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
   if (!assertBranchAccess(auth.user, contract.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!assertOwnRecordAccess(auth.user, contract.createdById)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   // SAVE_TO_OWN has no target to overpay against — credit only applies to
   // contracts with a real totalPayableMinor (contractService.ts).

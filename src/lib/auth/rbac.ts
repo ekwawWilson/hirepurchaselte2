@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '../db/prisma';
 import { verifyToken } from './jwt';
-import type { Permission, RoleName } from '../constants/rbac';
+import { OWN_SCOPED_ROLES, type Permission, type RoleName } from '../constants/rbac';
 import type { AuthenticatedUser } from './types';
 
 /**
@@ -75,4 +75,20 @@ export function branchScopeWhere(user: AuthenticatedUser): { branchId?: string }
 export function assertBranchAccess(user: AuthenticatedUser, resourceBranchId: string): boolean {
   if (!user.branchId) return true;
   return user.branchId === resourceBranchId;
+}
+
+/**
+ * On top of branch scoping, an OWN_SCOPED_ROLES user (currently just AGENT)
+ * is further restricted to records they themselves created — see that
+ * constant's comment. Spread alongside branchScopeWhere: `{ ...branchScopeWhere(user), ...ownRecordsWhere(user) }`.
+ * Empty for every other role.
+ */
+export function ownRecordsWhere(user: AuthenticatedUser): { createdById?: string } {
+  return OWN_SCOPED_ROLES.includes(user.roleName) ? { createdById: user.id } : {};
+}
+
+/** Single-record equivalent of ownRecordsWhere — fails closed if the record wasn't created by this user. */
+export function assertOwnRecordAccess(user: AuthenticatedUser, resourceCreatedById: string): boolean {
+  if (!OWN_SCOPED_ROLES.includes(user.roleName)) return true;
+  return user.id === resourceCreatedById;
 }

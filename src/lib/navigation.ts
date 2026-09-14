@@ -13,6 +13,8 @@ import {
   ShieldCheck,
   Building2,
   Settings,
+  ClipboardCheck,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from './authStore';
@@ -39,7 +41,11 @@ export const navGroups: NavGroup[] = [
   {
     label: 'Overview',
     items: [
-      { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, perms: ['report.view.branch', 'report.view.all'] },
+      // contract.create is also here (not just report.view.*) so an AGENT or
+      // SALES user — neither holds a report permission — still gets a
+      // Dashboard link; the page itself renders a portfolio-style summary
+      // for anyone without report access instead of the branch-wide one.
+      { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, perms: ['report.view.branch', 'report.view.all', 'contract.create'] },
     ],
   },
   {
@@ -52,6 +58,9 @@ export const navGroups: NavGroup[] = [
     label: 'Contracts & Payments',
     items: [
       { name: 'Contracts', href: '/contracts', icon: FileText, perms: ['contract.view'] },
+      // The Agent module: contracts an AGENT submitted, waiting for a
+      // BRANCH_MANAGER/ADMIN/SUPER_ADMIN to approve or send back.
+      { name: 'Approvals', href: '/contract-approvals', icon: ClipboardCheck, perms: ['contract.approve'] },
     ],
   },
   {
@@ -66,6 +75,16 @@ export const navGroups: NavGroup[] = [
     label: 'Reports',
     items: [
       { name: 'Reports', href: '/reports', icon: BarChart3, perms: ['report.view.branch', 'report.view.all'] },
+    ],
+  },
+  {
+    // The Agent module's commission/deposit-custody ledger — an AGENT's own
+    // page and an approver's all-agents page are two different perms/routes,
+    // so at most one of the two items below is ever visible to a given user.
+    label: 'Agent Ledger',
+    items: [
+      { name: 'My Deposits', href: '/my-deposits', icon: Wallet, perms: ['agent.ledger.remit'] },
+      { name: 'Agent Ledger', href: '/agent-ledger', icon: Wallet, perms: ['agent.ledger.manage'] },
     ],
   },
   {

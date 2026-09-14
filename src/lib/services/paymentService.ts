@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { generateTransactionRef, generateReceiptNumber } from '../utils/idGenerators';
-import { TERMINAL_CONTRACT_STATUSES, defaultCutoffDate } from '../constants/contracts';
+import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES, defaultCutoffDate } from '../constants/contracts';
+import { recordAgentDepositIfApplicable } from './agentLedgerService';
 import { applyStockMovement } from './inventoryService';
 import { queueSms, deliverQueuedSms } from './smsService';
 
@@ -263,6 +264,11 @@ export async function postPayment(params: PostPaymentParams) {
     if (TERMINAL_CONTRACT_STATUSES.includes(contract.status)) {
       throw new PaymentError(`Cannot post a payment to a contract in status ${contract.status}`);
     }
+    // Awaiting or sent back for approval — the Agent module (schema.prisma's
+    // Contract comment): nothing has been agreed yet, so no money can move.
+    if (PRE_APPROVAL_STATUSES.includes(contract.status)) {
+      throw new PaymentError(`Cannot post a payment to a contract awaiting approval (status ${contract.status})`);
+    }
     if (contract.contractType === 'DEVICE_LOAN') {
       throw new PaymentError('DEVICE_LOAN payments must be posted via postDeviceLoanPayment — pay interest or the full loan amount, not a free-form amount');
     }
@@ -302,6 +308,16 @@ export async function postPayment(params: PostPaymentParams) {
     // allocation here doesn't affect correctness, just avoids a pointless no-op query.
     if (params.entryType === 'INSTALMENT_PAYMENT' && contract.contractType !== 'SAVE_TO_OWN') {
       await allocatePayment(tx, payment.id, contract.id, payment.amountMinor);
+    }
+
+    // The Agent module (schema.prisma's Contract comment): a deposit
+    // collected in cash by an AGENT is money in THEIR hand, not the till's —
+    // recordAgentDepositIfApplicable is itself a no-op for every other
+    // channel/creator, where there is no such custody question at all.
+    if (params.entryType === 'DEPOSIT' && params.channel === 'CASH') {
+      await recordAgentDepositIfApplicable(tx, {
+        contractId: contract.id, agentId: contract.createdById, depositAmountMinor: payment.amountMinor,
+      });
     }
 
     await recomputeContract(tx, contract.id);
@@ -377,7 +393,7 @@ export async function postWithdrawal(params: PostWithdrawalParams) {
     if (contract.contractType !== 'SAVE_TO_OWN') {
       throw new PaymentError('Withdrawals are only available on Save to Own contracts');
     }
-    if (TERMINAL_CONTRACT_STATUSES.includes(contract.status)) {
+    if (TERMINAL_CONTRACT_STATUSES.includes(contract.status) || PRE_APPROVAL_STATUSES.includes(contract.status)) {
       throw new PaymentError(`Cannot withdraw from a contract in status ${contract.status}`);
     }
     if (params.amountMinor > contract.totalPaidMinor) {
@@ -505,7 +521,7 @@ export async function postDeviceLoanPayment(params: PostDeviceLoanPaymentParams)
   const result = await prisma.$transaction(async (tx) => {
     const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
     if (contract.contractType !== 'DEVICE_LOAN') throw new PaymentError('Only DEVICE_LOAN contracts accept this payment');
-    if (TERMINAL_CONTRACT_STATUSES.includes(contract.status)) {
+    if (TERMINAL_CONTRACT_STATUSES.includes(contract.status) || PRE_APPROVAL_STATUSES.includes(contract.status)) {
       throw new PaymentError(`Cannot post a payment to a contract in status ${contract.status}`);
     }
 

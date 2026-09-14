@@ -9,6 +9,7 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../db/prisma';
 import { phoneVariants } from './hubtelClient';
 import { getDeviceLoanState } from './paymentService';
+import { PRE_APPROVAL_STATUSES } from '../constants/contracts';
 
 export class PortalError extends Error {}
 
@@ -86,7 +87,10 @@ export async function setCustomerPassword(params: { customerId: string; currentP
  */
 export async function portalContract(customerId: string, contractId: string) {
   const contract = await prisma.contract.findFirst({
-    where: { id: contractId, customerId },
+    // Not yet approved (the Agent module) — the customer hasn't agreed final
+    // terms yet (a revision could still change them), so it isn't theirs to
+    // see. Reads as "not found", the same as any other contract that isn't theirs.
+    where: { id: contractId, customerId, status: { notIn: PRE_APPROVAL_STATUSES } },
     include: {
       product: { select: { name: true } },
       inventoryItem: { select: { serialNumber: true } },
@@ -106,7 +110,7 @@ export async function portalContract(customerId: string, contractId: string) {
 
 export async function portalContracts(customerId: string) {
   const contracts = await prisma.contract.findMany({
-    where: { customerId },
+    where: { customerId, status: { notIn: PRE_APPROVAL_STATUSES } },
     include: { product: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -120,7 +124,7 @@ export async function portalContracts(customerId: string) {
 /** The instalments a customer still owes, soonest first, across every contract. */
 export async function portalUpcomingInstalments(customerId: string, take = 10) {
   return prisma.instalment.findMany({
-    where: { contract: { customerId }, status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] } },
+    where: { contract: { customerId, status: { notIn: PRE_APPROVAL_STATUSES } }, status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] } },
     orderBy: { dueDate: 'asc' },
     take,
     include: { contract: { select: { id: true, contractNumber: true, contractType: true } } },

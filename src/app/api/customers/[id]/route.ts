@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
-import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
+import { requireAuth, requirePermission, assertBranchAccess, assertOwnRecordAccess } from '@/lib/auth/rbac';
 import {
   validateAtLeastOnePhone, assertPhonesNotTaken, validateCustomerPhoto, CUSTOMER_DETAIL_SELECT,
 } from '@/lib/services/customerService';
@@ -15,6 +15,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const customer = await prisma.customer.findUnique({ where: { id }, select: CUSTOMER_DETAIL_SELECT });
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
   if (!assertBranchAccess(auth.user, customer.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!assertOwnRecordAccess(auth.user, customer.createdById)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   return NextResponse.json({ customer });
 }
@@ -35,6 +36,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const existing = await prisma.customer.findUnique({ where: { id } });
   if (!existing) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
   if (!assertBranchAccess(auth.user, existing.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!assertOwnRecordAccess(auth.user, existing.createdById)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const {
     firstName, lastName, phone, phone2, phone3, email, address, occupation, workAddress, nationalId, dateOfBirth,

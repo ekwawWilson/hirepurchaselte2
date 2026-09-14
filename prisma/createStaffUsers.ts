@@ -30,6 +30,7 @@ const STAFF: Record<RoleName, { local: string; firstName: string; lastName: stri
   BRANCH_MANAGER: { local: 'manager', firstName: 'Branch', lastName: 'Manager' },
   CASHIER: { local: 'cashier', firstName: 'Front', lastName: 'Cashier' },
   SALES: { local: 'sales', firstName: 'Sales', lastName: 'Rep' },
+  AGENT: { local: 'agent', firstName: 'Field', lastName: 'Agent' },
   STORE_KEEPER: { local: 'storekeeper', firstName: 'Store', lastName: 'Keeper' },
   AUDITOR: { local: 'auditor', firstName: 'System', lastName: 'Auditor' },
 };

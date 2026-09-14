@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma';
 import { CUSTOMER_SUMMARY_SELECT } from './customerService';
 import { getDeviceLoanState } from './paymentService';
+import { PRE_APPROVAL_STATUSES } from '../constants/contracts';
 
 /** Optional branch scoping (server-applied only, per RBAC — never client-trusted beyond what the caller already resolved). */
 type Scope = { branchId?: string };
@@ -215,7 +216,9 @@ export async function devicesPendingReleaseReport(scope: Scope) {
 // postDeviceLoanPayment validates against.
 export async function loanBookReport(scope: Scope) {
   const contracts = await prisma.contract.findMany({
-    where: { contractType: 'DEVICE_LOAN', ...(scope.branchId && { branchId: scope.branchId }) },
+    // Not yet approved (the Agent module) — nothing has actually been
+    // disbursed yet, so it isn't a real loan-book entry.
+    where: { contractType: 'DEVICE_LOAN', status: { notIn: PRE_APPROVAL_STATUSES }, ...(scope.branchId && { branchId: scope.branchId }) },
     include: { customer: true },
   });
 

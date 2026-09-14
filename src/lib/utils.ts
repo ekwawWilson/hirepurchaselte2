@@ -46,6 +46,10 @@ export function getStatusColor(status: string): string {
     CANCELLED: "bg-gray-100 text-gray-600 ring-1 ring-gray-200/60",
     DEFAULTED: "bg-red-50 text-red-700 ring-1 ring-red-200/60",
     WRITTEN_OFF: "bg-slate-800 text-slate-100 ring-1 ring-slate-700",
+    // The Agent module (docs/01-plan.md) — a contract an agent submitted,
+    // before or after being sent back for changes.
+    PENDING_APPROVAL: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/60",
+    REVISION_REQUESTED: "bg-orange-50 text-orange-700 ring-1 ring-orange-200/60",
     // Instalment / payment statuses
     PENDING: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/60",
     PARTIAL: "bg-orange-50 text-orange-700 ring-1 ring-orange-200/60",

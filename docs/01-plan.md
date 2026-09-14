@@ -173,9 +173,9 @@ Both channels (cash, USSD) call the same `post_payment` service, matching missio
 
 ## 7. RBAC — roles, permissions, branch scoping
 
-Roles (seeded, per mission §11): `SUPER_ADMIN`, `ADMIN`, `BRANCH_MANAGER`, `CASHIER`, `SALES`, `STORE_KEEPER`, `AUDITOR`.
+Roles (seeded, per mission §11, plus `AGENT` — see §22): `SUPER_ADMIN`, `ADMIN`, `BRANCH_MANAGER`, `CASHIER`, `SALES`, `AGENT`, `STORE_KEEPER`, `AUDITOR`.
 
-Permission strings (dot notation, extending mission §11's examples): `customer.create`, `customer.view`, `customer.update`, `contract.create`, `contract.view`, `contract.cancel`, `contract.writeoff`, `contract.reschedule`, `payment.cash.record`, `payment.reverse`, `payment.view`, `pricechart.view`, `pricechart.edit`, `inventory.receive`, `inventory.issue`, `inventory.transfer`, `inventory.adjust`, `inventory.view`, `report.view.branch`, `report.view.all`, `report.export`, `user.manage`, `role.manage`, `audit.view`.
+Permission strings (dot notation, extending mission §11's examples): `customer.create`, `customer.view`, `customer.update`, `contract.create`, `contract.view`, `contract.cancel`, `contract.writeoff`, `contract.reschedule`, `contract.approve`, `payment.cash.record`, `payment.reverse`, `payment.view`, `pricechart.view`, `pricechart.edit`, `inventory.receive`, `inventory.issue`, `inventory.transfer`, `inventory.adjust`, `inventory.view`, `report.view.branch`, `report.view.all`, `report.export`, `user.manage`, `role.manage`, `audit.view`, `settings.manage`, `agent.ledger.view`, `agent.ledger.remit`, `agent.ledger.manage`.
 
 Enforcement: role→permission only (no per-user overrides, matching what worked in legacy), OR-semantics (`requireAnyPermission`), `SUPER_ADMIN` unconditional bypass, every check server-side at the top of each Route Handler via `src/lib/auth/rbac.ts` helpers (`requireAuth`/`requirePermission`) — never trust a client-supplied branch/user filter.
 
@@ -284,3 +284,20 @@ Corrected a fundamental misreading of what Device Loan means: it isn't "hand ove
 - Exact CSV import column schema for price chart bulk-import (mission §6) — design when building that screen, not upfront.
 - Whether `payment_allocations` needs a `FEE` target distinct from `PENALTY` for Type C (mission says "penalties/fees → interest → principal") — likely yes, decide when implementing Type C allocation.
 - Receipt PDF/print template styling — deferred to the cash-payments milestone.
+
+---
+
+## 22. Agent module (ported from the legacy hirepurchase app's own AGENT role)
+
+An `AGENT` role added alongside `SALES` (same permission shape: `customer.create`, `customer.view`, `contract.create`, `contract.view`, `pricechart.view`, `inventory.view`), plus two differences that make it genuinely a distinct role rather than a renamed `SALES`:
+
+**Own-scoped, not branch-scoped visibility.** Every other branch-scoped role (`BRANCH_MANAGER`, `CASHIER`, `SALES`, `STORE_KEEPER`) sees the whole branch's customers/contracts. `OWN_SCOPED_ROLES` (`constants/rbac.ts`, currently just `AGENT`) restricts further, to only records the acting user themselves created — `ownRecordsWhere`/`assertOwnRecordAccess` (`auth/rbac.ts`), layered on top of the existing `branchScopeWhere`/`assertBranchAccess` at every customer/contract read. Matches the legacy manual's own rule verbatim: "you will only ever see contracts you personally created."
+
+**Contracts require approval.** A contract created by an `AGENT` user (`requiresApproval`, computed server-side from the acting user's role — never client-supplied) starts at `PENDING_APPROVAL` instead of its type's usual first status, regardless of type — two new statuses, `PENDING_APPROVAL` and `REVISION_REQUESTED` (`PRE_APPROVAL_STATUSES`), prepended to every type's state machine in §5's `CONTRACT_STATUSES_BY_TYPE`. Neither status accepts a payment (`postPayment`/`postWithdrawal`/`postDeviceLoanPayment` all refuse them), is visible to the customer portal or USSD, or fires the `contract.activated` SMS. A new permission, `contract.approve` (held by `BRANCH_MANAGER`/`ADMIN`/`SUPER_ADMIN`), gates three actions:
+- **Approve** — jumps straight to the type's real first status (`INITIAL_STATUS_BY_TYPE`: `ACTIVE` for `SAVE_TO_OWN`/`DEVICE_LOAN`, `PENDING_DEPOSIT` for `DEPOSIT_INSTALMENT`), exactly as if a non-agent had created it — the withheld SMS fires now, and a `DEVICE_LOAN`'s disbursement audit entry is only logged here, never at submission.
+- **Request revision** — `REVISION_REQUESTED` + a required reason.
+- (**Reject outright** is not a separate action — `cancelContract`/`writeOffContract` already accept both pre-approval statuses as a source state, doubling as an approver's "no" with no revision cycle needed.)
+
+The agent who created a `REVISION_REQUESTED` contract (and only them — `assertOwnRecordAccess`) can edit its terms and resubmit (`resubmitContract`): back to `PENDING_APPROVAL`, reason cleared, and for `DEPOSIT_INSTALMENT` the instalment schedule is rebuilt from scratch (safe — nothing on the old one can have been paid, since payments are refused on both pre-approval statuses).
+
+**Commission + deposit-custody ledger.** An agent who collects a `DEPOSIT_INSTALMENT` contract's deposit in cash is holding company money, separately from the fact that the deposit is already correctly recorded as paid on the contract itself. The moment such a deposit posts (`entryType: 'DEPOSIT'`, `channel: 'CASH'`, contract's creator has role `AGENT` — checked inside `postPayment`'s own transaction, so it can never desync from the payment it's derived from), an `AgentDepositLedger` row is created: `commissionAmountMinor` snapshotted from `CommissionSettings` (Settings > Agent commission, one fixed amount, editable by `settings.manage`) and clamped to the deposit itself, `amountOwedMinor = depositAmountMinor − commissionAmountMinor`. Deliberately **not** wired to an automated mobile-money remittance (no new parallel Hubtel integration, given money-correctness stakes and no way to test live callbacks here) — an agent instead *files* a remittance claim (`AgentRemittance`: amount, method, an optional self-reported reference) against a ledger entry, capped so pending+confirmed claims can never exceed what remains owed, and an approver (`agent.ledger.manage`: `BRANCH_MANAGER`/`ADMIN`/`SUPER_ADMIN`/`AUDITOR`) confirms or rejects it — only confirming ever touches the ledger's running total, flipping it to `SETTLED` once fully remitted.

@@ -211,11 +211,13 @@ export default function ContractsPage() {
     if (isSaveToOwn) {
       setSaving(true);
       try {
-        await api.post('/contracts', {
+        const { contract } = await api.post<{ contract: { status: string } }>('/contracts', {
           contractType, customerId, startDate,
           ...(selectedCustomer?.branchId && { branchId: selectedCustomer.branchId }),
         });
-        toast({ title: 'Savings account created' });
+        toast(contract.status === 'PENDING_APPROVAL'
+          ? { title: 'Submitted for approval', description: 'A manager or admin needs to approve this before it goes live.' }
+          : { title: 'Savings account created' });
         setShowForm(false);
         resetWizard();
         await loadContracts();
@@ -231,11 +233,13 @@ export default function ContractsPage() {
       if (!loanTermsValid) { toast({ title: 'Enter a positive loan amount', variant: 'destructive' }); return; }
       setSaving(true);
       try {
-        await api.post('/contracts', {
+        const { contract } = await api.post<{ contract: { status: string } }>('/contracts', {
           contractType, customerId, startDate, loanAmountMinor: parsedLoanAmount,
           ...(selectedCustomer?.branchId && { branchId: selectedCustomer.branchId }),
         });
-        toast({ title: 'Loan disbursed' });
+        toast(contract.status === 'PENDING_APPROVAL'
+          ? { title: 'Submitted for approval', description: 'Nothing is disbursed until a manager or admin approves it.' }
+          : { title: 'Loan disbursed' });
         setShowForm(false);
         resetWizard();
         await loadContracts();
@@ -256,7 +260,7 @@ export default function ContractsPage() {
     }
     setSaving(true);
     try {
-      await api.post('/contracts', {
+      const { contract } = await api.post<{ contract: { status: string } }>('/contracts', {
         contractType, customerId, inventoryItemId,
         totalPayableMinor: parsedTotalPrice, depositAmountMinor: parsedDeposit,
         termWeeks: parsedTermWeeks, paymentFrequency,
@@ -266,7 +270,9 @@ export default function ContractsPage() {
         ...(paymentMethod !== 'CUSTOMER_INITIATED' && { directDebitNetwork, directDebitMsisdn: directDebitMsisdn.trim() }),
         ...(selectedCustomer?.branchId && { branchId: selectedCustomer.branchId }),
       });
-      toast({ title: 'Contract created' });
+      toast(contract.status === 'PENDING_APPROVAL'
+        ? { title: 'Submitted for approval', description: 'A manager or admin needs to approve this before it goes live.' }
+        : { title: 'Contract created' });
       setShowForm(false);
       resetWizard();
       await loadContracts();

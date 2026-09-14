@@ -7,7 +7,7 @@
  *    every deploy, so editing them here would just be silently undone.
  *  - A custom role is fully self-service: create/edit/delete, with the DB
  *    as the only source of truth (never touched by syncRbac).
- *  - POST /api/users accepts any real role name now, not just the 7 built-in ones.
+ *  - POST /api/users accepts any real role name now, not just the 8 built-in ones.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { makeRequest, makeParams } from './helpers';
@@ -49,12 +49,12 @@ describe('Roles: custom role management', () => {
     expect(res.status).toBe(403);
   });
 
-  it('GET /api/roles lists the 7 system roles, each flagged isSystemRole', async () => {
+  it('GET /api/roles lists the 8 system roles, each flagged isSystemRole', async () => {
     const res = await rolesGET(makeRequest('GET', '/api/roles', { token: superAdmin }));
     expect(res.status).toBe(200);
     const { roles } = await res.json();
     const systemNames = roles.filter((r: { isSystemRole: boolean }) => r.isSystemRole).map((r: { name: string }) => r.name).sort();
-    expect(systemNames).toEqual(['ADMIN', 'AUDITOR', 'BRANCH_MANAGER', 'CASHIER', 'SALES', 'STORE_KEEPER', 'SUPER_ADMIN'].sort());
+    expect(systemNames).toEqual(['ADMIN', 'AGENT', 'AUDITOR', 'BRANCH_MANAGER', 'CASHIER', 'SALES', 'STORE_KEEPER', 'SUPER_ADMIN'].sort());
   });
 
   it('POST /api/roles requires role.manage specifically — ADMIN (which lacks it) gets 403', async () => {

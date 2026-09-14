@@ -53,11 +53,34 @@ export function defaultCutoffDate(now: Date = new Date()): Date {
 /** No further payments/status changes accepted once a contract reaches one of these. */
 export const TERMINAL_CONTRACT_STATUSES = ['COMPLETED', 'RELEASED', 'CANCELLED', 'WRITTEN_OFF'];
 
+/**
+ * A contract an AGENT created sits here before its real lifecycle even
+ * starts (contractService.createContract / the Agent module — see Contract's
+ * schema comment). Neither status accepts a payment (paymentService.ts) or is
+ * visible to the customer (customerPortalService.ts) or USSD. PENDING_APPROVAL
+ * is the initial state; an approver either approves it — it jumps straight to
+ * its type's real first status below — or sends it to REVISION_REQUESTED,
+ * which only the agent who created it can edit and resubmit
+ * (contractService.resubmitContract), returning it to PENDING_APPROVAL.
+ */
+export const PRE_APPROVAL_STATUSES = ['PENDING_APPROVAL', 'REVISION_REQUESTED'];
+
 /** docs/01-plan.md §5 — the allowed status per contract type. */
 export const CONTRACT_STATUSES_BY_TYPE: Record<ContractTypeName, string[]> = {
-  SAVE_TO_OWN: ['ACTIVE', 'COMPLETED', 'RELEASED', 'CANCELLED'],
-  DEPOSIT_INSTALMENT: ['PENDING_DEPOSIT', 'ACTIVE', 'COMPLETED', 'DEFAULTED', 'CANCELLED'],
-  DEVICE_LOAN: ['ACTIVE', 'COMPLETED', 'DEFAULTED', 'WRITTEN_OFF'],
+  SAVE_TO_OWN: [...PRE_APPROVAL_STATUSES, 'ACTIVE', 'COMPLETED', 'RELEASED', 'CANCELLED'],
+  DEPOSIT_INSTALMENT: [...PRE_APPROVAL_STATUSES, 'PENDING_DEPOSIT', 'ACTIVE', 'COMPLETED', 'DEFAULTED', 'CANCELLED'],
+  DEVICE_LOAN: [...PRE_APPROVAL_STATUSES, 'ACTIVE', 'COMPLETED', 'DEFAULTED', 'WRITTEN_OFF'],
+};
+
+/**
+ * The status a contract enters once approved (or immediately, for a
+ * non-agent creator, per contractService.createContract) — its type's first
+ * "real" lifecycle status, from CONTRACT_STATUSES_BY_TYPE above.
+ */
+export const INITIAL_STATUS_BY_TYPE: Record<ContractTypeName, string> = {
+  SAVE_TO_OWN: 'ACTIVE',
+  DEPOSIT_INSTALMENT: 'PENDING_DEPOSIT',
+  DEVICE_LOAN: 'ACTIVE',
 };
 
 /**

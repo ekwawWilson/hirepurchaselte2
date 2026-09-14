@@ -101,6 +101,11 @@ model User {
   loanSettingsUpdates       LoanSettings[]
   operatingSettingsUpdates  OperatingSettings[]
   contractTypeSettingsUpdates ContractTypeSettings[]
+  commissionSettingsUpdates CommissionSettings[]
+  contractsApproved         Contract[]          @relation("ContractApprovedBy")
+  agentLedgerEntries        AgentDepositLedger[] @relation("AgentLedgerAgent")
+  remittancesFiled          AgentRemittance[]   @relation("AgentRemittanceAgent")
+  remittancesConfirmed      AgentRemittance[]   @relation("AgentRemittanceConfirmedBy")
 
   @@map("users")
 }
@@ -362,6 +367,21 @@ model Contract {
   cancelReason   String?
   writeOffReason String?
 
+  // The agent-approval workflow (docs/01-plan.md's Agent module): a contract
+  // created by an AGENT-role user starts life at PENDING_APPROVAL instead of
+  // its type's usual first status (see CONTRACT_STATUSES_BY_TYPE /
+  // contractService.createContract) and only enters its real lifecycle once
+  // approvedById is set. An approver may instead send it to
+  // REVISION_REQUESTED with revisionReason filled in; the agent edits and
+  // resubmits (contractService.resubmitContract), which clears
+  // revisionReason and returns it to PENDING_APPROVAL. Null for every
+  // contract not created by an agent — those skip this state machine
+  // entirely and start at their real initial status straight away.
+  submittedForApprovalAt DateTime?
+  revisionReason         String?
+  approvedById           String?
+  approvedAt             DateTime?
+
   createdById String
   updatedById String?
   createdAt   DateTime @default(now())
@@ -375,6 +395,7 @@ model Contract {
   hubtelPreapproval HubtelPreapproval? @relation(fields: [hubtelPreapprovalId], references: [id])
   createdBy         User               @relation("ContractCreatedBy", fields: [createdById], references: [id])
   updatedBy         User?              @relation("ContractUpdatedBy", fields: [updatedById], references: [id])
+  approvedBy        User?              @relation("ContractApprovedBy", fields: [approvedById], references: [id])
 
   instalments        Instalment[]
   payments           Payment[]
@@ -382,6 +403,7 @@ model Contract {
   hubtelTransactions HubtelTransaction[]
   ussdSessions       UssdSession[]
   smsMessages        SmsMessage[]
+  agentDepositLedger AgentDepositLedger?
 
   @@index([status, createdAt])
   @@index([customerId, status])
@@ -771,4 +793,88 @@ model ContractTypeSettings {
   updatedBy User? @relation(fields: [updatedById], references: [id])
 
   @@map("contract_type_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Agent module (docs/01-plan.md's Agent role)
+// ---------------------------------------------------------------------------
+
+// The fixed amount an AGENT keeps out of every cash deposit they collect —
+// snapshotted onto AgentDepositLedger.commissionAmountMinor at the moment the
+// deposit is recorded, so a later change here never re-prices a deal already
+// settled (the same "snapshot, don't re-read" convention every other pricing
+// field on Contract follows). Singleton, edited from Settings > Commission.
+model CommissionSettings {
+  id                  String   @id @default("singleton")
+  fixedCommissionMinor Int     @default(0)
+  updatedAt           DateTime @updatedAt
+  updatedById         String?
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("commission_settings")
+}
+
+// One row per DEPOSIT_INSTALMENT contract an AGENT brought in and collected
+// the deposit for IN CASH (created in paymentService.postPayment, the same
+// moment the deposit payment itself is posted — see that file's comment).
+// The deposit is already correctly reflected on the contract/customer side
+// (it's a normal Payment row); this is the SEPARATE bookkeeping question of
+// "the agent, not the till, is currently holding this cash" — what they owe
+// the business is depositAmountMinor minus the commission they keep.
+// A deposit collected by any other channel (USSD/direct debit — money that
+// went straight to the company, never through the agent's hand) never gets a
+// row here at all: there is no cash custody question to track.
+model AgentDepositLedger {
+  id                   String   @id @default(uuid())
+  contractId           String   @unique
+  agentId              String
+  depositAmountMinor   Int
+  commissionAmountMinor Int
+  // = depositAmountMinor - commissionAmountMinor, floored at 0. Stored (not
+  // just derived) because it's the number every ledger/dashboard reads most
+  // often; amountRemittedMinor below is what actually moves it toward SETTLED.
+  amountOwedMinor      Int
+  amountRemittedMinor  Int      @default(0)
+  status               String   @default("OWED") // OWED | SETTLED
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  contract     Contract          @relation(fields: [contractId], references: [id])
+  agent        User              @relation("AgentLedgerAgent", fields: [agentId], references: [id])
+  remittances  AgentRemittance[]
+
+  @@index([agentId, status])
+  @@index([agentId, createdAt])
+  @@map("agent_deposit_ledger")
+}
+
+// One claim, by the agent, of money paid toward one ledger entry — cash
+// handed over at the branch, or a mobile money/bank transfer made outside
+// this app and reported here with a reference. Never applied to the ledger
+// on its own: an approver (BRANCH_MANAGER/ADMIN/SUPER_ADMIN, agent.ledger.manage)
+// must confirm it first (agentLedgerService.confirmRemittance), the same
+// principle as a cash deposit needing a human to actually count it before
+// it counts. A rejected claim leaves the ledger untouched.
+model AgentRemittance {
+  id              String    @id @default(uuid())
+  ledgerId        String
+  agentId         String
+  amountMinor     Int
+  method          String    // CASH | MOBILE_MONEY | BANK_TRANSFER
+  reference       String?   // customer-supplied momo/bank reference — never verified against a live gateway
+  status          String    @default("PENDING") // PENDING | CONFIRMED | REJECTED
+  rejectionReason String?
+  confirmedById   String?
+  confirmedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  ledger      AgentDepositLedger @relation(fields: [ledgerId], references: [id])
+  agent       User               @relation("AgentRemittanceAgent", fields: [agentId], references: [id])
+  confirmedBy User?              @relation("AgentRemittanceConfirmedBy", fields: [confirmedById], references: [id])
+
+  @@index([ledgerId, status])
+  @@index([agentId, status])
+  @@map("agent_remittances")
 }

@@ -13,6 +13,7 @@ import { contractTypeLabel } from '../utils';
 import {
   CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
   DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
+  PRE_APPROVAL_STATUSES, INITIAL_STATUS_BY_TYPE,
   type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName,
 } from '../constants/contracts';
 
@@ -24,6 +25,12 @@ export interface CreateContractParams {
   branchId: string;
   createdById: string;
   startDate?: Date;
+  // Set by the API route from the acting user's own role (never client-supplied —
+  // a caller claiming AGENT-ness to skip approval, or claiming otherwise to skip
+  // it, would defeat the whole point). true routes the new contract to
+  // PENDING_APPROVAL instead of its type's usual first status — see
+  // INITIAL_STATUS_BY_TYPE and the Agent module docs on Contract in schema.prisma.
+  requiresApproval?: boolean;
   // DIRECT_DEBIT/BOTH require directDebitNetwork+directDebitMsisdn (validated below);
   // CUSTOMER_INITIATED (the default) needs neither. Only DEPOSIT_INSTALMENT is
   // eligible at all now — see DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES.
@@ -204,6 +211,7 @@ export async function createContract(params: CreateContractParams) {
  */
 async function runSaveToOwnTransaction(params: CreateContractParams, startDate: Date) {
   const contractNumber = await generateContractNumber();
+  const requiresApproval = params.requiresApproval ?? false;
 
   return prisma.$transaction(async (tx) => {
     const contract = await tx.contract.create({
@@ -213,14 +221,17 @@ async function runSaveToOwnTransaction(params: CreateContractParams, startDate: 
         customerId: params.customerId,
         branchId: params.branchId,
         paymentMethod: 'CUSTOMER_INITIATED', // never direct-debit eligible — no due schedule to auto-collect against
-        status: 'ACTIVE',
+        status: requiresApproval ? 'PENDING_APPROVAL' : 'ACTIVE',
         startDate,
-        activatedAt: new Date(),
+        activatedAt: requiresApproval ? null : new Date(),
+        submittedForApprovalAt: requiresApproval ? new Date() : null,
         createdById: params.createdById,
       },
     });
 
-    const sms = await queueSms({ contractId: contract.id, templateKey: 'contract.activated', tx });
+    // The welcome/activation SMS only makes sense once the account is real —
+    // an agent-submitted account isn't yet (approveContract sends it then).
+    const sms = requiresApproval ? null : await queueSms({ contractId: contract.id, templateKey: 'contract.activated', tx });
     return { contract, queuedSmsId: sms?.id ?? null };
   }).then(async ({ contract, queuedSmsId }) => {
     if (queuedSmsId) void deliverQueuedSms(queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
@@ -239,6 +250,7 @@ async function runSaveToOwnTransaction(params: CreateContractParams, startDate: 
 async function runDeviceLoanTransaction(params: CreateContractParams, startDate: Date) {
   const contractNumber = await generateContractNumber();
   const loanAmountMinor = params.loanAmountMinor as number;
+  const requiresApproval = params.requiresApproval ?? false;
 
   return prisma.$transaction(async (tx) => {
     const loanSettings = await getLoanSettings(tx);
@@ -254,15 +266,19 @@ async function runDeviceLoanTransaction(params: CreateContractParams, startDate:
         rateBasis: 'DAILY_SIMPLE',
         gracePeriodDays: loanSettings.interestGraceDays,
         paymentMethod: 'CUSTOMER_INITIATED', // never direct-debit eligible — no single "amount due" to auto-charge
-        status: 'ACTIVE', // cash disbursed unconditionally, no down-payment gate (docs/01-plan.md §5)
+        // cash disbursed unconditionally, no down-payment gate (docs/01-plan.md §5) —
+        // UNLESS an agent submitted it, in which case it must be approved first,
+        // exactly like every other type (schema.prisma's Contract comment).
+        status: requiresApproval ? 'PENDING_APPROVAL' : 'ACTIVE',
         totalPaidMinor: 0,
         startDate,
-        activatedAt: new Date(),
+        activatedAt: requiresApproval ? null : new Date(),
+        submittedForApprovalAt: requiresApproval ? new Date() : null,
         createdById: params.createdById,
       },
     });
 
-    const sms = await queueSms({ contractId: contract.id, templateKey: 'contract.activated', tx });
+    const sms = requiresApproval ? null : await queueSms({ contractId: contract.id, templateKey: 'contract.activated', tx });
     return { contract, queuedSmsId: sms?.id ?? null };
   }).then(async ({ contract, queuedSmsId }) => {
     if (queuedSmsId) void deliverQueuedSms(queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
@@ -293,6 +309,7 @@ async function runDepositInstalmentTransaction(
   // collects one per day across that same span (count == termWeeks * 7).
   const instalmentCount = frequency === 'DAILY' ? termWeeks * 7 : termWeeks;
   const instalmentAmountMinor = Math.ceil(financeAmountMinor / instalmentCount);
+  const requiresApproval = params.requiresApproval ?? false;
 
   return prisma.$transaction(async (tx) => {
     const contract = await tx.contract.create({
@@ -313,12 +330,13 @@ async function runDepositInstalmentTransaction(
         pendingDirectDebitNetwork: params.directDebitNetwork ?? null,
         pendingDirectDebitMsisdn: params.directDebitMsisdn ?? null,
         paymentMethod,
-        status: 'PENDING_DEPOSIT',
+        status: requiresApproval ? 'PENDING_APPROVAL' : 'PENDING_DEPOSIT',
         totalPayableMinor,
         totalPaidMinor: 0,
         balanceMinor: totalPayableMinor,
         startDate,
         activatedAt: null,
+        submittedForApprovalAt: requiresApproval ? new Date() : null,
         createdById: params.createdById,
       },
     });
@@ -363,8 +381,11 @@ async function runDepositInstalmentTransaction(
     // deposit clears (which may be a separate visit). If this fails or was
     // never requested, postPayment's own pendingDirectDebit fallback
     // (paymentService.advanceContractStatus) still catches it the moment the
-    // deposit clears and activates the contract, unchanged.
-    if (contract.pendingDirectDebitNetwork && contract.pendingDirectDebitMsisdn) {
+    // deposit clears and activates the contract, unchanged. Never attempted
+    // at all while pending approval — the customer shouldn't get a mandate
+    // prompt for a deal that hasn't been approved yet; approveContract tries
+    // this exact same thing once it is.
+    if (!requiresApproval && contract.pendingDirectDebitNetwork && contract.pendingDirectDebitMsisdn) {
       const updated = await initiateDirectDebitIfRequested({
         contractId: contract.id, customerId: contract.customerId,
         network: contract.pendingDirectDebitNetwork, msisdn: contract.pendingDirectDebitMsisdn,
@@ -389,7 +410,11 @@ export async function cancelContract(params: { contractId: string; reason: strin
     if (!allowedStatuses.includes('CANCELLED')) {
       throw new ContractError(`${contract.contractType} contracts cannot be cancelled — use write-off instead`);
     }
-    if (!['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'].includes(contract.status)) {
+    // Also doubles as an approver's outright "reject" of an agent-submitted
+    // contract — no payment can exist yet on either pre-approval status
+    // (postPayment refuses both), and any reserved stock is simply returned
+    // below, same as cancelling a PENDING_DEPOSIT contract always has.
+    if (![...PRE_APPROVAL_STATUSES, 'ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'].includes(contract.status)) {
       throw new ContractError(`Cannot cancel a contract in status ${contract.status}`);
     }
 
@@ -444,7 +469,9 @@ export async function writeOffContract(params: { contractId: string; reason: str
   if (!CONTRACT_STATUSES_BY_TYPE[contract.contractType as ContractTypeName].includes('WRITTEN_OFF')) {
     throw new ContractError(`${contract.contractType} contracts cannot be written off`);
   }
-  if (!['ACTIVE', 'DEFAULTED'].includes(contract.status)) {
+  // Also DEVICE_LOAN's only way to reject an agent-submitted contract outright
+  // (it has no CANCELLED state at all — docs/01-plan.md §5/CONTRACT_STATUSES_BY_TYPE).
+  if (![...PRE_APPROVAL_STATUSES, 'ACTIVE', 'DEFAULTED'].includes(contract.status)) {
     throw new ContractError(`Cannot write off a contract in status ${contract.status}`);
   }
   return prisma.contract.update({
@@ -475,5 +502,175 @@ export async function releaseContract(params: { contractId: string; userId: stri
       where: { id: contract.id },
       data: { status: 'RELEASED', releasedAt: new Date(), updatedById: params.userId },
     });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Agent approval workflow (docs/01-plan.md's Agent module)
+// ---------------------------------------------------------------------------
+
+/**
+ * An approver (contract.approve — BRANCH_MANAGER/ADMIN/SUPER_ADMIN) accepts an
+ * agent-submitted contract: it jumps straight to its type's real first status
+ * (INITIAL_STATUS_BY_TYPE) exactly as if a non-agent had just created it —
+ * SAVE_TO_OWN/DEVICE_LOAN go ACTIVE right away (and now get the
+ * contract.activated SMS withheld at creation); DEPOSIT_INSTALMENT still
+ * waits for its deposit (PENDING_DEPOSIT), same as always.
+ */
+export async function approveContract(params: { contractId: string; approvedById: string }) {
+  const result = await prisma.$transaction(async (tx) => {
+    const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+    if (contract.status !== 'PENDING_APPROVAL') {
+      throw new ContractError(`Only a contract awaiting approval can be approved (this one is ${contract.status})`);
+    }
+
+    const initialStatus = INITIAL_STATUS_BY_TYPE[contract.contractType as ContractTypeName];
+    const now = new Date();
+    const updated = await tx.contract.update({
+      where: { id: contract.id },
+      data: {
+        status: initialStatus,
+        approvedById: params.approvedById,
+        approvedAt: now,
+        revisionReason: null,
+        activatedAt: initialStatus === 'ACTIVE' ? now : null,
+      },
+    });
+
+    const sms = initialStatus === 'ACTIVE'
+      ? await queueSms({ contractId: contract.id, templateKey: 'contract.activated', tx })
+      : null;
+    return { contract: updated, queuedSmsId: sms?.id ?? null };
+  });
+
+  if (result.queuedSmsId) {
+    void deliverQueuedSms(result.queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
+  }
+
+  // Same "try the mandate the moment it's actually usable" as a non-agent
+  // contract's own creation — only ever reachable for DEPOSIT_INSTALMENT,
+  // the only type pendingDirectDebitNetwork/Msisdn is set on, and only if it
+  // wasn't already tried (contractService's creation path attempts this too,
+  // but skips it entirely while requiresApproval — see runDepositInstalmentTransaction).
+  if (!result.contract.hubtelPreapprovalId && result.contract.pendingDirectDebitNetwork && result.contract.pendingDirectDebitMsisdn) {
+    const updated = await initiateDirectDebitIfRequested({
+      contractId: result.contract.id, customerId: result.contract.customerId,
+      network: result.contract.pendingDirectDebitNetwork, msisdn: result.contract.pendingDirectDebitMsisdn,
+      createdById: result.contract.createdById,
+    });
+    if (updated) return updated;
+  }
+  return result.contract;
+}
+
+/**
+ * An approver sends an agent-submitted contract back with a reason instead
+ * of approving it. The agent (and only the agent who created it — enforced
+ * by the API route, same as every other ownership check in this app) edits
+ * and calls resubmitContract below.
+ */
+export async function requestContractRevision(params: { contractId: string; reason: string }) {
+  const contract = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+  if (contract.status !== 'PENDING_APPROVAL') {
+    throw new ContractError(`Only a contract awaiting approval can be sent back for revision (this one is ${contract.status})`);
+  }
+  if (!params.reason.trim()) throw new ContractError('A reason is required');
+
+  return prisma.contract.update({
+    where: { id: contract.id },
+    data: { status: 'REVISION_REQUESTED', revisionReason: params.reason.trim() },
+  });
+}
+
+export interface ResubmitContractUpdates {
+  totalPayableMinor?: number;
+  depositAmountMinor?: number;
+  termWeeks?: number;
+  paymentFrequency?: PaymentFrequencyName;
+  gracePeriodDays?: number;
+  penaltyRateBps?: number;
+  startDate?: Date;
+  loanAmountMinor?: number;
+}
+
+/**
+ * The agent edits a REVISION_REQUESTED contract's terms and sends it back
+ * for another look. SAVE_TO_OWN has nothing to edit (no term at all) — it
+ * just returns to PENDING_APPROVAL unchanged. A DEPOSIT_INSTALMENT's
+ * instalment schedule is rebuilt from scratch on any term change: nothing on
+ * the old one can have been paid — postPayment refuses both PENDING_APPROVAL
+ * and REVISION_REQUESTED (PRE_APPROVAL_STATUSES) — so there is nothing to
+ * preserve.
+ */
+export async function resubmitContract(params: { contractId: string; updates: ResubmitContractUpdates }) {
+  return prisma.$transaction(async (tx) => {
+    const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+    if (contract.status !== 'REVISION_REQUESTED') {
+      throw new ContractError(`Only a contract sent back for revision can be resubmitted (this one is ${contract.status})`);
+    }
+
+    const data: Prisma.ContractUpdateInput = {
+      status: 'PENDING_APPROVAL',
+      revisionReason: null,
+      submittedForApprovalAt: new Date(),
+    };
+
+    if (contract.contractType === 'DEVICE_LOAN' && params.updates.loanAmountMinor !== undefined) {
+      if (params.updates.loanAmountMinor <= 0) throw new ContractError('loanAmountMinor must be positive');
+      data.principalMinor = params.updates.loanAmountMinor;
+    }
+
+    if (contract.contractType === 'DEPOSIT_INSTALMENT') {
+      const totalPayableMinor = params.updates.totalPayableMinor ?? contract.totalPayableMinor!;
+      const depositAmountMinor = params.updates.depositAmountMinor ?? contract.depositAmountMinor;
+      const termWeeks = params.updates.termWeeks ?? contract.termWeeks!;
+      const frequency = (params.updates.paymentFrequency ?? contract.paymentFrequency) as PaymentFrequencyName;
+      const startDate = params.updates.startDate ?? contract.startDate;
+
+      if (totalPayableMinor <= 0) throw new ContractError('totalPayableMinor must be positive');
+      if (depositAmountMinor < 0 || depositAmountMinor >= totalPayableMinor) {
+        throw new ContractError('depositAmountMinor must be non-negative and less than totalPayableMinor');
+      }
+      if (termWeeks < DEPOSIT_INSTALMENT_MIN_TERM_WEEKS || termWeeks > DEPOSIT_INSTALMENT_MAX_TERM_WEEKS) {
+        throw new ContractError(`termWeeks must be between ${DEPOSIT_INSTALMENT_MIN_TERM_WEEKS} and ${DEPOSIT_INSTALMENT_MAX_TERM_WEEKS}`);
+      }
+      if (!(DEPOSIT_INSTALMENT_FREQUENCIES as readonly string[]).includes(frequency)) {
+        throw new ContractError(`paymentFrequency must be one of: ${DEPOSIT_INSTALMENT_FREQUENCIES.join(', ')}`);
+      }
+
+      const financeAmountMinor = totalPayableMinor - depositAmountMinor;
+      const instalmentCount = frequency === 'DAILY' ? termWeeks * 7 : termWeeks;
+      const instalmentAmountMinor = Math.ceil(financeAmountMinor / instalmentCount);
+
+      Object.assign(data, {
+        totalPriceMinor: totalPayableMinor,
+        totalPayableMinor,
+        balanceMinor: totalPayableMinor,
+        depositAmountMinor,
+        termWeeks,
+        paymentFrequency: frequency,
+        instalmentAmountMinor,
+        startDate,
+        gracePeriodDays: params.updates.gracePeriodDays ?? contract.gracePeriodDays,
+        penaltyRateBps: params.updates.penaltyRateBps ?? contract.penaltyRateBps,
+      });
+
+      // Replace the schedule entirely.
+      await tx.instalment.deleteMany({ where: { contractId: contract.id } });
+      const workingDays = await getWorkingDays(tx);
+      const schedule = generateStraightLineSchedule(financeAmountMinor, 1, startDate, frequency, instalmentCount, workingDays);
+      await tx.instalment.createMany({
+        data: schedule.map((s) => ({
+          contractId: contract.id,
+          instalmentNo: s.instalmentNo,
+          dueDate: s.dueDate,
+          amountDueMinor: s.amountDueMinor,
+          principalPortionMinor: s.principalPortionMinor,
+          interestPortionMinor: s.interestPortionMinor,
+        })),
+      });
+    }
+
+    return tx.contract.update({ where: { id: contract.id }, data });
   });
 }

@@ -39,6 +39,13 @@ interface ContractDetail {
   hubtelPreapprovalId: string | null;
   hubtelPreapproval: Preapproval | null;
   paymentMethod: string;
+  // The Agent module (schema.prisma's Contract comment) — null on every
+  // contract not created by an agent.
+  createdById: string;
+  revisionReason: string | null;
+  termWeeks: number | null;
+  gracePeriodDays: number;
+  penaltyRateBps: number;
 }
 
 // DEVICE_LOAN's self-directed two-option payment model has no "auto-charge the
@@ -48,7 +55,7 @@ const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'];
 
 export default function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { hasPermission } = useAuthStore();
+  const { hasPermission, user } = useAuthStore();
   const { toast } = useToast();
   const [contract, setContract] = useState<ContractDetail | null>(null);
   const [amount, setAmount] = useState('');
@@ -74,6 +81,17 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [chargeAmount, setChargeAmount] = useState('');
   const [charging, setCharging] = useState(false);
 
+  // The Agent module.
+  const [approving, setApproving] = useState(false);
+  const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
+  const [revisionReasonInput, setRevisionReasonInput] = useState('');
+  const [revisionSaving, setRevisionSaving] = useState(false);
+  const [resubmitDialogOpen, setResubmitDialogOpen] = useState(false);
+  const [resubmitForm, setResubmitForm] = useState({
+    totalPayable: '', deposit: '', termWeeks: '', paymentFrequency: 'WEEKLY', gracePeriodDays: '', penaltyRateBps: '', loanAmount: '',
+  });
+  const [resubmitSaving, setResubmitSaving] = useState(false);
+
   async function load() {
     try {
       const { contract } = await api.get<{ contract: ContractDetail }>(`/contracts/${id}`);
@@ -96,6 +114,76 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // The Agent module.
+  function openResubmitDialog() {
+    if (!contract) return;
+    setResubmitForm({
+      totalPayable: contract.totalPayableMinor !== null ? (contract.totalPayableMinor / 100).toString() : '',
+      deposit: (contract.depositAmountMinor / 100).toString(),
+      termWeeks: contract.termWeeks?.toString() ?? '',
+      paymentFrequency: contract.paymentFrequency,
+      gracePeriodDays: contract.gracePeriodDays.toString(),
+      penaltyRateBps: contract.penaltyRateBps.toString(),
+      loanAmount: contract.principalMinor !== null ? (contract.principalMinor / 100).toString() : '',
+    });
+    setResubmitDialogOpen(true);
+  }
+
+  async function approveContractNow() {
+    setApproving(true);
+    try {
+      await api.post(`/contracts/${id}/approve`);
+      toast({ title: 'Contract approved' });
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to approve contract', variant: 'destructive' });
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  async function requestRevisionNow() {
+    if (!revisionReasonInput.trim()) return;
+    setRevisionSaving(true);
+    try {
+      await api.post(`/contracts/${id}/request-revision`, { reason: revisionReasonInput });
+      toast({ title: 'Sent back for revision' });
+      setRevisionDialogOpen(false);
+      setRevisionReasonInput('');
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to send back for revision', variant: 'destructive' });
+    } finally {
+      setRevisionSaving(false);
+    }
+  }
+
+  async function resubmitNow() {
+    if (!contract) return;
+    setResubmitSaving(true);
+    try {
+      const body: Record<string, unknown> = {};
+      if (contract.contractType === 'DEPOSIT_INSTALMENT') {
+        body.totalPayableMinor = Math.round(parseFloat(resubmitForm.totalPayable) * 100);
+        body.depositAmountMinor = Math.round(parseFloat(resubmitForm.deposit) * 100);
+        body.termWeeks = parseInt(resubmitForm.termWeeks, 10);
+        body.paymentFrequency = resubmitForm.paymentFrequency;
+        body.gracePeriodDays = parseInt(resubmitForm.gracePeriodDays, 10);
+        body.penaltyRateBps = parseInt(resubmitForm.penaltyRateBps, 10);
+      } else if (contract.contractType === 'DEVICE_LOAN') {
+        body.loanAmountMinor = Math.round(parseFloat(resubmitForm.loanAmount) * 100);
+      }
+      await api.post(`/contracts/${id}/resubmit`, body);
+      toast({ title: 'Resubmitted for approval' });
+      setResubmitDialogOpen(false);
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to resubmit', variant: 'destructive' });
+    } finally {
+      setResubmitSaving(false);
+    }
+  }
 
   async function recordPayment(e: React.FormEvent) {
     e.preventDefault();
@@ -240,7 +328,15 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const canCancel = hasPermission('contract.cancel');
   const canWriteOff = hasPermission('contract.writeoff');
   const canRelease = hasPermission('inventory.issue');
+  const canApprove = hasPermission('contract.approve');
   const terminal = ['COMPLETED', 'RELEASED', 'CANCELLED', 'WRITTEN_OFF'].includes(contract.status);
+  // The Agent module: nothing has been agreed yet on either of these two
+  // statuses, so no money can move and no mandate can be requested — see
+  // PRE_APPROVAL_STATUSES/schema.prisma's Contract comment. Cancel/write-off
+  // stay available throughout (contractService.ts) — they double as an
+  // approver's outright reject.
+  const preApproval = ['PENDING_APPROVAL', 'REVISION_REQUESTED'].includes(contract.status);
+  const isOwnSubmission = user?.id === contract.createdById;
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -255,6 +351,40 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </div>
         <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${getStatusColor(contract.status)}`}>{contract.status}</span>
       </div>
+
+      {/* The Agent module: this contract still needs a decision, or was sent back for one. */}
+      {contract.status === 'PENDING_APPROVAL' && (
+        <Card className="border-amber-200 bg-amber-50/60">
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <p className="flex-1 text-sm text-amber-800">
+              {canApprove
+                ? 'This contract was submitted by an agent and is waiting for your decision.'
+                : 'Submitted for approval — waiting for a manager or admin to review it.'}
+            </p>
+            {canApprove && (
+              <div className="flex gap-2 shrink-0">
+                <Button size="sm" variant="outline" disabled={approving} onClick={() => { setRevisionDialogOpen(true); setRevisionReasonInput(''); }}>
+                  Request revision
+                </Button>
+                <Button size="sm" disabled={approving} onClick={approveContractNow}>{approving ? 'Approving...' : 'Approve'}</Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {contract.status === 'REVISION_REQUESTED' && (
+        <Card className="border-orange-200 bg-orange-50/60">
+          <CardContent className="p-4 space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-orange-800">Sent back for revision</p>
+              <p className="text-sm text-orange-700 mt-0.5">{contract.revisionReason}</p>
+            </div>
+            {isOwnSubmission && hasPermission('contract.create') && (
+              <Button size="sm" onClick={openResubmitDialog}>Edit terms &amp; resubmit</Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {contract.contractType === 'SAVE_TO_OWN' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -281,7 +411,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </div>
       )}
 
-      {canPay && !terminal && contract.contractType === 'DEVICE_LOAN' && (
+      {canPay && !terminal && !preApproval && contract.contractType === 'DEVICE_LOAN' && (
         <Card>
           <CardHeader><CardTitle>Record a payment</CardTitle></CardHeader>
           <CardContent className="flex flex-wrap gap-3">
@@ -303,7 +433,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
-      {canPay && !terminal && contract.contractType !== 'DEVICE_LOAN' && (
+      {canPay && !terminal && !preApproval && contract.contractType !== 'DEVICE_LOAN' && (
         <Card>
           <CardHeader><CardTitle>Record a cash payment</CardTitle></CardHeader>
           <CardContent>
@@ -340,7 +470,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
-      {DIRECT_DEBIT_ELIGIBLE_TYPES.includes(contract.contractType) && !terminal && (
+      {DIRECT_DEBIT_ELIGIBLE_TYPES.includes(contract.contractType) && !terminal && !preApproval && (
         <Card>
           <CardHeader><CardTitle>Direct debit</CardTitle></CardHeader>
           <CardContent>
@@ -605,6 +735,86 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* The Agent module: send back for revision */}
+      <Dialog open={revisionDialogOpen} onOpenChange={setRevisionDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Send back for revision</DialogTitle></DialogHeader>
+          <div>
+            <Label>Reason</Label>
+            <Input className="mt-1.5" value={revisionReasonInput} onChange={(e) => setRevisionReasonInput(e.target.value)} placeholder="What needs to change?" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevisionDialogOpen(false)}>Cancel</Button>
+            <Button disabled={!revisionReasonInput.trim() || revisionSaving} onClick={requestRevisionNow}>
+              {revisionSaving ? 'Sending...' : 'Send back'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* The Agent module: edit terms and resubmit */}
+      <Dialog open={resubmitDialogOpen} onOpenChange={setResubmitDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit terms &amp; resubmit</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-2 gap-4">
+            {contract.contractType === 'DEPOSIT_INSTALMENT' && (
+              <>
+                <div>
+                  <Label>Total price (GHS)</Label>
+                  <Input type="number" min="0" step="0.01" className="mt-1.5" value={resubmitForm.totalPayable}
+                    onChange={(e) => setResubmitForm({ ...resubmitForm, totalPayable: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Deposit (GHS)</Label>
+                  <Input type="number" min="0" step="0.01" className="mt-1.5" value={resubmitForm.deposit}
+                    onChange={(e) => setResubmitForm({ ...resubmitForm, deposit: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Term (weeks)</Label>
+                  <Input type="number" min="1" max="24" step="1" className="mt-1.5" value={resubmitForm.termWeeks}
+                    onChange={(e) => setResubmitForm({ ...resubmitForm, termWeeks: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Frequency</Label>
+                  <select
+                    className="mt-1.5 flex h-10 w-full rounded-xl border border-input bg-white/90 px-3 text-sm"
+                    value={resubmitForm.paymentFrequency}
+                    onChange={(e) => setResubmitForm({ ...resubmitForm, paymentFrequency: e.target.value })}
+                  >
+                    <option value="DAILY">Daily</option>
+                    <option value="WEEKLY">Weekly</option>
+                  </select>
+                </div>
+                <div>
+                  <Label>Grace period (days)</Label>
+                  <Input type="number" min="0" step="1" className="mt-1.5" value={resubmitForm.gracePeriodDays}
+                    onChange={(e) => setResubmitForm({ ...resubmitForm, gracePeriodDays: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Penalty rate (bps)</Label>
+                  <Input type="number" min="0" step="1" className="mt-1.5" value={resubmitForm.penaltyRateBps}
+                    onChange={(e) => setResubmitForm({ ...resubmitForm, penaltyRateBps: e.target.value })} />
+                </div>
+              </>
+            )}
+            {contract.contractType === 'DEVICE_LOAN' && (
+              <div className="col-span-2">
+                <Label>Loan amount (GHS)</Label>
+                <Input type="number" min="0" step="0.01" className="mt-1.5" value={resubmitForm.loanAmount}
+                  onChange={(e) => setResubmitForm({ ...resubmitForm, loanAmount: e.target.value })} />
+              </div>
+            )}
+            {contract.contractType === 'SAVE_TO_OWN' && (
+              <p className="col-span-2 text-sm text-gray-500">Save to Own has no terms to edit — resubmit as-is for another look.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResubmitDialogOpen(false)}>Cancel</Button>
+            <Button disabled={resubmitSaving} onClick={resubmitNow}>{resubmitSaving ? 'Resubmitting...' : 'Resubmit for approval'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

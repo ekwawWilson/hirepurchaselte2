@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
-import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
+import { requireAuth, requirePermission, branchScopeWhere, ownRecordsWhere } from '@/lib/auth/rbac';
 import { generateMembershipId } from '@/lib/utils/idGenerators';
 import { logAudit } from '@/lib/services/auditService';
 import {
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   const q = searchParams.get('q') ?? undefined;
   const branchIdParam = searchParams.get('branchId') ?? undefined;
 
-  const where: Record<string, unknown> = { ...branchScopeWhere(user) };
+  const where: Record<string, unknown> = { ...branchScopeWhere(user), ...ownRecordsWhere(user) };
   if (!user.branchId && branchIdParam) where.branchId = branchIdParam;
 
   if (q) {

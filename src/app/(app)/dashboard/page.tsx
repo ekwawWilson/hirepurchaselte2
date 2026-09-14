@@ -82,11 +82,21 @@ function QuickAction({ href, label, description, tone }: {
 
 export default function DashboardPage() {
   const canViewContracts = useAuthStore((s) => s.hasPermission('contract.view'));
+  const hasReportAccess = useAuthStore((s) => s.hasPermission('report.view.branch', 'report.view.all'));
+  // Neither SALES nor the Agent module's AGENT role holds a report
+  // permission — the branch-wide dashboard below is meaningless to them
+  // (and the API 403s it anyway). They get a portfolio-shaped summary of
+  // their own contracts instead, derived from the same own-scoped
+  // GET /api/contracts every other page already uses (rbac.ts's
+  // ownRecordsWhere for AGENT; a plain branch view for SALES).
+  const showAgentSummary = !hasReportAccess && canViewContracts;
   const [stats, setStats] = useState<DashboardSummary | null>(null);
   const [recent, setRecent] = useState<RecentContract[] | null>(null);
+  const [ownContracts, setOwnContracts] = useState<RecentContract[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   function load() {
+    if (showAgentSummary) return;
     setError(null);
     api.get<DashboardSummary>('/dashboard')
       .then(setStats)
@@ -95,14 +105,26 @@ export default function DashboardPage() {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAgentSummary]);
 
   useEffect(() => {
-    if (!canViewContracts) return;
+    if (!canViewContracts || showAgentSummary) return;
     api.get<{ contracts: RecentContract[] }>('/contracts')
       .then((r) => setRecent(r.contracts.slice(0, 5)))
       .catch(() => setRecent([]));
-  }, [canViewContracts]);
+  }, [canViewContracts, showAgentSummary]);
+
+  useEffect(() => {
+    if (!showAgentSummary) return;
+    api.get<{ contracts: RecentContract[] }>('/contracts')
+      .then((r) => setOwnContracts(r.contracts))
+      .catch(() => setOwnContracts([]));
+  }, [showAgentSummary]);
+
+  if (showAgentSummary) {
+    return <AgentDashboard contracts={ownContracts} />;
+  }
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -201,6 +223,88 @@ export default function DashboardPage() {
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+/**
+ * The Agent module's own-portfolio dashboard — shown instead of the
+ * branch-wide one above to anyone who can create contracts but has no
+ * report permission (an AGENT, or a SALES user): the branch summary would
+ * either 403 or mean nothing to them, since neither role sees more than
+ * their own book (rbac.ts's OWN_SCOPED_ROLES / ownRecordsWhere).
+ */
+function AgentDashboard({ contracts }: { contracts: RecentContract[] | null }) {
+  if (!contracts) {
+    return (
+      <div className="flex h-40 items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  const pendingApproval = contracts.filter((c) => c.status === 'PENDING_APPROVAL').length;
+  const revisionRequested = contracts.filter((c) => c.status === 'REVISION_REQUESTED').length;
+  const stillGoing = contracts.filter((c) => ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'].includes(c.status)).length;
+
+  return (
+    <div className="space-y-5 sm:space-y-6">
+      <div>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Your own contracts</p>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <StatCard title="Total portfolio" value={String(contracts.length)} icon={FileText} iconClass="text-blue-600" iconBg="bg-blue-50" href="/contracts" />
+        <StatCard title="Pending approval" value={String(pendingApproval)} icon={AlertCircle} iconClass="text-amber-600" iconBg="bg-amber-50" href="/contracts?status=PENDING_APPROVAL" highlight={pendingApproval > 0} />
+        <StatCard title="Revision requested" value={String(revisionRequested)} icon={AlertCircle} iconClass="text-orange-600" iconBg="bg-orange-50" href="/contracts?status=REVISION_REQUESTED" highlight={revisionRequested > 0} />
+        <StatCard title="Active" value={String(stillGoing)} icon={FileText} iconClass="text-emerald-600" iconBg="bg-emerald-50" href="/contracts" />
+      </div>
+
+      <section>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <QuickAction href="/customers" label="Register Customer" description="Create account & membership ID" tone="blue" />
+          <QuickAction href="/contracts" label="New Contract" description="Submit a hire purchase contract" tone="emerald" />
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Your contracts</h2>
+          <Link href="/contracts" className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+            View all <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+
+        <div className="rounded-2xl border border-white/60 bg-white/90 shadow-[0_20px_45px_-22px_rgba(15,23,42,0.35)] overflow-hidden">
+          {contracts.length === 0 ? (
+            <div className="py-12 text-center">
+              <FileText className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">No contracts yet</p>
+              <p className="text-xs text-gray-400 mt-0.5">Submit your first contract from the Contracts page</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {contracts.slice(0, 8).map((c) => (
+                <Link key={c.id} href={`/contracts/${c.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50/80 transition-colors">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-900 truncate">{c.customer.firstName} {c.customer.lastName}</p>
+                    <p className="text-xs text-gray-500 truncate">
+                      <span className="font-mono">{c.contractNumber}</span> · {c.product?.name ?? contractTypeLabel(c.contractType)} · {formatDate(c.createdAt)}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm font-semibold text-gray-900">{formatCurrency(c.totalPaidMinor)}</p>
+                    <Badge className={getStatusColor(c.status)}>{c.status.replace(/_/g, ' ')}</Badge>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { CUSTOMER_SUMMARY_SELECT } from '@/lib/services/customerService';
 import { prisma } from '@/lib/db/prisma';
-import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
+import { requireAuth, requirePermission, branchScopeWhere, ownRecordsWhere } from '@/lib/auth/rbac';
 import {
   CONTRACT_TYPES, DEPOSIT_INSTALMENT_FREQUENCIES, DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, PAYMENT_METHODS,
   type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName,
@@ -22,7 +22,9 @@ export async function GET(req: NextRequest) {
   const contractType = searchParams.get('contractType') ?? undefined;
   const branchIdParam = searchParams.get('branchId') ?? undefined;
 
-  const where: Record<string, unknown> = { ...branchScopeWhere(user) };
+  // ownRecordsWhere: an AGENT sees only contracts they themselves created —
+  // every other branch-scoped role sees the whole branch (rbac.ts).
+  const where: Record<string, unknown> = { ...branchScopeWhere(user), ...ownRecordsWhere(user) };
   if (!user.branchId && branchIdParam) where.branchId = branchIdParam;
   if (customerId) where.customerId = customerId;
   if (status) where.status = status;
@@ -30,7 +32,12 @@ export async function GET(req: NextRequest) {
 
   const contracts = await prisma.contract.findMany({
     where,
-    include: { customer: { select: CUSTOMER_SUMMARY_SELECT }, product: true, inventoryItem: true },
+    include: {
+      customer: { select: CUSTOMER_SUMMARY_SELECT }, product: true, inventoryItem: true,
+      // Only meaningfully used by the Approvals queue (who submitted this?),
+      // but cheap enough to always include rather than add a second query shape.
+      createdBy: { select: { firstName: true, lastName: true } },
+    },
     orderBy: { createdAt: 'desc' },
     take: 200,
   });
@@ -120,6 +127,12 @@ export async function POST(req: NextRequest) {
   const branchId = user.branchId ?? (body.branchId as string);
   if (!branchId) return NextResponse.json({ error: 'branchId is required for an all-branch user' }, { status: 400 });
 
+  // The Agent module: computed from the ACTING user's own role, never
+  // client-supplied — an agent's contract always requires approval, no
+  // matter what the request body claims (contractService.ts's Contract
+  // comment / CreateContractParams.requiresApproval).
+  const requiresApproval = user.roleName === 'AGENT';
+
   try {
     const contract = await createContract({
       contractType: contractType as never,
@@ -138,12 +151,18 @@ export async function POST(req: NextRequest) {
       directDebitMsisdn: directDebitMsisdn as string | undefined,
       branchId,
       createdById: user.id,
+      requiresApproval,
     });
-    await logAudit({ userId: user.id, action: 'CONTRACT_CREATE', entityType: 'Contract', entityId: contract.id, newValues: contract });
+    await logAudit({
+      userId: user.id, action: requiresApproval ? 'CONTRACT_SUBMIT_FOR_APPROVAL' : 'CONTRACT_CREATE',
+      entityType: 'Contract', entityId: contract.id, newValues: contract,
+    });
     // A separate, explicitly-named audit entry for the cash leaving the till — unlike
     // every other contract type, DEVICE_LOAN disburses money rather than collecting it,
     // so it needs its own auditable record distinct from ordinary contract creation.
-    if (contractType === 'DEVICE_LOAN') {
+    // Not fired at all for one still awaiting approval — nothing has actually been
+    // disbursed yet; approveContract's own route logs this once it really has.
+    if (contractType === 'DEVICE_LOAN' && !requiresApproval) {
       await logAudit({
         userId: user.id, action: 'DEVICE_LOAN_DISBURSEMENT', entityType: 'Contract', entityId: contract.id,
         newValues: { principalMinor: contract.principalMinor, customerId: contract.customerId },
