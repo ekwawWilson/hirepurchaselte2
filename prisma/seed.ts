@@ -13,6 +13,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { DEMO_USERS, SEED_PASSWORD, BRANCH_SCOPED_ROLES } from '../src/lib/constants/rbac';
 import { syncRbac } from './syncRbac';
+import { SMS_TEMPLATES } from '../src/lib/constants/smsTemplates';
 
 const prisma = new PrismaClient();
 
@@ -43,22 +44,7 @@ async function main() {
     });
   }
 
-  const smsTemplates = [
-    {
-      key: 'payment.success',
-      name: 'Payment received',
-      bodyTemplate:
-        'Hi {{customerName}}, we received your payment of {{currency}} {{amountPaid}} for contract {{contractNumber}}. ' +
-        'Outstanding balance: {{currency}} {{outstandingBalance}}. {{nextDueLine}}',
-    },
-    {
-      key: 'contract.activated',
-      name: 'Contract activated / welcome',
-      bodyTemplate:
-        'Hi {{customerName}}, your contract {{contractNumber}} is now active. ' +
-        'Outstanding balance: {{currency}} {{outstandingBalance}}. {{nextDueLine}}',
-    },
-  ];
+  const smsTemplates = SMS_TEMPLATES;
   for (const t of smsTemplates) {
     // update (not just create-if-missing): template wording is only ever changed here,
     // there's no admin UI for it yet, so a code fix should actually take effect on reseed.

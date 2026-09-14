@@ -7,6 +7,7 @@ import { useAuthStore } from "@/lib/authStore";
 import { useOrgSettingsStore } from "@/lib/orgSettingsStore";
 import { cn, companyInitials } from "@/lib/utils";
 import { CompanyLogo } from "@/components/CompanyLogo";
+import { TodaysPaymentsBell } from "@/components/notifications/TodaysPaymentsBell";
 
 function UserMenu() {
   const router = useRouter();
@@ -98,6 +99,7 @@ export default function AppTopBar() {
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2">
+        <TodaysPaymentsBell />
         <UserMenu />
       </div>
     </header>

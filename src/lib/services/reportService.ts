@@ -308,3 +308,47 @@ export async function dashboardSummary(scope: Scope) {
     stockAvailable,
   };
 }
+
+/**
+ * Today's payments, for the staff notification bell and banner (the legacy
+ * app's DailyPaymentsBanner / NotificationBell). The count and the list are
+ * money received — a reversal or a withdrawal is not "a payment came in".
+ * The total is the day's net cash, the same figure as the dashboard's
+ * Today's Cash, and is only computed for callers allowed to see takings.
+ */
+export async function todaysPaymentsFeed(scope: Scope, opts: { includeTotal: boolean; take?: number }) {
+  const { start, end } = dayRange();
+  const incoming = {
+    status: 'SUCCESS',
+    createdAt: { gte: start, lte: end },
+    reversesPaymentId: null,
+    entryType: { not: 'WITHDRAWAL' },
+    ...(scope.branchId && { contract: { branchId: scope.branchId } }),
+  };
+
+  const [count, payments, cash] = await Promise.all([
+    prisma.payment.count({ where: incoming }),
+    prisma.payment.findMany({
+      where: incoming,
+      orderBy: { createdAt: 'desc' },
+      take: opts.take ?? 10,
+      select: {
+        id: true, amountMinor: true, channel: true, entryType: true, receiptNumber: true, createdAt: true,
+        contract: {
+          select: {
+            id: true, contractNumber: true,
+            customer: { select: { firstName: true, lastName: true, membershipId: true } },
+          },
+        },
+      },
+    }),
+    opts.includeTotal ? dailyCashReceivedReport(scope) : Promise.resolve(null),
+  ]);
+
+  return {
+    date: start.toISOString().slice(0, 10),
+    count,
+    ...(cash && { totalMinor: cash.totalMinor }),
+    payments,
+  };
+}

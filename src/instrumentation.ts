@@ -22,6 +22,7 @@ export async function register() {
   const { retryFailedDirectDebits } = await import('@/lib/services/hubtelPreapprovalService');
   const { runDirectDebitCollections } = await import('@/lib/services/collectionsService');
   const { accrueDailyLoanInterest } = await import('@/lib/services/loanService');
+  const { sendDueTodayReminders, sendOverdueReminders } = await import('@/lib/services/reminderService');
 
   // Daily at 08:00 — matches the legacy app's own schedule.
   cron.schedule('0 8 * * *', async () => {
@@ -65,6 +66,25 @@ export async function register() {
     }
   });
 
+  // Daily at 09:00 and 10:00 — customer payment reminders, after the 08:00
+  // sweep has settled today's arrears (the legacy app's own times).
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      const run = await sendDueTodayReminders();
+      if (run.sent > 0) console.log(`[cron] sent ${run.sent} due-today payment reminder(s)`);
+    } catch (e) {
+      console.error('[cron] sendDueTodayReminders failed:', e);
+    }
+  });
+  cron.schedule('0 10 * * *', async () => {
+    try {
+      const run = await sendOverdueReminders();
+      if (run.sent > 0) console.log(`[cron] sent ${run.sent} overdue payment reminder(s)`);
+    } catch (e) {
+      console.error('[cron] sendOverdueReminders failed:', e);
+    }
+  });
+
   // Every 15 minutes — catches any Hubtel callback that never arrived, and sweeps expired USSD sessions.
   cron.schedule('*/15 * * * *', async () => {
     try {
@@ -81,5 +101,5 @@ export async function register() {
     }
   });
 
-  console.log('[instrumentation] Scheduled jobs registered (overdue sweep @ 08:00 daily, Hubtel reconciliation every 15min).');
+  console.log('[instrumentation] Scheduled jobs registered (overdue sweep @ 08:00, payment reminders @ 09:00 and 10:00 daily, Hubtel reconciliation every 15min).');
 }

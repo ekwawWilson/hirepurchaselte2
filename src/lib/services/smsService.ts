@@ -3,6 +3,7 @@ import { prisma } from '../db/prisma';
 import { formatMoney, currencyCode } from '../utils/money';
 import { getSmsProvider } from './smsProviders';
 import { primaryPhone } from './customerService';
+import { getOrgSettings } from './orgSettingsService';
 
 type Tx = Prisma.TransactionClient | typeof prisma;
 
@@ -21,6 +22,8 @@ export async function queueSms(params: {
   contractId: string;
   templateKey: string;
   paymentId?: string;
+  /** Per-message values a template may use beyond the standard ones (e.g. a reminder's amountDue). */
+  extraVars?: Record<string, string>;
   tx?: Tx;
 }) {
   const db = params.tx ?? prisma;
@@ -73,6 +76,8 @@ export async function queueSms(params: {
         : formatMoney(contract.balanceMinor ?? 0),
     nextDueLine,
     currency: currencyCode(),
+    companyName: (await getOrgSettings()).companyName,
+    ...params.extraVars,
   };
 
   const body = renderTemplate(template.bodyTemplate, vars);
