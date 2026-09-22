@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import { AccessDenied } from '@/components/AccessDenied';
 import { PhoneVerifyField } from '@/components/PhoneVerifyField';
 import { CustomerPhotoField } from '@/components/CustomerPhotoField';
 
@@ -37,6 +38,7 @@ const EMPTY_FORM = {
 };
 
 export default function CustomersPage() {
+  const canView = useAuthStore((s) => s.hasPermission('customer.view'));
   const canCreate = useAuthStore((s) => s.hasPermission('customer.create'));
   const userBranchId = useAuthStore((s) => s.user?.branchId ?? null);
   const { toast } = useToast();
@@ -62,9 +64,10 @@ export default function CustomersPage() {
   }
 
   useEffect(() => {
+    if (!canView) { setIsLoading(false); return; }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canView]);
 
   useEffect(() => {
     if (!showForm || branches) return;
@@ -101,6 +104,21 @@ export default function CustomersPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (!canView) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Customers</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Manage customer accounts and memberships</p>
+        </div>
+        <AccessDenied
+          message="You don't have permission to view customers."
+          hint="Ask an administrator for the customer.view permission."
+        />
+      </div>
+    );
   }
 
   if (showForm) {

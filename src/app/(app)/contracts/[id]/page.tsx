@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { AccessDenied } from '@/components/AccessDenied';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -56,6 +57,7 @@ const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'];
 export default function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { hasPermission, user } = useAuthStore();
+  const canView = hasPermission('contract.view');
   const { toast } = useToast();
   const [contract, setContract] = useState<ContractDetail | null>(null);
   const [amount, setAmount] = useState('');
@@ -111,9 +113,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   }
 
   useEffect(() => {
+    if (!canView) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, canView]);
 
   // The Agent module.
   function openResubmitDialog() {
@@ -317,6 +320,17 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     } finally {
       setCharging(false);
     }
+  }
+
+  if (!canView) {
+    return (
+      <div className="max-w-4xl space-y-6">
+        <AccessDenied
+          message="You don't have permission to view contracts."
+          hint="Ask an administrator for the contract.view permission."
+        />
+      </div>
+    );
   }
 
   if (!contract) {

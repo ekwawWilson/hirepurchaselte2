@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ShieldAlert } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
+import { AccessDenied } from '@/components/AccessDenied';
 import { useAuthStore } from '@/lib/authStore';
 import { useOrgSettingsStore } from '@/lib/orgSettingsStore';
 import { APP_NAME, MAX_LOGO_BYTES, UPLOADABLE_LOGO_TYPES } from '@/lib/constants/branding';
@@ -176,13 +176,10 @@ export default function SettingsPage() {
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Settings</h1>
           <p className="text-sm text-gray-500 mt-0.5">Company details shown across the app</p>
         </div>
-        <Card>
-          <CardContent className="text-center py-12 px-4">
-            <ShieldAlert className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-            <p className="text-gray-500">You don&apos;t have permission to manage settings.</p>
-            <p className="text-xs text-gray-400 mt-1">Only Admins and Super Admins can change company details.</p>
-          </CardContent>
-        </Card>
+        <AccessDenied
+          message="You don't have permission to manage settings."
+          hint="Only Admins and Super Admins can change company details."
+        />
       </div>
     );
   }

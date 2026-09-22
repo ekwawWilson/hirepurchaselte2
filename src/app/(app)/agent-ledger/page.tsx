@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Wallet } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
+import { useAuthStore } from '@/lib/authStore';
+import { AccessDenied } from '@/components/AccessDenied';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -44,6 +46,7 @@ const METHOD_LABELS: Record<string, string> = { CASH: 'Cash at branch', MOBILE_M
  * and confirm or reject filed remittances against (agentLedgerService.ts).
  */
 export default function AgentLedgerPage() {
+  const canManage = useAuthStore((s) => s.hasPermission('agent.ledger.manage'));
   const { toast } = useToast();
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -63,7 +66,7 @@ export default function AgentLedgerPage() {
     }
   }, [toast]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (canManage) load(); }, [load, canManage]);
 
   async function confirm(r: Remittance) {
     setBusyId(r.id);
@@ -96,6 +99,21 @@ export default function AgentLedgerPage() {
 
   const totalOwed = entries.reduce((s, e) => s + Math.max(0, e.amountOwedMinor - e.amountRemittedMinor), 0);
   const pendingRemittances = entries.flatMap((e) => e.remittances.filter((r) => r.status === 'PENDING').map((r) => ({ ...r, entry: e })));
+
+  if (!canManage) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Agent Ledger</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Cash deposits collected by agents, and what each still owes</p>
+        </div>
+        <AccessDenied
+          message="You don't have permission to view agent ledgers."
+          hint="This page requires the agent.ledger.manage permission (Branch Managers, Admins, Super Admins and Auditors)."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">

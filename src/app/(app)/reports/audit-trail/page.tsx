@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState, Fragment } from 'react';
-import { ShieldAlert, History } from 'lucide-react';
+import { History } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
+import { AccessDenied } from '@/components/AccessDenied';
 import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
 import { ReportLetterhead } from '@/components/ReportLetterhead';
@@ -52,13 +53,10 @@ export default function AuditTrailReportPage() {
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">User Activity / Audit Trail</h1>
           <p className="text-sm text-gray-500 mt-0.5">Who did what, when</p>
         </div>
-        <Card>
-          <CardContent className="text-center py-12 px-4">
-            <ShieldAlert className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-            <p className="text-gray-500">You don&apos;t have permission to view the audit trail.</p>
-            <p className="text-xs text-gray-400 mt-1">This report requires the audit.view permission (Auditors and Super Admins).</p>
-          </CardContent>
-        </Card>
+        <AccessDenied
+          message="You don't have permission to view the audit trail."
+          hint="This report requires the audit.view permission (Auditors and Super Admins)."
+        />
       </div>
     );
   }

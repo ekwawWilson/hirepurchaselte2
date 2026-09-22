@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { AccessDenied } from '@/components/AccessDenied';
 
 interface Customer {
   id: string; firstName: string; lastName: string; phone: string | null; phone2?: string | null; phone3?: string | null;
@@ -47,6 +48,7 @@ const CONTRACT_TYPE_OPTIONS = [
 ];
 
 export default function ContractsPage() {
+  const canView = useAuthStore((s) => s.hasPermission('contract.view'));
   const canCreate = useAuthStore((s) => s.hasPermission('contract.create'));
   const { toast } = useToast();
   const [contracts, setContracts] = useState<Contract[]>([]);
@@ -166,7 +168,7 @@ export default function ContractsPage() {
   }
 
   useEffect(() => {
-    loadContracts();
+    if (canView) loadContracts(); else setIsLoading(false);
     // Which types this company offers (Settings > Contract types) — drives both
     // the page's subtitle and the wizard's type picker.
     api.get<{ settings: { saveToOwnEnabled: boolean; deviceLoanEnabled: boolean } }>('/settings/contract-types')
@@ -174,7 +176,7 @@ export default function ContractsPage() {
       .catch(() => undefined) // falls back to Deposit + Instalment only, which is always allowed
       .finally(() => setTypesLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canView]);
 
   useEffect(() => {
     if (!showForm) return;
@@ -302,6 +304,21 @@ export default function ContractsPage() {
       (i.product.category?.name ?? '').toLowerCase().includes(q)
     );
   });
+
+  if (!canView) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Contracts</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Contract accounts</p>
+        </div>
+        <AccessDenied
+          message="You don't have permission to view contracts."
+          hint="Ask an administrator for the contract.view permission."
+        />
+      </div>
+    );
+  }
 
   if (showForm) {
     return (

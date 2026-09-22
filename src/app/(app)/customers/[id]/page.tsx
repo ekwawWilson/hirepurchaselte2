@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { UserRound } from 'lucide-react';
+import { AccessDenied } from '@/components/AccessDenied';
 import { PhoneVerifyField } from '@/components/PhoneVerifyField';
 import { CustomerPhotoField } from '@/components/CustomerPhotoField';
 import { Textarea } from '@/components/ui/textarea';
@@ -31,6 +32,7 @@ interface Contract {
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const canView = useAuthStore((s) => s.hasPermission('customer.view'));
   const canUpdate = useAuthStore((s) => s.hasPermission('customer.update'));
   const { toast } = useToast();
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -59,9 +61,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   }
 
   useEffect(() => {
+    if (!canView) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, canView]);
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
@@ -84,6 +87,17 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     } finally {
       setSaving(false);
     }
+  }
+
+  if (!canView) {
+    return (
+      <div className="max-w-3xl space-y-6">
+        <AccessDenied
+          message="You don't have permission to view customers."
+          hint="Ask an administrator for the customer.view permission."
+        />
+      </div>
+    );
   }
 
   if (!customer) {

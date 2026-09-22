@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { AccessDenied } from '@/components/AccessDenied';
 
 interface Product { id: string; name: string; sku: string }
 interface PriceChartEntry {
@@ -48,6 +49,7 @@ interface TypeFormState {
 const emptyTypeForm: TypeFormState = { enabled: false, totalPayable: '', depositAmount: '', interestRateBps: '' };
 
 export default function PriceChartPage() {
+  const canView = useAuthStore((s) => s.hasPermission('pricechart.view'));
   const canEdit = useAuthStore((s) => s.hasPermission('pricechart.edit'));
   const { toast } = useToast();
   const [entries, setEntries] = useState<PriceChartEntry[]>([]);
@@ -98,9 +100,10 @@ export default function PriceChartPage() {
   }
 
   useEffect(() => {
+    if (!canView) { setIsLoading(false); return; }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canView]);
 
   function resetForm() {
     setProductId('');
@@ -262,6 +265,21 @@ export default function PriceChartPage() {
             <Button type="button" variant="outline" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</Button>
           </div>
         </form>
+      </div>
+    );
+  }
+
+  if (!canView) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Price Chart</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Admin-managed pricing that contracts read from</p>
+        </div>
+        <AccessDenied
+          message="You don't have permission to view the price chart."
+          hint="Ask an administrator for the pricechart.view permission."
+        />
       </div>
     );
   }

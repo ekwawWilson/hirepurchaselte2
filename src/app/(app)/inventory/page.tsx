@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { AccessDenied } from '@/components/AccessDenied';
 
 interface Product { id: string; name: string; sku: string }
 interface Branch { id: string; name: string; code: string }
@@ -24,6 +25,7 @@ interface InventoryItem {
 }
 
 export default function InventoryPage() {
+  const canView = useAuthStore((s) => s.hasPermission('inventory.view'));
   const canReceive = useAuthStore((s) => s.hasPermission('inventory.receive'));
   const isAllBranch = useAuthStore((s) => s.user?.branchId === null);
   const { toast } = useToast();
@@ -55,9 +57,10 @@ export default function InventoryPage() {
   }
 
   useEffect(() => {
+    if (!canView) { setIsLoading(false); return; }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canView]);
 
   useEffect(() => {
     if (!showForm || !isAllBranch) return;
@@ -138,6 +141,21 @@ export default function InventoryPage() {
             </form>
           </CardContent>
         </Card>
+      </div>
+    );
+  }
+
+  if (!canView) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Inventory</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Serialized stock across all branches you can see</p>
+        </div>
+        <AccessDenied
+          message="You don't have permission to view inventory."
+          hint="Ask an administrator for the inventory.view permission."
+        />
       </div>
     );
   }

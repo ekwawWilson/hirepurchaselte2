@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ClipboardCheck, ChevronRight } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
+import { useAuthStore } from '@/lib/authStore';
+import { AccessDenied } from '@/components/AccessDenied';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, formatDate, contractTypeLabel } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -37,6 +39,7 @@ interface PendingContract {
  * user) — the same query the ordinary Contracts page uses, just filtered.
  */
 export default function ContractApprovalsPage() {
+  const canApprove = useAuthStore((s) => s.hasPermission('contract.approve'));
   const { toast } = useToast();
   const [contracts, setContracts] = useState<PendingContract[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -56,7 +59,7 @@ export default function ContractApprovalsPage() {
     }
   }, [toast]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (canApprove) load(); }, [load, canApprove]);
 
   async function approve(c: PendingContract) {
     setBusyId(c.id);
@@ -85,6 +88,21 @@ export default function ContractApprovalsPage() {
     } finally {
       setBusyId(null);
     }
+  }
+
+  if (!canApprove) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Contract Approvals</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Agent-submitted contracts waiting for a decision</p>
+        </div>
+        <AccessDenied
+          message="You don't have permission to approve contracts."
+          hint="This page requires the contract.approve permission (Branch Managers, Admins and Super Admins)."
+        />
+      </div>
+    );
   }
 
   return (

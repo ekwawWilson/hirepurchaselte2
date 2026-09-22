@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Wallet } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
+import { useAuthStore } from '@/lib/authStore';
+import { AccessDenied } from '@/components/AccessDenied';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -49,6 +51,7 @@ const STATUS_TONE: Record<string, string> = {
  * form to tell the office they have paid some of it in (agentLedgerService.ts).
  */
 export default function MyDepositsPage() {
+  const canView = useAuthStore((s) => s.hasPermission('agent.ledger.view'));
   const { toast } = useToast();
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [totals, setTotals] = useState<Totals | null>(null);
@@ -72,7 +75,7 @@ export default function MyDepositsPage() {
     }
   }, [toast]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (canView) load(); }, [load, canView]);
 
   function outstanding(e: LedgerEntry) {
     const pendingOrConfirmed = e.remittances.filter((r) => r.status !== 'REJECTED').reduce((s, r) => s + r.amountMinor, 0);
@@ -104,6 +107,21 @@ export default function MyDepositsPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (!canView) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">My Deposits</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Cash deposits you have collected, and what you still owe the office</p>
+        </div>
+        <AccessDenied
+          message="You don't have permission to view an agent deposit ledger."
+          hint="This page requires the agent.ledger.view permission (the Agent role)."
+        />
+      </div>
+    );
   }
 
   return (
