@@ -47,6 +47,10 @@ export default function LoginPage() {
             backgroundSize: '28px 28px',
           }}
         />
+        {/* A soft glow in the logo's own orange — a deliberately small, single
+            dose (blue stays the dominant colour here, exactly as in the logo
+            mark itself) rather than a 50/50 blend. */}
+        <div className="absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-brand-accent/20 blur-3xl" />
         <div className="relative flex flex-col justify-end h-full p-12 text-white z-10">
           <div className="max-w-sm">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-300 mb-3">

@@ -10,8 +10,14 @@
  */
 export const APP_NAME = 'PETROS Hirepurchase';
 
-/** Brand colour behind the initials badge — matches the manifest/viewport theme colour. */
-export const APP_THEME_COLOR = '#1e3a8a';
+/**
+ * Brand colour behind the initials badge — matches the manifest/viewport
+ * theme colour, and globals.css's --primary (sampled from the tenant's own
+ * FlezyPay logo; see that file's comment). Kept as a literal hex, not a CSS
+ * var reference, since this feeds server-rendered PNGs (appIconService.tsx)
+ * and a <head> meta tag (layout.tsx) — neither has access to globals.css.
+ */
+export const APP_THEME_COLOR = '#0b5bcb';
 
 /**
  * An uploaded logo is stored inline as a data URL (OrgSettings.logoUrl), so it

@@ -7,12 +7,14 @@
   --card-foreground: 222 47% 11%;
   --popover: 0 0% 100%;
   --popover-foreground: 222 47% 11%;
-  /* Tailwind blue-600. The legacy hirepurchase app DECLARES a deeper 222 84% 35%
-     primary, but never maps it into Tailwind's theme (it has no @theme block), so
-     that value never renders — every accent legacy actually shows (sidebar
-     highlight, avatars, logo badge, tab underline) is a hardcoded blue-600.
-     This is that colour, set once, so HP-Lite looks the way legacy looks. */
-  --primary: 221 83% 53%;
+  /* Sampled directly from the tenant's own FlezyPay logo mark (the bright
+     stop of its blue gradient, averaged 215° 98% 42% across a pixel scan —
+     see the redesign commit for the extraction). Saturation trimmed from 98%
+     to 90% for broad UI use (buttons, sidebar fills): a hue this saturated
+     reads as vivid branding on a logo's letterforms but slightly neon across
+     a large flat fill. Still 6.2:1 contrast against white text — better than
+     the previous generic Tailwind blue-600 (5.2:1) it replaces. */
+  --primary: 215 90% 42%;
   --primary-foreground: 210 40% 98%;
   --secondary: 210 16% 93%;
   --secondary-foreground: 222 47% 20%;
@@ -24,7 +26,16 @@
   --destructive-foreground: 210 40% 98%;
   --border: 214 20% 88%;
   --input: 214 20% 88%;
-  --ring: 221 83% 53%;
+  --ring: 215 90% 42%;
+  /* The logo's other colour — its "Pay" wordmark and underline swoosh, a
+     bright orange (sampled 28° 97% 48%, again saturation-trimmed for UI use).
+     Deliberately NOT promoted to buttons/links the way --primary is: orange
+     already means "needs attention" throughout this app (PARTIAL/
+     REVISION_REQUESTED contract statuses — see getStatusColor in utils.ts),
+     so using it for ordinary actions would blur that signal. Used sparingly
+     instead, as a genuine second brand colour rather than just decoration:
+     the login screens' hero-panel glow, and one Dashboard quick-action tile. */
+  --brand-accent: 30 92% 52%;
   /* Rounded, human-app feel (legacy hirepurchase reference) — was 0rem (deliberately
      square, matching a different reference app) earlier this project. */
   --radius: 0.75rem;
@@ -34,7 +45,7 @@
   --sidebar-border: 215 25% 20%;
   --sidebar-text: 215 20% 65%;
   --sidebar-text-active: 0 0% 100%;
-  --sidebar-active-bg: 221 83% 53%;
+  --sidebar-active-bg: 215 90% 42%;
   --sidebar-hover-bg: 215 25% 20%;
 
   /* Topbar */
@@ -52,6 +63,7 @@
   --color-popover-foreground: hsl(var(--popover-foreground));
   --color-primary: hsl(var(--primary));
   --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-brand-accent: hsl(var(--brand-accent));
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
   --color-muted: hsl(var(--muted));
@@ -93,7 +105,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 ::selection {
-  background: rgba(37, 99, 235, 0.18);
+  background: rgba(11, 91, 203, 0.18);
   color: hsl(var(--foreground));
 }
 
@@ -106,7 +118,7 @@ h1, h2, h3, h4, h5, h6 {
    touches (alongside rise-in/slide-down/slide-up) that keeps this from reading
    as a generic flat dashboard. Subtle on purpose: barely visible at rest. */
 .surface-grid {
-  background-image: radial-gradient(circle, rgba(30, 58, 138, 0.06) 1px, transparent 1px);
+  background-image: radial-gradient(circle, rgba(11, 91, 203, 0.06) 1px, transparent 1px);
   background-size: 28px 28px;
 }
 

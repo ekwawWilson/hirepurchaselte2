@@ -60,12 +60,14 @@ function StatCard({
 
 /** Legacy's quick action: a tinted card with a plus, a title and a line of detail. */
 function QuickAction({ href, label, description, tone }: {
-  href: string; label: string; description: string; tone: 'blue' | 'emerald' | 'purple';
+  href: string; label: string; description: string; tone: 'blue' | 'emerald' | 'purple' | 'orange';
 }) {
   const tones = {
     blue: { card: 'bg-blue-50/80 border-blue-100 hover:bg-blue-50', title: 'text-blue-900', text: 'text-blue-600' },
     emerald: { card: 'bg-emerald-50/80 border-emerald-100 hover:bg-emerald-50', title: 'text-emerald-900', text: 'text-emerald-600' },
     purple: { card: 'bg-purple-50/80 border-purple-100 hover:bg-purple-50', title: 'text-purple-900', text: 'text-purple-600' },
+    // The logo's own orange — see globals.css's --brand-accent comment.
+    orange: { card: 'bg-orange-50/80 border-orange-100 hover:bg-orange-50', title: 'text-orange-900', text: 'text-orange-600' },
   }[tone];
 
   return (
@@ -177,7 +179,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <QuickAction href="/customers" label="Register Customer" description="Create account & membership ID" tone="blue" />
           <QuickAction href="/contracts" label="New Contract" description="Start a hire purchase contract" tone="emerald" />
-          <QuickAction href="/products" label="Add Product" description="Add products to the catalogue" tone="purple" />
+          <QuickAction href="/products" label="Add Product" description="Add products to the catalogue" tone="orange" />
         </div>
       </section>
 

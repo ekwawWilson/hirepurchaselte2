@@ -75,6 +75,9 @@ export default function PortalLoginPage() {
       {/* Left panel */}
       <div className="hidden lg:flex lg:w-1/2 xl:w-3/5 relative bg-slate-900 overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/30 via-slate-900 to-slate-900" />
+        {/* A soft glow in the logo's own orange — a small, deliberate dose
+            (blue stays dominant, matching the logo mark itself). */}
+        <div className="absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-brand-accent/20 blur-3xl" />
         <div className="relative flex flex-col justify-between h-full p-12 text-white z-10">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 bg-primary flex items-center justify-center">
