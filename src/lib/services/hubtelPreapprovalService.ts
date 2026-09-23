@@ -74,6 +74,14 @@ export async function initiatePreapproval(params: {
         callbackUrl: preapprovalCallbackUrl(),
       });
     } catch (e) {
+      // The call never reached Hubtel (network failure, bad credentials) or
+      // was rejected outright — either way, no hubtelPreapprovalId exists for
+      // Hubtel to ever send a callback about, so this row would otherwise sit
+      // PENDING forever: unlike a HubtelTransaction, nothing sweeps stale
+      // preapprovals, and it's never attached to a contract (enableDirectDebit
+      // hasn't run yet), so staff can't even see it to clean it up. Delete it
+      // rather than leave an invisible, permanently-stuck row behind.
+      await prisma.hubtelPreapproval.delete({ where: { id: preapproval.id } });
       throw e instanceof HubtelApiError ? new PreapprovalError(e.message) : e;
     }
     // Stays PENDING — a real mandate is only APPROVED once the customer

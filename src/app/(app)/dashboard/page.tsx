@@ -92,6 +92,16 @@ export default function DashboardPage() {
   // GET /api/contracts every other page already uses (rbac.ts's
   // ownRecordsWhere for AGENT; a plain branch view for SALES).
   const showAgentSummary = !hasReportAccess && canViewContracts;
+  // The branch-wide dashboard below is reachable by roles that hold none of
+  // a given quick action's underlying permission (STORE_KEEPER has neither
+  // customer.view nor contract.view; AUDITOR has none of the three at all) —
+  // unconditional tiles would point them at a page that's either a hard
+  // AccessDenied wall or, at best, missing the actual create button they
+  // came for. Gated the same way each destination page gates its own button.
+  const canCreateCustomer = useAuthStore((s) => s.hasPermission('customer.create'));
+  const canCreateContract = useAuthStore((s) => s.hasPermission('contract.create'));
+  const canReceiveInventory = useAuthStore((s) => s.hasPermission('inventory.receive'));
+  const hasAnyQuickAction = canCreateCustomer || canCreateContract || canReceiveInventory;
   const [stats, setStats] = useState<DashboardSummary | null>(null);
   const [recent, setRecent] = useState<RecentContract[] | null>(null);
   const [ownContracts, setOwnContracts] = useState<RecentContract[] | null>(null);
@@ -174,14 +184,22 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <section>
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <QuickAction href="/customers" label="Register Customer" description="Create account & membership ID" tone="blue" />
-          <QuickAction href="/contracts" label="New Contract" description="Start a hire purchase contract" tone="emerald" />
-          <QuickAction href="/products" label="Add Product" description="Add products to the catalogue" tone="orange" />
-        </div>
-      </section>
+      {hasAnyQuickAction && (
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {canCreateCustomer && (
+              <QuickAction href="/customers" label="Register Customer" description="Create account & membership ID" tone="blue" />
+            )}
+            {canCreateContract && (
+              <QuickAction href="/contracts" label="New Contract" description="Start a hire purchase contract" tone="emerald" />
+            )}
+            {canReceiveInventory && (
+              <QuickAction href="/products" label="Add Product" description="Add products to the catalogue" tone="orange" />
+            )}
+          </div>
+        </section>
+      )}
 
       {canViewContracts && (
         <section>

@@ -363,6 +363,43 @@ describe('Hubtel Direct Debit', () => {
       .rejects.toThrow(PreapprovalError);
   });
 
+  it('initiatePreapproval leaves no orphaned row when the live Hubtel call itself fails (network/credentials, not a Hubtel rejection)', async () => {
+    const { customerId, msisdn } = await makeCustomer('INITFAIL');
+
+    const originalMode = process.env.HUBTEL_PAYMENTS_MODE;
+    const originalSalesId = process.env.HUBTEL_POS_SALES_ID;
+    const originalKey = process.env.HUBTEL_API_KEY;
+    const originalSecret = process.env.HUBTEL_API_SECRET;
+    process.env.HUBTEL_PAYMENTS_MODE = 'live';
+    process.env.HUBTEL_POS_SALES_ID = 'TEST-SALES-ID';
+    process.env.HUBTEL_API_KEY = 'test-key';
+    process.env.HUBTEL_API_SECRET = 'test-secret';
+
+    const guardedFetch = globalThis.fetch;
+    // Simulates a network failure reaching Hubtel — not a parsed rejection
+    // (which callHubtelPreapprovalInitiate would return as a normal response),
+    // an actual thrown error, same as a DNS/connection failure would produce.
+    globalThis.fetch = vi.fn(async () => { throw new Error('fetch failed'); }) as unknown as typeof fetch;
+
+    try {
+      await expect(initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId }))
+        .rejects.toThrow();
+
+      // Nothing left behind: no HubtelPreapproval row exists for this customer —
+      // otherwise it would sit PENDING forever with no hubtelPreapprovalId for
+      // Hubtel to ever send a callback about, invisible to staff since it was
+      // never attached to a contract.
+      const orphan = await prisma.hubtelPreapproval.findFirst({ where: { customerId } });
+      expect(orphan).toBeNull();
+    } finally {
+      globalThis.fetch = guardedFetch;
+      process.env.HUBTEL_PAYMENTS_MODE = originalMode;
+      process.env.HUBTEL_POS_SALES_ID = originalSalesId;
+      process.env.HUBTEL_API_KEY = originalKey;
+      process.env.HUBTEL_API_SECRET = originalSecret;
+    }
+  });
+
   it('a mandate is auto-approved in mock mode and reused for the same customer+number+network', async () => {
     const { customerId, msisdn } = await makeCustomer('REUSE');
 
