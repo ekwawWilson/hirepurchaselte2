@@ -28,18 +28,20 @@ export function MobileTabBar({ moreOpen, onMoreToggle }: { moreOpen: boolean; on
             key={tab.href}
             href={tab.href}
             onClick={() => moreOpen && onMoreToggle()}
-            className="flex-1 flex flex-col items-center justify-center gap-1 relative"
+            className="flex-1 flex items-center justify-center"
           >
-            {active && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-primary rounded-t-full" />}
-            <tab.icon className={cn('h-5 w-5', active ? 'text-primary' : 'text-gray-400')} strokeWidth={active ? 2.5 : 1.75} />
-            <span className={cn('text-[10px] font-semibold', active ? 'text-primary' : 'text-gray-400')}>{tab.name}</span>
+            <span className={cn('flex flex-col items-center justify-center gap-1 rounded-2xl px-4 py-1.5 transition-colors', active && 'bg-primary/10')}>
+              <tab.icon className={cn('h-5 w-5', active ? 'text-primary' : 'text-gray-400')} strokeWidth={active ? 2.5 : 1.75} />
+              <span className={cn('text-[10px] font-semibold', active ? 'text-primary' : 'text-gray-400')}>{tab.name}</span>
+            </span>
           </Link>
         );
       })}
-      <button type="button" onClick={onMoreToggle} className="flex-1 flex flex-col items-center justify-center gap-1 relative">
-        {moreOpen && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-primary rounded-t-full" />}
-        <MoreHorizontal className={cn('h-5 w-5', moreOpen ? 'text-primary' : 'text-gray-400')} />
-        <span className={cn('text-[10px] font-medium', moreOpen ? 'text-primary' : 'text-gray-500')}>More</span>
+      <button type="button" onClick={onMoreToggle} className="flex-1 flex items-center justify-center">
+        <span className={cn('flex flex-col items-center justify-center gap-1 rounded-2xl px-4 py-1.5 transition-colors', moreOpen && 'bg-primary/10')}>
+          <MoreHorizontal className={cn('h-5 w-5', moreOpen ? 'text-primary' : 'text-gray-400')} />
+          <span className={cn('text-[10px] font-medium', moreOpen ? 'text-primary' : 'text-gray-500')}>More</span>
+        </span>
       </button>
     </nav>
   );

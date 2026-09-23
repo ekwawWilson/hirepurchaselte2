@@ -133,17 +133,16 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
           {NAV.map((tab) => {
             const active = isActive(pathname, tab.href);
             return (
-              <Link
-                key={tab.href}
-                href={tab.href}
-                className={cn(
-                  'flex-1 flex flex-col items-center justify-center gap-1 relative transition-colors',
-                  active ? 'text-primary' : 'text-gray-400 hover:text-gray-600',
-                )}
-              >
-                <tab.icon className="h-5 w-5" strokeWidth={active ? 2.5 : 1.75} />
-                <span className="text-[10px] font-semibold leading-none">{tab.tabLabel}</span>
-                {active && <span className="absolute bottom-0 h-0.5 w-8 bg-primary rounded-full" />}
+              <Link key={tab.href} href={tab.href} className="flex-1 flex items-center justify-center">
+                <span
+                  className={cn(
+                    'flex flex-col items-center justify-center gap-1 rounded-2xl px-4 py-1.5 transition-colors',
+                    active ? 'bg-primary/10 text-primary' : 'text-gray-400 hover:text-gray-600',
+                  )}
+                >
+                  <tab.icon className="h-5 w-5" strokeWidth={active ? 2.5 : 1.75} />
+                  <span className="text-[10px] font-semibold leading-none">{tab.tabLabel}</span>
+                </span>
               </Link>
             );
           })}
