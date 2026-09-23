@@ -573,6 +573,12 @@ model HubtelPreapproval {
   // through a real verification step, and for any mandate created before
   // this column existed.
   verificationType    String?
+  // The 4-letter prefix Hubtel put in front of the OTP it texted the
+  // customer (e.g. "HNRM") — only set when verificationType is OTP. The
+  // full code submitted to Hubtel's verifyotp endpoint is "{otpPrefix}-{the
+  // 4 digits staff enter}" (see submitPreapprovalOtp); Hubtel's docs give
+  // this as one dash-joined string, not two separate fields.
+  otpPrefix           String?
   status              String    @default("PENDING")
   approvedAt          DateTime?
   cancelledAt         DateTime?

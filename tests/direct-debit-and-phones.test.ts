@@ -22,7 +22,7 @@ import { postPayment } from '@/lib/services/paymentService';
 import { verifyMobileMoneyNumber } from '@/lib/services/hubtelVerificationService';
 import {
   initiatePreapproval, enableDirectDebit, disableDirectDebit, chargeDirectDebit,
-  processDirectDebitCallback, retryFailedDirectDebits, PreapprovalError,
+  processDirectDebitCallback, retryFailedDirectDebits, submitPreapprovalOtp, PreapprovalError,
 } from '@/lib/services/hubtelPreapprovalService';
 import { runDirectDebitCollections } from '@/lib/services/collectionsService';
 import { updateOperatingSettings } from '@/lib/services/operatingSettingsService';
@@ -286,6 +286,60 @@ describe('Hubtel Direct Debit', () => {
       expect(sample).not.toBeNull();
       expect(JSON.parse(sample!.requestPayload as string)).toMatchObject({ channel: 'mtn-gh-direct-debit' });
       expect(JSON.parse(sample!.responsePayload as string)).toMatchObject({ responseCode: '2000' });
+    } finally {
+      globalThis.fetch = guardedFetch;
+      process.env.HUBTEL_PAYMENTS_MODE = originalMode;
+      process.env.HUBTEL_POS_SALES_ID = originalSalesId;
+      process.env.HUBTEL_API_KEY = originalKey;
+      process.env.HUBTEL_API_SECRET = originalSecret;
+    }
+  });
+
+  it('submitPreapprovalOtp builds "{otpPrefix}-{code}" and only clears the OTP step, not the mandate itself', async () => {
+    const { customerId, msisdn } = await makeCustomer('OTPSUBMIT');
+
+    const originalMode = process.env.HUBTEL_PAYMENTS_MODE;
+    const originalSalesId = process.env.HUBTEL_POS_SALES_ID;
+    const originalKey = process.env.HUBTEL_API_KEY;
+    const originalSecret = process.env.HUBTEL_API_SECRET;
+    process.env.HUBTEL_PAYMENTS_MODE = 'live';
+    process.env.HUBTEL_POS_SALES_ID = 'TEST-SALES-ID';
+    process.env.HUBTEL_API_KEY = 'test-key';
+    process.env.HUBTEL_API_SECRET = 'test-secret';
+
+    const guardedFetch = globalThis.fetch;
+    const fetchSpy = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('/preapproval/initiate')) {
+        return new Response(JSON.stringify({
+          message: 'Request received! Pending preapproval',
+          responseCode: '2000',
+          data: { hubtelPreApprovalId: 'HPA-OTPSUBMIT-1', clientReferenceId: 'whatever', verificationType: 'OTP', otpPrefix: 'HNRM', preapprovalStatus: 'PENDING' },
+        }), { status: 200 });
+      }
+      expect(String(url)).toContain('/preapproval/verifyotp');
+      const sent = JSON.parse(init?.body as string);
+      expect(sent.otpCode).toBe('HNRM-8852');
+      expect(sent.hubtelPreApprovalId).toBe('HPA-OTPSUBMIT-1');
+      return new Response(JSON.stringify({
+        message: 'OTP Verified! Pending preapproval',
+        responseCode: '2000',
+        data: { hubtelPreApprovalId: 'HPA-OTPSUBMIT-1', preapprovalStatus: 'PENDING' },
+      }), { status: 200 });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
+      expect(preapproval.otpPrefix).toBe('HNRM');
+
+      const result = await submitPreapprovalOtp({ preapprovalId: preapproval.id, otpCode: '8852' });
+      // Stays PENDING — the OTP step only clears the way for Hubtel's real
+      // preapproval callback to eventually flip it to APPROVED/FAILED.
+      expect(result.status).toBe('PENDING');
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      // A malformed code never reaches Hubtel at all.
+      await expect(submitPreapprovalOtp({ preapprovalId: preapproval.id, otpCode: '12' })).rejects.toThrow(PreapprovalError);
     } finally {
       globalThis.fetch = guardedFetch;
       process.env.HUBTEL_PAYMENTS_MODE = originalMode;

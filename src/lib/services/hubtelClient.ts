@@ -102,6 +102,10 @@ export function preapprovalInitiateUrl(salesId: string): string {
   return `https://preapproval.hubtel.com/api/v2/merchant/${salesId}/preapproval/initiate`;
 }
 
+export function preapprovalVerifyOtpUrl(salesId: string): string {
+  return `https://preapproval.hubtel.com/api/v2/merchant/${salesId}/preapproval/verifyotp`;
+}
+
 interface ReceiveMoneyResponse {
   Message: string;
   ResponseCode: string;
@@ -203,6 +207,51 @@ export async function callHubtelPreapprovalInitiate(params: {
     hubtelPreapprovalId: body.data?.hubtelPreApprovalId,
     verificationType: body.data?.verificationType,
     otpPrefix: body.data?.otpPrefix ?? null,
+    raw: body,
+  };
+}
+
+interface PreapprovalVerifyOtpResponse {
+  message: string;
+  responseCode: string;
+  data: { hubtelPreApprovalId: string; preapprovalStatus: string } | null;
+}
+
+/**
+ * Submits the OTP code for a preapproval whose verificationType came back as
+ * OTP instead of USSD (the number already has a mandate with a different
+ * Hubtel merchant — see callHubtelPreapprovalInitiate). responseCode '2000'
+ * means the code was accepted; the mandate itself still stays PENDING until
+ * the usual preapproval callback delivers its final APPROVED/FAILED status —
+ * this call only clears the OTP step, it doesn't finish the mandate.
+ */
+export async function callHubtelPreapprovalVerifyOtp(params: {
+  msisdn: string;
+  hubtelPreapprovalId: string;
+  clientReferenceId: string;
+  otpCode: string;
+}): Promise<{ accepted: boolean; message: string; raw: unknown }> {
+  const creds = requireHubtelCredentials();
+  const payload = {
+    customerMsisdn: formatPhoneForHubtel(params.msisdn),
+    hubtelPreApprovalId: params.hubtelPreapprovalId,
+    clientReferenceId: params.clientReferenceId,
+    otpCode: params.otpCode,
+  };
+
+  const res = await fetch(preapprovalVerifyOtpUrl(creds.salesId), {
+    method: 'POST',
+    headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const parsed = await parseHubtelResponse(res);
+  await recordHubtelSample('PREAPPROVAL_VERIFY_OTP', payload, parsed);
+  const body = parsed as PreapprovalVerifyOtpResponse;
+  if (!res.ok) throw new HubtelApiError(body?.message || `Hubtel OTP verification failed with HTTP ${res.status}`);
+
+  return {
+    accepted: body.responseCode === '2000',
+    message: body.message,
     raw: body,
   };
 }

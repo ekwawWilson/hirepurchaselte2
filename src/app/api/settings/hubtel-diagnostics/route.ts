@@ -111,7 +111,7 @@ function safeJsonParse(text: string | null): unknown {
 async function loadSamplePayloads(): Promise<Record<string, SamplePayload | null>> {
   const kinds: HubtelSampleKind[] = [
     'USSD', 'PREAPPROVAL_CALLBACK', 'STATUS_CHECK',
-    'RECEIVE_MONEY_INITIATE', 'DIRECT_DEBIT_CHARGE', 'PREAPPROVAL_INITIATE',
+    'RECEIVE_MONEY_INITIATE', 'DIRECT_DEBIT_CHARGE', 'PREAPPROVAL_INITIATE', 'PREAPPROVAL_VERIFY_OTP',
   ];
   const [logs, latestPaymentTxn] = await Promise.all([
     prisma.hubtelSampleLog.findMany({ where: { kind: { in: kinds } } }),
@@ -152,6 +152,7 @@ async function loadSamplePayloads(): Promise<Record<string, SamplePayload | null
     receiveMoneyInitiate: fromLog('RECEIVE_MONEY_INITIATE', 'The most recent Receive-Money call this server actually sent Hubtel for a customer-initiated payment (this path never runs in mock mode).'),
     directDebitCharge: fromLog('DIRECT_DEBIT_CHARGE', 'The most recent Receive-Money call this server actually sent Hubtel to charge an approved direct-debit mandate (this path never runs in mock mode).'),
     preapprovalInitiate: fromLog('PREAPPROVAL_INITIATE', 'The most recent mandate-request call this server actually sent Hubtel (this path never runs in mock mode).'),
+    preapprovalVerifyOtp: fromLog('PREAPPROVAL_VERIFY_OTP', 'The most recent OTP-verification call this server actually sent Hubtel for a mandate stuck on verificationType OTP (this path never runs in mock mode).'),
   };
 }
 

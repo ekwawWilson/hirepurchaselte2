@@ -3,7 +3,7 @@ import { generateTransactionRef } from '../utils/idGenerators';
 import { DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName } from '../constants/contracts';
 import { recordSuccessfulHubtelCharge } from './hubtelPaymentService';
 import { appendWebhookToken } from '../auth/webhookSecurity';
-import { isHubtelLiveMode, callHubtelReceiveMoney, callHubtelPreapprovalInitiate, HubtelApiError } from './hubtelClient';
+import { isHubtelLiveMode, callHubtelReceiveMoney, callHubtelPreapprovalInitiate, callHubtelPreapprovalVerifyOtp, HubtelApiError } from './hubtelClient';
 
 export class PreapprovalError extends Error {}
 
@@ -77,16 +77,17 @@ export async function initiatePreapproval(params: {
       throw e instanceof HubtelApiError ? new PreapprovalError(e.message) : e;
     }
     // Stays PENDING — a real mandate is only APPROVED once the customer
-    // completes the USSD prompt or OTP on their own phone; the preapproval
+    // completes the USSD prompt or the OTP is verified; the preapproval
     // callback route flips it once Hubtel confirms. verificationType is
     // Hubtel's own decision (not something this app requests — see
     // callHubtelPreapprovalInitiate's docs), stored so staff can tell "still
-    // waiting on the customer" (USSD) apart from "stuck — this number needs
-    // OTP verification, which isn't implemented" (OTP) instead of both
-    // looking like the same silent PENDING.
+    // waiting on the customer" (USSD) apart from "needs an OTP" (OTP) instead
+    // of both looking like the same silent PENDING. otpPrefix is only ever
+    // set alongside verificationType 'OTP' — submitPreapprovalOtp needs it to
+    // build the full code Hubtel expects.
     const pending = await prisma.hubtelPreapproval.update({
       where: { id: preapproval.id },
-      data: { hubtelPreapprovalId: result.hubtelPreapprovalId, verificationType: result.verificationType },
+      data: { hubtelPreapprovalId: result.hubtelPreapprovalId, verificationType: result.verificationType, otpPrefix: result.otpPrefix },
     });
     return { preapproval: pending, reused: false as const };
   }
@@ -99,6 +100,40 @@ export async function initiatePreapproval(params: {
     data: { status: 'APPROVED', approvedAt: new Date(), hubtelPreapprovalId: `MOCK-${clientReferenceId}` },
   });
   return { preapproval: approved, reused: false as const };
+}
+
+/**
+ * Submits the 4-digit OTP Hubtel texted the customer (see
+ * initiatePreapproval's verificationType 'OTP' — happens when the number
+ * already has a mandate with a different Hubtel merchant). Only clears the
+ * OTP step: the mandate itself stays PENDING and only reaches its final
+ * APPROVED/FAILED status once the usual preapproval callback arrives, same
+ * as the plain USSD path.
+ */
+export async function submitPreapprovalOtp(params: { preapprovalId: string; otpCode: string }) {
+  if (!/^\d{4}$/.test(params.otpCode)) throw new PreapprovalError('Enter the 4-digit code Hubtel texted the customer');
+
+  const preapproval = await prisma.hubtelPreapproval.findUniqueOrThrow({ where: { id: params.preapprovalId } });
+  if (preapproval.status !== 'PENDING') throw new PreapprovalError(`This mandate is ${preapproval.status.toLowerCase()}, not awaiting OTP`);
+  if (preapproval.verificationType !== 'OTP') throw new PreapprovalError('This mandate is not waiting on an OTP');
+  if (!preapproval.hubtelPreapprovalId || !preapproval.otpPrefix) {
+    throw new PreapprovalError('This mandate has no OTP prefix on file — it may predate OTP support; disable it and request a new one');
+  }
+
+  let result;
+  try {
+    result = await callHubtelPreapprovalVerifyOtp({
+      msisdn: preapproval.customerMsisdn,
+      hubtelPreapprovalId: preapproval.hubtelPreapprovalId,
+      clientReferenceId: preapproval.clientReferenceId,
+      otpCode: `${preapproval.otpPrefix}-${params.otpCode}`,
+    });
+  } catch (e) {
+    throw e instanceof HubtelApiError ? new PreapprovalError(e.message) : e;
+  }
+  if (!result.accepted) throw new PreapprovalError(result.message || 'Hubtel rejected that code');
+
+  return preapproval;
 }
 
 export async function cancelPreapproval(params: { preapprovalId: string }) {

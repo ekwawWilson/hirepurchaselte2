@@ -20,7 +20,7 @@ import {
 
 interface Instalment { id: string; instalmentNo: number; dueDate: string; amountDueMinor: number; principalPortionMinor: number; interestPortionMinor: number; amountPaidMinor: number; status: string; daysPastDue?: number }
 interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; notes: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
-interface Preapproval { id: string; status: string; network: string; customerMsisdn: string; verificationType: string | null }
+interface Preapproval { id: string; status: string; network: string; customerMsisdn: string; verificationType: string | null; otpPrefix: string | null }
 interface DeviceLoanState {
   principalMinor: number; principalOutstanding: boolean;
   accruedInterestMinor: number; interestPaidMinor: number; totalOwedMinor: number;
@@ -82,6 +82,8 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [ddSaving, setDdSaving] = useState(false);
   const [chargeAmount, setChargeAmount] = useState('');
   const [charging, setCharging] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSubmitting, setOtpSubmitting] = useState(false);
 
   // The Agent module.
   const [approving, setApproving] = useState(false);
@@ -284,15 +286,29 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       toast({
         title: res.reused ? 'Existing mandate reused' : pending ? 'Awaiting customer approval' : 'Direct debit mandate approved',
         description: !pending ? undefined : isOtp
-          ? "This number already has a mandate with another Hubtel merchant — Hubtel sent an OTP instead of a USSD prompt, which this app doesn't support entering. Try a different number."
+          ? 'This number already has a mandate with another Hubtel merchant — Hubtel texted them an OTP instead of a USSD prompt. Enter it below once they read it out.'
           : 'The customer must confirm on their phone via a USSD prompt before this can be charged.',
-        variant: isOtp ? 'destructive' : undefined,
       });
       await load();
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to set up direct debit', variant: 'destructive' });
     } finally {
       setDdSaving(false);
+    }
+  }
+
+  async function submitOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setOtpSubmitting(true);
+    try {
+      await api.post(`/contracts/${id}/direct-debit/verify-otp`, { otpCode });
+      toast({ title: 'OTP accepted', description: 'Waiting on Hubtel to confirm the mandate.' });
+      setOtpCode('');
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to verify OTP', variant: 'destructive' });
+    } finally {
+      setOtpSubmitting(false);
     }
   }
 
@@ -498,12 +514,36 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                 </div>
                 {contract.hubtelPreapproval.status === 'PENDING' && (
                   contract.hubtelPreapproval.verificationType === 'OTP' ? (
-                    <p className="text-xs text-red-600">
-                      Hubtel sent this customer an OTP instead of a USSD prompt — their number already has a
-                      direct-debit mandate with a different Hubtel merchant, so Hubtel requires OTP verification for
-                      it. This app doesn&apos;t support entering that OTP yet. Ask the customer for a different mobile
-                      money number, or disable this mandate and try again with one.
-                    </p>
+                    <div className="space-y-2">
+                      <p className="text-xs text-amber-600">
+                        This number already has a direct-debit mandate with a different Hubtel merchant, so Hubtel
+                        texted the customer a code instead of sending a USSD prompt. Ask them to read it out and enter
+                        it below.
+                      </p>
+                      <form className="flex items-end gap-3" onSubmit={submitOtp}>
+                        <div>
+                          <Label>OTP code</Label>
+                          <div className="mt-1.5 flex items-center gap-2">
+                            {contract.hubtelPreapproval.otpPrefix && (
+                              <span className="text-sm font-mono text-gray-400">{contract.hubtelPreapproval.otpPrefix}-</span>
+                            )}
+                            <Input
+                              required
+                              className="w-24"
+                              inputMode="numeric"
+                              pattern="\d{4}"
+                              maxLength={4}
+                              placeholder="0000"
+                              value={otpCode}
+                              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            />
+                          </div>
+                        </div>
+                        <Button type="submit" disabled={otpSubmitting || otpCode.length !== 4}>
+                          {otpSubmitting ? 'Verifying...' : 'Verify OTP'}
+                        </Button>
+                      </form>
+                    </div>
                   ) : (
                     <p className="text-xs text-gray-500">
                       Waiting on the customer to approve on their phone — a USSD prompt, or *170# &rarr; My Wallet
