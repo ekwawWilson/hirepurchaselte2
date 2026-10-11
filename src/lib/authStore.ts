@@ -10,6 +10,8 @@ export interface AuthUser {
   branchId: string | null;
   role: string;
   permissions: string[];
+  /** Signed in on a password an administrator issued: nothing else is open until it is replaced. */
+  mustChangePassword?: boolean;
 }
 
 interface AuthState {

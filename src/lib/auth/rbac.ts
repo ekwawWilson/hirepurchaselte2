@@ -3,12 +3,20 @@ import { prisma } from '../db/prisma';
 import { verifyToken } from './jwt';
 import { OWN_SCOPED_ROLES, type Permission, type RoleName } from '../constants/rbac';
 import type { AuthenticatedUser } from './types';
+import { issuedBeforePasswordChange } from '../services/authService';
+
+/** The only staff routes open to someone who has yet to replace a temporary password. */
+const OPEN_BEFORE_PASSWORD_CHANGE = ['/api/auth/me', '/api/auth/password'];
 
 /**
  * Verifies the bearer JWT and loads the user (with role + permissions) fresh
  * from the DB on every request — not just once at login — so a role change
  * or deactivation takes effect immediately rather than waiting for the token
  * to expire. Call at the top of every route handler that needs auth.
+ *
+ * Someone signed in on a temporary password (issued or reset by an
+ * administrator) is refused everywhere but the two routes that let them
+ * replace it — enforced here, not just by the screen that asks.
  */
 export async function requireAuth(req: NextRequest): Promise<{ user: AuthenticatedUser } | { error: NextResponse }> {
   const header = req.headers.get('authorization');
@@ -32,6 +40,15 @@ export async function requireAuth(req: NextRequest): Promise<{ user: Authenticat
     if (!user || !user.isActive) {
       return { error: NextResponse.json({ error: 'Invalid or inactive account' }, { status: 401 }) };
     }
+    // The password has been changed or reset since this token was issued.
+    if (issuedBeforePasswordChange(payload.iat, user.passwordChangedAt)) {
+      return { error: NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 }) };
+    }
+    if (user.mustChangePassword && !OPEN_BEFORE_PASSWORD_CHANGE.includes(req.nextUrl.pathname)) {
+      return {
+        error: NextResponse.json({ error: 'Choose your own password before continuing', code: 'PASSWORD_CHANGE_REQUIRED' }, { status: 403 }),
+      };
+    }
 
     return {
       user: {
@@ -43,6 +60,7 @@ export async function requireAuth(req: NextRequest): Promise<{ user: Authenticat
         roleName: user.role.name as RoleName,
         branchId: user.branchId,
         permissions: user.role.permissions.map((p) => p.name) as Permission[],
+        mustChangePassword: user.mustChangePassword,
       },
     };
   } catch {

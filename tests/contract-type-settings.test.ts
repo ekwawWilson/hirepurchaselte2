@@ -4,7 +4,7 @@
  * never the contracts that already exist.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { makeRequest, enableOptionalContractTypes, registrationFields } from './helpers';
+import { makeRequest, enableOptionalContractTypes, registrationFields, freshPhone } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { POST as customersPOST } from '@/app/api/customers/route';
@@ -12,8 +12,6 @@ import { POST as contractsPOST } from '@/app/api/contracts/route';
 import { POST as paymentsCashPOST } from '@/app/api/payments/cash/route';
 import { GET as contractTypesGET, PATCH as contractTypesPATCH } from '@/app/api/settings/contract-types/route';
 
-const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
-let counter = 0;
 
 async function login(email: string): Promise<string> {
   const res = await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email, password: 'Passw0rd!123' } }));
@@ -38,9 +36,8 @@ describe('Contract type activation', () => {
   }
 
   async function makeCustomer() {
-    counter += 1;
     const res = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { ...registrationFields(), firstName: 'Type', lastName: 'Toggle', phone: `029${runId}${counter}` },
+      token: cashier, body: { ...registrationFields(), firstName: 'Type', lastName: 'Toggle', phone: await freshPhone('024') },
     }));
     return (await res.json()).customer.id as string;
   }

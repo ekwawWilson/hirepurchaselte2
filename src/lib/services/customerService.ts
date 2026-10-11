@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma';
 import { parseImageDataUrl } from '../imageData';
-import { MAX_CUSTOMER_PHOTO_BYTES } from '../constants/customers';
+import { MAX_CUSTOMER_PHOTO_BYTES, normalizeGhanaPhone, networkForPhone, INVALID_MOBILE_NUMBER } from '../constants/customers';
+import { phoneVariants } from './hubtelClient';
 import type { AuthenticatedUser } from '../auth/types';
 
 export class CustomerError extends Error {}
@@ -29,14 +30,53 @@ export async function assertPhonesNotTaken(input: PhoneInput, excludeCustomerId?
   const numbers = [input.phone, input.phone2, input.phone3].filter((p): p is string => !!p && p.trim().length > 0);
   if (numbers.length === 0) return null;
 
+  // Every way each number may have been stored: one registered as 233… years
+  // ago is the same number as today's 0… one.
+  const variants = [...new Set(numbers.flatMap((n) => phoneVariants(n)))];
   const clash = await prisma.customer.findFirst({
     where: {
       ...(excludeCustomerId && { id: { not: excludeCustomerId } }),
-      OR: numbers.flatMap((n) => [{ phone: n }, { phone2: n }, { phone3: n }]),
+      OR: variants.flatMap((n) => [{ phone: n }, { phone2: n }, { phone3: n }]),
     },
     select: { id: true },
   });
   return clash ? 'One of these phone numbers is already registered to another customer' : null;
+}
+
+/**
+ * A customer's mobile number, checked and put in the one form it is stored
+ * in. A number that is mistyped at registration is a customer who can never
+ * be prompted, texted or matched when they dial in — so it is refused here
+ * rather than discovered at the first payment.
+ */
+export function cleanMobileNumber(input: string, label = 'The phone number'): { phone: string } | { error: string } {
+  const phone = normalizeGhanaPhone(input);
+  if (!phone || !networkForPhone(phone)) return { error: `${label} ${INVALID_MOBILE_NUMBER}` };
+  return { phone };
+}
+
+/** A guarantor may be reached on any Ghana number, landline included. */
+export function cleanContactNumber(input: string, label: string): { phone: string } | { error: string } {
+  const phone = normalizeGhanaPhone(input);
+  return phone ? { phone } : { error: `${label} is not a valid Ghana phone number. Enter ten digits, e.g. 0241234567` };
+}
+
+/** National IDs are compared as written on the card: upper case, no stray spaces. */
+export function cleanNationalId(input: string): string {
+  return input.trim().replace(/\s+/g, '').toUpperCase();
+}
+
+/**
+ * One person, one customer record: an ID number already on file belongs to
+ * someone who is already registered — possibly with unpaid contracts under
+ * another phone number.
+ */
+export async function assertNationalIdNotTaken(nationalId: string, excludeCustomerId?: string): Promise<string | null> {
+  const clash = await prisma.customer.findFirst({
+    where: { ...(excludeCustomerId && { id: { not: excludeCustomerId } }), nationalId: { equals: nationalId, mode: 'insensitive' } },
+    select: { membershipId: true },
+  });
+  return clash ? `This National ID is already registered to another customer (${clash.membershipId})` : null;
 }
 
 /**

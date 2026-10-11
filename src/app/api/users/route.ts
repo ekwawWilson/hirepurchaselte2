@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
+import { hashPassword, staffPasswordProblem } from '@/lib/services/authService';
+import { logAudit } from '@/lib/services/auditService';
 
 function toUserResponse(user: {
   id: string; email: string; firstName: string; lastName: string; isActive: boolean;
-  branchId: string | null; role: { name: string };
+  mustChangePassword: boolean; branchId: string | null; role: { name: string };
 }) {
   return {
     id: user.id,
@@ -13,6 +14,7 @@ function toUserResponse(user: {
     firstName: user.firstName,
     lastName: user.lastName,
     isActive: user.isActive,
+    mustChangePassword: user.mustChangePassword,
     branchId: user.branchId,
     role: user.role.name,
   };
@@ -41,9 +43,8 @@ export async function POST(req: NextRequest) {
   if (!email || !password || !firstName || !lastName || !role) {
     return NextResponse.json({ error: 'email, password, firstName, lastName, role are required' }, { status: 400 });
   }
-  if (password.length < 8) {
-    return NextResponse.json({ error: 'password must be at least 8 characters' }, { status: 400 });
-  }
+  const passwordProblem = staffPasswordProblem(password, email);
+  if (passwordProblem) return NextResponse.json({ error: passwordProblem }, { status: 400 });
 
   // Looked up rather than checked against a fixed list — a role is anything
   // that exists as a Role row now, system role or admin-created custom one
@@ -53,12 +54,14 @@ export async function POST(req: NextRequest) {
 
   const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
   if (existing) return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 });
-  const passwordHash = await bcrypt.hash(password, Number(process.env.BCRYPT_ROUNDS) || 10);
 
   const user = await prisma.user.create({
     data: {
       email: email.toLowerCase().trim(),
-      passwordHash,
+      passwordHash: await hashPassword(password),
+      // Whoever created the account chose this password, so it is theirs to
+      // know only until the new user's first sign-in.
+      mustChangePassword: true,
       firstName,
       lastName,
       roleId: roleRow.id,
@@ -66,6 +69,7 @@ export async function POST(req: NextRequest) {
     },
     include: { role: true },
   });
+  await logAudit({ userId: auth.user.id, action: 'USER_CREATE', entityType: 'User', entityId: user.id, newValues: toUserResponse(user) });
 
   return NextResponse.json({ user: toUserResponse(user) }, { status: 201 });
 }

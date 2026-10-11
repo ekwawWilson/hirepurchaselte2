@@ -403,24 +403,36 @@ async function runDepositInstalmentTransaction(
  * only exits are COMPLETED, DEFAULTED and WRITTEN_OFF, so a disbursed loan
  * can never be "cancelled" away.
  */
+/** Null if this contract can be cancelled as it stands, else why not. */
+export function cancelProblem(contract: { contractType: string; status: string }): string | null {
+  if (!CONTRACT_STATUSES_BY_TYPE[contract.contractType as ContractTypeName].includes('CANCELLED')) {
+    return `${contract.contractType} contracts cannot be cancelled — use write-off instead`;
+  }
+  // Also doubles as an approver's outright "reject" of an agent-submitted
+  // contract — no payment can exist yet on either pre-approval status
+  // (postPayment refuses both), and any reserved stock is simply returned
+  // below, same as cancelling a PENDING_DEPOSIT contract always has.
+  if (![...PRE_APPROVAL_STATUSES, 'ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'].includes(contract.status)) {
+    return `Cannot cancel a contract in status ${contract.status}`;
+  }
+  return null;
+}
+
 export async function cancelContract(params: { contractId: string; reason: string; userId: string }) {
   return prisma.$transaction(async (tx) => {
     const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
-    const allowedStatuses = CONTRACT_STATUSES_BY_TYPE[contract.contractType as ContractTypeName];
-    if (!allowedStatuses.includes('CANCELLED')) {
-      throw new ContractError(`${contract.contractType} contracts cannot be cancelled — use write-off instead`);
-    }
-    // Also doubles as an approver's outright "reject" of an agent-submitted
-    // contract — no payment can exist yet on either pre-approval status
-    // (postPayment refuses both), and any reserved stock is simply returned
-    // below, same as cancelling a PENDING_DEPOSIT contract always has.
-    if (![...PRE_APPROVAL_STATUSES, 'ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'].includes(contract.status)) {
-      throw new ContractError(`Cannot cancel a contract in status ${contract.status}`);
-    }
+    const problem = cancelProblem(contract);
+    if (problem) throw new ContractError(problem);
 
     const updated = await tx.contract.update({
       where: { id: contract.id },
-      data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: params.reason, updatedById: params.userId },
+      data: {
+        status: 'CANCELLED', cancelledAt: new Date(), cancelReason: params.reason, updatedById: params.userId,
+        // Kept on the contract, not just returned to whoever pressed the
+        // button: what was paid in is owed back (or to be settled) until
+        // someone records what was done about it (recordRefund).
+        refundDueMinor: contract.totalPaidMinor > 0 ? contract.totalPaidMinor : null,
+      },
     });
 
     // Whether anything physical was ever handed over is what decides how cancellation
@@ -464,16 +476,23 @@ export async function cancelContract(params: { contractId: string; reason: strin
   });
 }
 
-export async function writeOffContract(params: { contractId: string; reason: string; userId: string }) {
-  const contract = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+/** Null if this contract can be written off as it stands, else why not. */
+export function writeOffProblem(contract: { contractType: string; status: string }): string | null {
   if (!CONTRACT_STATUSES_BY_TYPE[contract.contractType as ContractTypeName].includes('WRITTEN_OFF')) {
-    throw new ContractError(`${contract.contractType} contracts cannot be written off`);
+    return `${contract.contractType} contracts cannot be written off`;
   }
   // Also DEVICE_LOAN's only way to reject an agent-submitted contract outright
   // (it has no CANCELLED state at all — docs/01-plan.md §5/CONTRACT_STATUSES_BY_TYPE).
   if (![...PRE_APPROVAL_STATUSES, 'ACTIVE', 'DEFAULTED'].includes(contract.status)) {
-    throw new ContractError(`Cannot write off a contract in status ${contract.status}`);
+    return `Cannot write off a contract in status ${contract.status}`;
   }
+  return null;
+}
+
+export async function writeOffContract(params: { contractId: string; reason: string; userId: string }) {
+  const contract = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+  const problem = writeOffProblem(contract);
+  if (problem) throw new ContractError(problem);
   return prisma.contract.update({
     where: { id: contract.id },
     data: { status: 'WRITTEN_OFF', writtenOffAt: new Date(), writeOffReason: params.reason, updatedById: params.userId },

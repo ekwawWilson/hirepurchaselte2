@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, ChevronDown } from "lucide-react";
+import Link from "next/link";
+import { LogOut, ChevronDown, KeyRound } from "lucide-react";
 import { useAuthStore } from "@/lib/authStore";
 import { useOrgSettingsStore } from "@/lib/orgSettingsStore";
 import { cn, companyInitials } from "@/lib/utils";
@@ -55,6 +56,14 @@ function UserMenu() {
               </span>
             </div>
             <div className="p-1.5">
+              <Link
+                href="/account"
+                onClick={() => setOpen(false)}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-colors text-left"
+              >
+                <KeyRound className="h-4 w-4" />
+                Change password
+              </Link>
               <button
                 onClick={() => {
                   setOpen(false);

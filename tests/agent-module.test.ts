@@ -5,7 +5,7 @@
  * commission/deposit-custody ledger entry the agent must remit.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams, enableOptionalContractTypes, registrationFields } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes, registrationFields, freshPhone } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -28,7 +28,7 @@ const PASSWORD = 'Passw0rd!123';
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
 let counter = 0;
 function unique() { counter += 1; return `${runId}${counter}`; }
-function uniquePhone() { return `024${unique()}`; }
+const uniquePhone = () => freshPhone('024');
 
 async function login(email: string): Promise<string> {
   const res = await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email, password: PASSWORD } }));
@@ -57,7 +57,7 @@ describe('Agent module', () => {
 
   async function registerCustomer(token: string) {
     const res = await customersPOST(makeRequest('POST', '/api/customers', {
-      token, body: { firstName: 'Agent', lastName: `Customer${unique()}`, phone: uniquePhone(), ...registrationFields() },
+      token, body: { firstName: 'Agent', lastName: `Customer${unique()}`, phone: await uniquePhone(), ...registrationFields() },
     }));
     expect(res.status).toBe(201);
     return (await res.json()).customer as { id: string; branchId: string; createdById: string };

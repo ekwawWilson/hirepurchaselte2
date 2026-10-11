@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState, use } from 'react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
@@ -22,6 +23,7 @@ import {
 
 interface Instalment { id: string; instalmentNo: number; dueDate: string; amountDueMinor: number; principalPortionMinor: number; interestPortionMinor: number; amountPaidMinor: number; status: string; daysPastDue?: number }
 interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; notes: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
+interface PendingApproval { id: string; kind: string; targetId: string; reason: string; createdAt: string; requestedBy: { firstName: string; lastName: string } }
 interface Preapproval { id: string; status: string; network: string; customerMsisdn: string; verificationType: string | null; otpPrefix: string | null }
 interface DeviceLoanState {
   principalMinor: number; principalOutstanding: boolean;
@@ -39,6 +41,8 @@ interface ContractDetail {
   product: { name: string } | null;
   instalments: Instalment[];
   payments: Payment[];
+  // Reversals, write-offs or a cancellation asked for and not yet approved by a second person.
+  approvalRequests: PendingApproval[];
   hubtelPreapprovalId: string | null;
   hubtelPreapproval: Preapproval | null;
   // The number/network asked for at creation — kept so a request that failed
@@ -257,8 +261,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   async function confirmReverse() {
     if (!reverseTarget || !reverseReason.trim()) return;
     try {
-      await api.post(`/payments/${reverseTarget.id}/reverse`, { reason: reverseReason });
-      toast({ title: 'Payment reversed' });
+      const res = await api.post<{ pendingApproval?: boolean }>(`/payments/${reverseTarget.id}/reverse`, { reason: reverseReason });
+      toast(res.pendingApproval
+        ? { title: 'Sent for approval', description: 'A second person must approve this reversal before it happens.' }
+        : { title: 'Payment reversed' });
       setReverseTarget(null);
       setReverseReason('');
       await load();
@@ -274,15 +280,19 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       return;
     }
     try {
-      const res = await api.post<{ contract: ContractDetail & { refundDueMinor?: number } }>(
+      const res = await api.post<{ pendingApproval?: boolean; contract?: ContractDetail & { refundDueMinor?: number } }>(
         `/contracts/${id}/${confirmAction}`,
         confirmAction === 'release' ? undefined : { reason: actionReason },
       );
-      const refundDue = confirmAction === 'cancel' ? res.contract.refundDueMinor ?? 0 : 0;
-      toast({
-        title: `Contract ${confirmAction === 'writeoff' ? 'written off' : confirmAction === 'release' ? 'released' : 'cancelled'}`,
-        description: refundDue > 0 ? `${formatCurrency(refundDue)} already paid — refund to the customer` : undefined,
-      });
+      if (res.pendingApproval) {
+        toast({ title: 'Sent for approval', description: `A second person must approve this ${confirmAction === 'writeoff' ? 'write-off' : 'cancellation'} before it happens.` });
+      } else {
+        const refundDue = confirmAction === 'cancel' ? res.contract?.refundDueMinor ?? 0 : 0;
+        toast({
+          title: `Contract ${confirmAction === 'writeoff' ? 'written off' : confirmAction === 'release' ? 'released' : 'cancelled'}`,
+          description: refundDue > 0 ? `${formatCurrency(refundDue)} already paid — refund to the customer` : undefined,
+        });
+      }
       setConfirmAction(null);
       setActionReason('');
       await load();
@@ -474,6 +484,22 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </div>
         <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${getStatusColor(contract.status)}`}>{contract.status}</span>
       </div>
+
+      {contract.approvalRequests.length > 0 && (
+        <Card className="border-amber-200 bg-amber-50/60">
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1 text-sm text-amber-800 space-y-1">
+              {contract.approvalRequests.map((a) => (
+                <p key={a.id}>
+                  <strong>{a.kind === 'PAYMENT_REVERSAL' ? 'A payment reversal' : a.kind === 'CONTRACT_WRITEOFF' ? 'A write-off' : 'A cancellation'}</strong>{' '}
+                  asked for by {a.requestedBy.firstName} {a.requestedBy.lastName} is waiting for a second person to approve it: &ldquo;{a.reason}&rdquo;
+                </p>
+              ))}
+            </div>
+            <Link href="/approvals" className="shrink-0 text-sm font-medium text-amber-900 underline">Open approvals</Link>
+          </CardContent>
+        </Card>
+      )}
 
       {/* The Agent module: this contract still needs a decision, or was sent back for one. */}
       {contract.status === 'PENDING_APPROVAL' && (
@@ -931,9 +957,11 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   <TableCell className="text-gray-500 max-w-[14rem] truncate" title={p.notes ?? undefined}>{p.notes ?? '—'}</TableCell>
                   <TableCell className="font-mono text-xs">{p.receiptNumber ?? '—'}</TableCell>
                   <TableCell>
-                    {canReverse && !p.reversesPaymentId && !p.reversedById && (
-                      <button className="text-xs text-red-600 hover:underline" onClick={() => setReverseTarget(p)}>Reverse</button>
-                    )}
+                    {contract.approvalRequests.some((a) => a.kind === 'PAYMENT_REVERSAL' && a.targetId === p.id)
+                      ? <span className="text-xs text-amber-700">Reversal awaiting approval</span>
+                      : canReverse && !p.reversesPaymentId && !p.reversedById && (
+                        <button className="text-xs text-red-600 hover:underline" onClick={() => setReverseTarget(p)}>Reverse</button>
+                      )}
                     {p.reversedById && <span className="text-xs text-gray-400">Reversed</span>}
                   </TableCell>
                 </TableRow>

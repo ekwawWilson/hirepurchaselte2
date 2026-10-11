@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, assertBranchAccess, assertOwnRecordAccess } from '@/lib/auth/rbac';
 import {
-  validateAtLeastOnePhone, assertPhonesNotTaken, validateCustomerPhoto, CUSTOMER_DETAIL_SELECT,
+  validateAtLeastOnePhone, assertPhonesNotTaken, validateCustomerPhoto, cleanMobileNumber, cleanContactNumber,
+  cleanNationalId, assertNationalIdNotTaken, CUSTOMER_DETAIL_SELECT,
 } from '@/lib/services/customerService';
+import { logAudit } from '@/lib/services/auditService';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(req);
@@ -38,10 +40,33 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!assertBranchAccess(auth.user, existing.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   if (!assertOwnRecordAccess(auth.user, existing.createdById)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const {
-    firstName, lastName, phone, phone2, phone3, email, address, occupation, workAddress, nationalId, dateOfBirth,
-    photoUrl, guarantorName, guarantorPhone,
-  } = (await req.json()) as Record<string, string | undefined>;
+  const body = (await req.json()) as Record<string, string | undefined>;
+  const { firstName, lastName, email, address, occupation, workAddress, dateOfBirth, photoUrl, guarantorName } = body;
+
+  // Only a number this update actually changes is checked and normalised — a
+  // number stored years ago in some other form must not block an unrelated edit.
+  const numbers: Record<string, string | undefined> = {};
+  for (const [key, label] of [['phone', 'The phone number'], ['phone2', 'The second phone number'], ['phone3', 'The third phone number']] as const) {
+    const value = body[key];
+    if (!value?.trim() || value === existing[key]) { numbers[key] = value === undefined ? undefined : value.trim(); continue; }
+    const cleaned = cleanMobileNumber(value, label);
+    if ('error' in cleaned) return NextResponse.json({ error: cleaned.error }, { status: 400 });
+    numbers[key] = cleaned.phone;
+  }
+  const { phone, phone2, phone3 } = numbers;
+
+  let guarantorPhone = body.guarantorPhone;
+  if (guarantorPhone?.trim() && guarantorPhone !== existing.guarantorPhone) {
+    const cleaned = cleanContactNumber(guarantorPhone, "The guarantor's phone number");
+    if ('error' in cleaned) return NextResponse.json({ error: cleaned.error }, { status: 400 });
+    guarantorPhone = cleaned.phone;
+  }
+
+  const nationalId = body.nationalId === undefined ? undefined : cleanNationalId(body.nationalId);
+  if (nationalId && nationalId !== existing.nationalId) {
+    const idClash = await assertNationalIdNotTaken(nationalId, existing.id);
+    if (idClash) return NextResponse.json({ error: idClash }, { status: 409 });
+  }
 
   // Validate against the EFFECTIVE post-update phone set, not just whatever fields
   // this particular PATCH happens to touch — a partial update must never leave the
@@ -81,6 +106,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       updatedById: auth.user.id,
     },
     select: CUSTOMER_DETAIL_SELECT,
+  });
+  await logAudit({
+    userId: auth.user.id, action: 'CUSTOMER_UPDATE', entityType: 'Customer', entityId: customer.id,
+    oldValues: { phone: existing.phone, phone2: existing.phone2, phone3: existing.phone3, nationalId: existing.nationalId },
+    newValues: { ...customer, photoUrl: customer.photoUrl ? '[photo]' : null },
   });
 
   return NextResponse.json({ customer });

@@ -6,6 +6,8 @@ export interface JwtPayload {
   // portal existed. A staff route must reject a customer token and vice
   // versa — see requireAuth (rbac.ts) and requireCustomer (customerAuth.ts).
   typ?: 'customer';
+  /** Issued-at, in seconds — set by jsonwebtoken on every token. */
+  iat?: number;
 }
 
 function secret(): string {

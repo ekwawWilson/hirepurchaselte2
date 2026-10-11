@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { beforeAll } from 'vitest';
 
 // Must run before any test file imports route handlers (which import
 // lib/db/prisma, lib/auth/jwt, etc. — all of which read process.env at
@@ -28,3 +29,13 @@ globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
     `your own mock, and restore the saved guard in a finally block.`,
   );
 }) as typeof fetch;
+
+// Reversals, write-offs and paid-up cancellations wait for a second person by
+// default (Settings > Controls). Every test file starts with that control
+// off — whatever an earlier file left it at — so the many tests of those
+// actions themselves see them happen at once; tests/security-controls.test.ts
+// turns it on to test the control.
+beforeAll(async () => {
+  const { setSecondApproval } = await import('./helpers');
+  await setSecondApproval(false);
+});

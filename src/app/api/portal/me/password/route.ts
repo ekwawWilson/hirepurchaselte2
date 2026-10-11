@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireCustomer } from '@/lib/auth/customerAuth';
 import { setCustomerPassword, PortalError } from '@/lib/services/customerPortalService';
 import { logAudit } from '@/lib/services/auditService';
+import { signCustomerToken } from '@/lib/auth/jwt';
 
 export async function POST(req: NextRequest) {
   const auth = await requireCustomer(req);
@@ -17,7 +18,9 @@ export async function POST(req: NextRequest) {
   try {
     await setCustomerPassword({ customerId: auth.customer.id, currentPassword, newPassword });
     await logAudit({ userId: null, action: 'CUSTOMER_PASSWORD_CHANGE', entityType: 'Customer', entityId: auth.customer.id });
-    return NextResponse.json({ ok: true });
+    // The change signs out every earlier session (customerAuth.ts); this one
+    // carries on with a fresh token.
+    return NextResponse.json({ ok: true, token: signCustomerToken(auth.customer.id) });
   } catch (e) {
     if (e instanceof PortalError) return NextResponse.json({ error: e.message }, { status: 400 });
     throw e;

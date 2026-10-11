@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams, enableOptionalContractTypes, registrationFields } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes, registrationFields, freshPhone } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -17,11 +17,7 @@ import { GET as dashboardGET } from '@/app/api/dashboard/route';
 
 const PASSWORD = 'Passw0rd!123';
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
-let counter = 0;
-function uniquePhone() {
-  counter += 1;
-  return `027${runId}${counter}`;
-}
+const uniquePhone = () => freshPhone('027');
 
 async function login(email: string): Promise<string> {
   const res = await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email, password: PASSWORD } }));
@@ -52,7 +48,7 @@ describe('Reports', () => {
   });
 
   async function setupContract(label: string, contractType: string = 'SAVE_TO_OWN') {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const customer = await customersPOST(makeRequest('POST', '/api/customers', {
       token: cashier, body: { ...registrationFields(), firstName: 'Report', lastName: label, phone },
     }));

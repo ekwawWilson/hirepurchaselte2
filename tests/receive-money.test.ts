@@ -8,11 +8,10 @@
  *  - Hubtel's security rule: prompts go only to a customer's registered number.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams, enableOptionalContractTypes, withLiveHubtel, hubtelHttp } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes, withLiveHubtel, hubtelHttp, portalToken } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
-import { POST as portalLoginPOST } from '@/app/api/portal/auth/login/route';
 import { POST as portalPayPOST } from '@/app/api/portal/pay/route';
 import { POST as hubtelCallbackPOST } from '@/app/api/payments/hubtel/callback/route';
 import { POST as mobileMoneyPOST } from '@/app/api/contracts/[id]/mobile-money/route';
@@ -244,9 +243,7 @@ describe('Hubtel Direct Receive Money', () => {
     it('the portal refuses any other number, and reads the network from the number when not told it', async () => {
       const { customer, contract, phone } = await makeSaver('020');
       const stranger = await makeSaver('024');
-      const session = await portalLoginPOST(makeRequest('POST', '/api/portal/auth/login', { body: { phone, password: phone } }));
-      const token = (await session.json()).token as string;
-      expect(customer.id).toBeTruthy();
+      const token = await portalToken(customer.id);
 
       const calls = await withLiveHubtel(accepted, async () => {
         const elsewhere = await portalPayPOST(makeRequest('POST', '/api/portal/pay', {

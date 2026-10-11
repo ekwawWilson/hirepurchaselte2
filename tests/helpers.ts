@@ -13,6 +13,48 @@ export async function enableOptionalContractTypes() {
   });
 }
 
+/**
+ * Reversals, write-offs and paid-up cancellations wait for a second person
+ * unless the control is switched off (Settings > Controls; on by default).
+ * Call with `false` in beforeAll of a test file that expects them to happen
+ * at once; tests of the control itself turn it on.
+ */
+export async function setSecondApproval(required: boolean) {
+  await prisma.controlSettings.upsert({
+    where: { id: 'singleton' },
+    create: { id: 'singleton', requireSecondApproval: required },
+    update: { requireSecondApproval: required },
+  });
+}
+
+/**
+ * A portal token for a customer who has already chosen their own password —
+ * for tests of what the portal does, not of how a customer gets into it.
+ */
+export async function portalToken(customerId: string): Promise<string> {
+  const { signCustomerToken } = await import('@/lib/auth/jwt');
+  await prisma.customer.update({ where: { id: customerId }, data: { mustChangePassword: false } });
+  return signCustomerToken(customerId);
+}
+
+const handedOut = new Set<string>();
+
+/**
+ * A valid Ghana mobile number on `prefix` that no customer holds — checked
+ * against the database, which keeps every earlier run's customers, so a
+ * number can never collide with one from a run before.
+ */
+export async function freshPhone(prefix = '024'): Promise<string> {
+  for (;;) {
+    const phone = prefix + String(Math.floor(Math.random() * 10_000_000)).padStart(7, '0');
+    if (handedOut.has(phone)) continue;
+    const taken = await prisma.customer.findFirst({ where: { OR: [{ phone }, { phone2: phone }, { phone3: phone }] }, select: { id: true } });
+    if (taken) continue;
+    handedOut.add(phone);
+    return phone;
+  }
+}
+
 const BASE = 'http://localhost:3000';
 
 /** Builds a NextRequest for calling a Route Handler function directly, no running server needed. */

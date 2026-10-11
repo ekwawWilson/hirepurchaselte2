@@ -1,12 +1,13 @@
 /**
  * The customer portal (/api/portal): a customer signs in with a phone
- * number, sees only their own contracts, and pays through the same Hubtel
+ * number and a password staff issued them, sees only their own contracts, and pays through the same Hubtel
  * pipeline the USSD menu uses.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams, enableOptionalContractTypes } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes, portalToken } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 import { createContract } from '@/lib/services/contractService';
+import { issuePortalPassword } from '@/lib/services/customerPortalService';
 import { POST as portalLoginPOST } from '@/app/api/portal/auth/login/route';
 import { GET as portalMeGET } from '@/app/api/portal/me/route';
 import { POST as portalPasswordPOST } from '@/app/api/portal/me/password/route';
@@ -48,55 +49,64 @@ describe('Customer portal', () => {
     return { status: res.status, body: await res.json() };
   }
 
-  it('signs in with the phone number as the first password, and says a change is due', async () => {
-    const { phone } = await makeCustomer();
+  it('a phone number is never a password: no sign-in until staff issue a one-time password', async () => {
+    const { customer, phone } = await makeCustomer();
 
-    const wrong = await signIn(phone, 'not-my-password');
-    expect(wrong.status).toBe(401);
-    expect(wrong.body.error).toMatch(/Invalid phone number or password/);
+    // Never issued a password: the number itself opens nothing.
+    const asBefore = await signIn(phone, phone);
+    expect(asBefore.status).toBe(401);
+    expect(asBefore.body.error).toMatch(/Invalid phone number or password/);
 
-    const ok = await signIn(phone, phone);
+    const password = await issuePortalPassword(customer.id);
+    expect(password).toMatch(/^\d{6}$/);
+    expect((await signIn(phone, phone)).status).toBe(401);
+    expect((await signIn(phone, 'not-my-password')).status).toBe(401);
+
+    const ok = await signIn(phone, password);
     expect(ok.status).toBe(200);
     expect(ok.body.customer.mustChangePassword).toBe(true);
     expect(ok.body.token).toBeTruthy();
 
     // The same number written the way Hubtel sends it also works.
-    const intl = await signIn(`233${phone.slice(1)}`, phone);
-    expect(intl.status).toBe(200);
+    expect((await signIn(`233${phone.slice(1)}`, password)).status).toBe(200);
   });
 
-  it('changes the password, refuses the phone number as the new one, and then requires it', async () => {
-    const { phone } = await makeCustomer();
-    const { body: session } = await signIn(phone, phone);
-    const token = session.token as string;
+  it('the one-time password opens nothing but the change of password, which then replaces it', async () => {
+    const { customer, phone } = await makeCustomer();
+    const oneTime = await issuePortalPassword(customer.id);
+    const token = (await signIn(phone, oneTime)).body.token as string;
 
-    const asPhone = await portalPasswordPOST(makeRequest('POST', '/api/portal/me/password', {
-      token, body: { currentPassword: phone, newPassword: phone },
-    }));
-    expect(asPhone.status).toBe(400);
+    // Enforced by the server, not just by the screen that asks.
+    const early = await portalContractsGET(makeRequest('GET', '/api/portal/contracts', { token }));
+    expect(early.status).toBe(403);
+    expect((await early.json()).code).toBe('PASSWORD_CHANGE_REQUIRED');
+    expect((await portalMeGET(makeRequest('GET', '/api/portal/me', { token }))).status).toBe(200);
 
-    const tooShort = await portalPasswordPOST(makeRequest('POST', '/api/portal/me/password', {
-      token, body: { currentPassword: phone, newPassword: 'abc' },
+    const change = (newPassword: string) => portalPasswordPOST(makeRequest('POST', '/api/portal/me/password', {
+      token, body: { currentPassword: oneTime, newPassword },
     }));
-    expect(tooShort.status).toBe(400);
-
-    const changed = await portalPasswordPOST(makeRequest('POST', '/api/portal/me/password', {
-      token, body: { currentPassword: phone, newPassword: 'my-own-passphrase' },
-    }));
+    expect((await change(phone)).status).toBe(400);   // not the phone number
+    expect((await change('abc')).status).toBe(400);   // not too short
+    expect((await change(oneTime)).status).toBe(400); // not the one-time password again
+    const changed = await change('my-own-passphrase');
     expect(changed.status).toBe(200);
+    // The session that made the change carries on, with a fresh token.
+    const carriedOn = (await changed.json()).token as string;
+    expect((await portalContractsGET(makeRequest('GET', '/api/portal/contracts', { token: carriedOn }))).status).toBe(200);
 
-    expect((await signIn(phone, phone)).status).toBe(401); // the phone number no longer works
+    expect((await signIn(phone, oneTime)).status).toBe(401); // the one-time password no longer works
     const now = await signIn(phone, 'my-own-passphrase');
     expect(now.status).toBe(200);
     expect(now.body.customer.mustChangePassword).toBe(false);
 
     const me = await portalMeGET(makeRequest('GET', '/api/portal/me', { token: now.body.token }));
     expect((await me.json()).customer.membershipId).toMatch(/^PORTAL-/);
+    expect((await portalContractsGET(makeRequest('GET', '/api/portal/contracts', { token: now.body.token }))).status).toBe(200);
   });
 
   it('keeps customer and staff tokens apart', async () => {
-    const { phone } = await makeCustomer();
-    const { body: session } = await signIn(phone, phone);
+    const { customer } = await makeCustomer();
+    const session = { token: await portalToken(customer.id) };
 
     // A portal token is refused by a staff route...
     const staffRoute = await customersGET(makeRequest('GET', '/api/customers', { token: session.token }));
@@ -122,8 +132,7 @@ describe('Customer portal', () => {
       contractType: 'SAVE_TO_OWN', customerId: theirs.customer.id, branchId, createdById: adminUserId,
     });
 
-    const { body: session } = await signIn(mine.phone, mine.phone);
-    const token = session.token as string;
+    const token = await portalToken(mine.customer.id);
 
     const list = await portalContractsGET(makeRequest('GET', '/api/portal/contracts', { token }));
     const { contracts } = await list.json();
@@ -149,8 +158,7 @@ describe('Customer portal', () => {
       contractType: 'SAVE_TO_OWN', customerId: theirs.customer.id, branchId, createdById: adminUserId,
     });
 
-    const { body: session } = await signIn(mine.phone, mine.phone);
-    const token = session.token as string;
+    const token = await portalToken(mine.customer.id);
 
     const foreign = await portalPayPOST(makeRequest('POST', '/api/portal/pay', {
       token, body: { contractId: notMine.id, amountMinor: 5000, network: 'MTN', msisdn: mine.phone },
@@ -181,8 +189,7 @@ describe('Customer portal', () => {
       data: { contractId: loan.id, amountMinor: 800, reason: 'DAILY_LOAN_INTEREST', appliedDate: new Date() },
     });
 
-    const { body: session } = await signIn(phone, phone);
-    const token = session.token as string;
+    const token = await portalToken(customer.id);
 
     const odd = await portalPayPOST(makeRequest('POST', '/api/portal/pay', {
       token, body: { contractId: loan.id, amountMinor: 1234, network: 'MTN', msisdn: phone },

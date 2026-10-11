@@ -14,6 +14,7 @@ import {
   Building2,
   Settings,
   ClipboardCheck,
+  ShieldAlert,
   Wallet,
   type LucideIcon,
 } from 'lucide-react';
@@ -61,6 +62,8 @@ export const navGroups: NavGroup[] = [
       // The Agent module: contracts an AGENT submitted, waiting for a
       // BRANCH_MANAGER/ADMIN/SUPER_ADMIN to approve or send back.
       { name: 'Approvals', href: '/contract-approvals', icon: ClipboardCheck, perms: ['contract.approve'] },
+      // Reversals, write-offs and paid-up cancellations waiting on a second person.
+      { name: 'Second Approvals', href: '/approvals', icon: ShieldAlert, perms: ['payment.reverse', 'contract.writeoff', 'contract.cancel'] },
       { name: 'Mobile Money', href: '/mobile-money', icon: Smartphone, perms: ['payment.view'] },
     ],
   },

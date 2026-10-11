@@ -10,6 +10,7 @@ import { prisma } from '../db/prisma';
 import { phoneVariants } from './hubtelClient';
 import { getDeviceLoanState } from './paymentService';
 import { PRE_APPROVAL_STATUSES } from '../constants/contracts';
+import { generatePortalPassword, hashPassword } from './authService';
 
 export class PortalError extends Error {}
 
@@ -29,19 +30,29 @@ export async function findCustomerByPhone(phone: string) {
 }
 
 /**
- * Sign-in. Until a customer has chosen a password, their own phone number is
- * accepted — that is what makes an already-registered customer able to sign
- * in without staff doing anything — and mustChangePassword then forces them
- * to set a real one before they can use the portal.
+ * Gives a customer a one-time portal password — at registration, or when
+ * they ask staff for one — returned in the clear exactly once for staff to
+ * hand over, and replaced by the customer at their first sign-in. Issuing a
+ * new one signs out anyone already in on the old one.
+ */
+export async function issuePortalPassword(customerId: string): Promise<string> {
+  const password = generatePortalPassword();
+  await prisma.customer.update({
+    where: { id: customerId },
+    data: { passwordHash: await hashPassword(password), mustChangePassword: true, passwordChangedAt: new Date() },
+  });
+  return password;
+}
+
+/**
+ * Sign-in. A customer who has never been issued a password cannot sign in:
+ * a phone number is known to everyone who has ever called it, so it is never
+ * accepted in a password's place.
  */
 export async function authenticateCustomer(phone: string, password: string) {
   const customer = await findCustomerByPhone(phone);
-  if (!customer) return null;
-
-  const ok = customer.passwordHash
-    ? await bcrypt.compare(password, customer.passwordHash)
-    : isOwnPhoneNumber(customer, password);
-  if (!ok) return null;
+  if (!customer?.passwordHash) return null;
+  if (!(await bcrypt.compare(password, customer.passwordHash))) return null;
 
   await prisma.customer.update({ where: { id: customer.id }, data: { portalLastLoginAt: new Date() } });
   return customer;
@@ -58,10 +69,9 @@ export function isOwnPhoneNumber(customer: { phone: string | null; phone2: strin
 export async function setCustomerPassword(params: { customerId: string; currentPassword: string; newPassword: string }) {
   const customer = await prisma.customer.findUniqueOrThrow({ where: { id: params.customerId } });
 
-  const currentOk = customer.passwordHash
-    ? await bcrypt.compare(params.currentPassword, customer.passwordHash)
-    : isOwnPhoneNumber(customer, params.currentPassword);
+  const currentOk = !!customer.passwordHash && await bcrypt.compare(params.currentPassword, customer.passwordHash);
   if (!currentOk) throw new PortalError('Your current password is not correct');
+  if (params.newPassword === params.currentPassword) throw new PortalError('Choose a password different from your current one');
 
   if (params.newPassword.length < MIN_PORTAL_PASSWORD_LENGTH) {
     throw new PortalError(`Your new password must be at least ${MIN_PORTAL_PASSWORD_LENGTH} characters`);
@@ -73,8 +83,9 @@ export async function setCustomerPassword(params: { customerId: string; currentP
   await prisma.customer.update({
     where: { id: customer.id },
     data: {
-      passwordHash: await bcrypt.hash(params.newPassword, Number(process.env.BCRYPT_ROUNDS ?? 10)),
+      passwordHash: await hashPassword(params.newPassword),
       mustChangePassword: false,
+      passwordChangedAt: new Date(),
       isActivated: true, // the account is now the customer's own
     },
   });

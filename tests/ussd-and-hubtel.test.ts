@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { makeRequest, enableOptionalContractTypes, registrationFields } from './helpers';
+import { makeRequest, enableOptionalContractTypes, registrationFields, freshPhone } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -18,11 +18,7 @@ import { makeParams } from './helpers';
 
 const PASSWORD = 'Passw0rd!123';
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
-let counter = 0;
-function uniquePhone() {
-  counter += 1;
-  return `026${runId}${counter}`;
-}
+const uniquePhone = () => freshPhone('026');
 
 async function login(email: string): Promise<string> {
   const res = await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email, password: PASSWORD } }));
@@ -61,7 +57,7 @@ describe('USSD + Hubtel payments', () => {
   }
 
   it('full USSD flow: initiation -> amount -> confirm -> mock payment posts to the ledger', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
     const sessionId = `sess-${runId}-1`;
 
@@ -88,7 +84,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('USSD cancel flow ends the session without posting a payment', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
     const sessionId = `sess-${runId}-2`;
 
@@ -103,7 +99,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('a customer with multiple contracts is shown a selection menu and pays the one they pick', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contractA = await setupContract(phone);
     const contractB = await setupContract(phone, { customerId: contractA.customerId });
     const sessionId = `sess-${runId}-multi`;
@@ -137,7 +133,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('an invalid selection index ends the session cleanly instead of crashing', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const first = await setupContract(phone);
     await setupContract(phone, { customerId: first.customerId });
     const sessionId = `sess-${runId}-badselect`;
@@ -149,7 +145,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('a DEFAULTED contract is still selectable via USSD — self-service payment is how a customer cures their own default', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
     await prisma.contract.update({ where: { id: contract.id }, data: { status: 'DEFAULTED' } });
 
@@ -173,7 +169,7 @@ describe('USSD + Hubtel payments', () => {
 
   it('unknown phone number can identify their account with a registered alternate number, and gets billed on the dialed-in number', async () => {
     const dialedPhone = '0200000001';
-    const registeredPhone = uniquePhone();
+    const registeredPhone = await uniquePhone();
     const contract = await setupContract(registeredPhone);
     const sessionId = `sess-${runId}-altphone`;
 
@@ -203,7 +199,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('the real /api/ussd route wires the Hubtel-style request/response contract correctly', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     await setupContract(phone);
     const sessionId = `sess-${runId}-route`;
 
@@ -243,7 +239,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('a Hubtel "Timeout" notification (customer hung up) ends the session cleanly instead of treating it as input', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     await setupContract(phone);
     const sessionId = `sess-${runId}-timeout`;
 
@@ -263,7 +259,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('Hubtel callback idempotency: replaying the same clientReference does not double-post', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
 
     // Create a PENDING transaction directly (bypassing the mock's synchronous resolution)
@@ -284,7 +280,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('the real /api/payments/hubtel/callback route parses Hubtel\'s actual Receive-Money callback shape', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
     const clientReference = `TEST-ROUTE-CALLBACK-${runId}`;
 
@@ -349,7 +345,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('reconciliation marks stale PENDING transactions FAILED', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
     const clientReference = `TEST-STALE-${runId}`;
 
@@ -368,7 +364,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('reconciliation asks Hubtel\'s Transaction Status Check before failing a stale transaction, and honors a Paid result', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
     const clientReference = `TEST-STALE-PAID-${runId}`;
 
@@ -418,7 +414,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('initiateHubtelPayment in live mode never reaches the real network in tests', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
     const original = process.env.HUBTEL_PAYMENTS_MODE;
     process.env.HUBTEL_PAYMENTS_MODE = 'live';
@@ -435,7 +431,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('a live Receive-Money call is captured for Hubtel Diagnostics\' sample-payloads panel, request and response alike', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
     const originalMode = process.env.HUBTEL_PAYMENTS_MODE;
     const originalSalesId = process.env.HUBTEL_POS_SALES_ID;
@@ -461,7 +457,7 @@ describe('USSD + Hubtel payments', () => {
       // goes through (hubtelClient.ts) — real data, not a fabricated example.
       const sample = await prisma.hubtelSampleLog.findUnique({ where: { kind: 'RECEIVE_MONEY_INITIATE' } });
       expect(sample).not.toBeNull();
-      // uniquePhone() is an 026 number — AirtelTigo — so it goes out on that network's channel.
+      // await uniquePhone() is an 026 number — AirtelTigo — so it goes out on that network's channel.
       expect(JSON.parse(sample!.requestPayload as string)).toMatchObject({ Channel: 'tigo-gh', Amount: 10 });
       expect(JSON.parse(sample!.responsePayload as string)).toMatchObject({ ResponseCode: '0001' });
     } finally {
@@ -474,7 +470,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('SAVE_TO_OWN\'s payment prompt shows only the running total paid — no due schedule to report', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const contract = await setupContract(phone);
 
     const step1 = await handleUssdInput({ sessionId: `sess-${runId}-sto`, msisdn: phone, input: '', isNewSession: true });
@@ -485,7 +481,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('DEVICE_LOAN\'s prompt offers only the currently-owed option(s) — no schedule, no free-typed amount', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const customer = await customersPOST(makeRequest('POST', '/api/customers', {
       token: cashier, body: { ...registrationFields(), firstName: 'Ussd', lastName: 'Loan', phone },
     }));
@@ -532,7 +528,7 @@ describe('USSD + Hubtel payments', () => {
   });
 
   it('an invalid DEVICE_LOAN option is rejected instead of accepted as a free-typed amount', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     const customer = await customersPOST(makeRequest('POST', '/api/customers', {
       token: cashier, body: { ...registrationFields(), firstName: 'Ussd', lastName: 'BadOption', phone },
     }));

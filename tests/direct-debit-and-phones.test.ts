@@ -11,7 +11,7 @@
  *    collections run.
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { makeRequest, enableOptionalContractTypes, registrationFields } from './helpers';
+import { makeRequest, enableOptionalContractTypes, registrationFields, freshPhone } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -30,11 +30,7 @@ import { applyLatePenalties } from '@/lib/services/overdueService';
 
 const PASSWORD = 'Passw0rd!123';
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
-let counter = 0;
-function uniquePhone() {
-  counter += 1;
-  return `024${runId}${counter}`;
-}
+const uniquePhone = () => freshPhone('024');
 
 async function login(email: string): Promise<string> {
   const res = await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email, password: PASSWORD } }));
@@ -68,7 +64,7 @@ describe('Customer registration', () => {
     const res = await customersPOST(makeRequest('POST', '/api/customers', {
       token: cashier,
       // A branchId in the body is ignored: the branch always comes from the user.
-      body: { ...registrationFields(), firstName: 'Single', lastName: 'Number', phone: uniquePhone(), branchId: 'some-other-branch' },
+      body: { ...registrationFields(), firstName: 'Single', lastName: 'Number', phone: await uniquePhone(), branchId: 'some-other-branch' },
     }));
     expect(res.status).toBe(201);
     const { customer } = await res.json();
@@ -83,13 +79,13 @@ describe('Customer registration', () => {
   it('refuses a photo that is not really a JPEG, or is too large', async () => {
     const png = `data:image/jpeg;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64')}`;
     const notJpeg = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { ...registrationFields(), firstName: 'Bad', lastName: 'Photo', phone: uniquePhone(), photoUrl: png },
+      token: cashier, body: { ...registrationFields(), firstName: 'Bad', lastName: 'Photo', phone: await uniquePhone(), photoUrl: png },
     }));
     expect(notJpeg.status).toBe(400);
 
     const huge = `data:image/jpeg;base64,${Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(200 * 1024)]).toString('base64')}`;
     const tooBig = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { ...registrationFields(), firstName: 'Huge', lastName: 'Photo', phone: uniquePhone(), photoUrl: huge },
+      token: cashier, body: { ...registrationFields(), firstName: 'Huge', lastName: 'Photo', phone: await uniquePhone(), photoUrl: huge },
     }));
     expect(tooBig.status).toBe(400);
     expect((await tooBig.json()).error).toMatch(/KB or smaller/);
@@ -98,11 +94,11 @@ describe('Customer registration', () => {
   it('rejects a number an earlier customer holds in any of their slots', async () => {
     // Customers registered before single-number registration may hold a
     // second number; a new registration must not reuse it.
-    const sharedNumber = uniquePhone();
+    const sharedNumber = await uniquePhone();
     await prisma.customer.create({
       data: {
         membershipId: `LEGACY-${sharedNumber}`, firstName: 'Earlier', lastName: 'Holder',
-        phone: uniquePhone(), phone2: sharedNumber, branchId: cashierBranchId,
+        phone: await uniquePhone(), phone2: sharedNumber, branchId: cashierBranchId,
         createdById: (await prisma.user.findUniqueOrThrow({ where: { email: 'cashier@example.test' } })).id,
       },
     });
@@ -122,7 +118,7 @@ describe('Hubtel mobile money verification (mock mode)', () => {
   });
 
   it('confirms a registered number and surfaces the account holder\'s name', async () => {
-    const phone = uniquePhone();
+    const phone = await uniquePhone();
     await customersPOST(makeRequest('POST', '/api/customers', {
       token: cashier, body: { ...registrationFields(), firstName: 'Verify', lastName: 'Target', phone },
     }));
@@ -133,14 +129,14 @@ describe('Hubtel mobile money verification (mock mode)', () => {
   });
 
   it('still resolves (fails open) for a number nobody has registered', async () => {
-    const result = await verifyMobileMoneyNumber({ msisdn: uniquePhone(), network: 'MTN', requestedById: 'test-user' });
+    const result = await verifyMobileMoneyNumber({ msisdn: await uniquePhone(), network: 'MTN', requestedById: 'test-user' });
     expect(result.verified).toBe(true);
     expect(result.accountName).toBeNull();
   });
 
   it('POST /api/customers/verify-phone accepts AirtelTigo — this is a lookup, not a direct-debit mandate, so it is not limited to DIRECT_DEBIT_NETWORKS', async () => {
     const res = await verifyPhonePOST(makeRequest('POST', '/api/customers/verify-phone', {
-      token: cashier, body: { phone: uniquePhone(), network: 'AIRTELTIGO' },
+      token: cashier, body: { phone: await uniquePhone(), network: 'AIRTELTIGO' },
     }));
     expect(res.status).toBe(200);
     expect((await res.json()).verified).toBe(true);
@@ -160,7 +156,7 @@ describe('Hubtel mobile money verification (mock mode)', () => {
 
   it('POST /api/customers/verify-phone still rejects a genuinely unknown network', async () => {
     const res = await verifyPhonePOST(makeRequest('POST', '/api/customers/verify-phone', {
-      token: cashier, body: { phone: uniquePhone(), network: 'GLO' },
+      token: cashier, body: { phone: await uniquePhone(), network: 'GLO' },
     }));
     expect(res.status).toBe(400);
   });

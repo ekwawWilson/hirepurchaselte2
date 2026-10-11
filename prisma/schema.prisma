@@ -84,6 +84,9 @@ model User {
   // Set when an administrator issues or resets the password: the holder must
   // choose their own before doing anything else (authService.ts).
   mustChangePassword Boolean @default(false)
+  // A token issued before this moment is no longer accepted (rbac.ts), so a
+  // changed or reset password signs out whoever else was holding one.
+  passwordChangedAt  DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -143,12 +146,13 @@ model Customer {
   // the browser before upload — see CustomerPhotoField and validateCustomerPhoto.
   photoUrl       String?
   // Customer portal (src/app/portal) — a customer signs in with any of their
-  // registered phone numbers. Until they set their own password, the phone
-  // number itself is accepted and mustChangePassword forces a change at the
-  // first sign-in, so an existing customer needs no staff action to get in.
+  // registered phone numbers and a password. Staff issue a one-time password
+  // (at registration, or on request); mustChangePassword forces the customer
+  // to replace it at first sign-in. No password, no portal access.
   // isActivated flips true once they have chosen their own password.
   passwordHash       String?
   mustChangePassword Boolean   @default(true)
+  passwordChangedAt  DateTime?
   portalLastLoginAt  DateTime?
   guarantorName  String?
   guarantorPhone String?
@@ -369,10 +373,12 @@ model Contract {
   completedAt    DateTime?
   releasedAt     DateTime?
   cancelledAt    DateTime?
-  // What cancelling this contract left owed back to the customer, and when
-  // it was actually handed over — cancelContract only computes the figure;
-  // without these it existed for the length of one on-screen message.
+  // What cancelling this contract left owed back to the customer, and what
+  // was actually handed over and when (refundedMinor may be less — or nothing,
+  // if the customer kept the device). cancelContract only computes the
+  // figure; without these it existed for the length of one on-screen message.
   refundDueMinor Int?
+  refundedMinor  Int?
   refundedAt     DateTime?
   refundedById   String?
   refundNote     String?

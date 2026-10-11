@@ -21,6 +21,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       penalties: true,
       payments: { orderBy: { createdAt: 'desc' }, include: { allocations: true } },
       hubtelPreapproval: true,
+      // A reversal or write-off someone has asked for and nobody has yet approved.
+      approvalRequests: {
+        where: { status: 'PENDING' },
+        select: { id: true, kind: true, targetId: true, reason: true, createdAt: true, requestedBy: { select: { firstName: true, lastName: true } } },
+      },
     },
   });
   if (!contract) return NextResponse.json({ error: 'Contract not found' }, { status: 404 });

@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
       branchId: user.branchId,
       role: user.role.name as RoleName,
       permissions: user.role.permissions.map((p) => p.name) as Permission[],
+      mustChangePassword: user.mustChangePassword,
     },
   });
 }

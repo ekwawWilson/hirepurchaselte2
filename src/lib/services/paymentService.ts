@@ -602,10 +602,18 @@ export async function postDeviceLoanPayment(params: PostDeviceLoanPaymentParams)
  * transaction — see reverseAllPaymentsForContract) and the public single-payment
  * entrypoint below, which opens its own transaction.
  */
+/** Null if this payment can be reversed as it stands, else why not. */
+export function reversalProblem(payment: { status: string; reversesPaymentId: string | null; reversedById: string | null }): string | null {
+  if (payment.status !== 'SUCCESS') return 'Only a SUCCESS payment can be reversed';
+  if (payment.reversesPaymentId) return 'Cannot reverse a reversal';
+  if (payment.reversedById) return 'This payment has already been reversed';
+  return null;
+}
+
 async function reversePaymentInTx(tx: Tx, params: { paymentId: string; reason: string; reversedById: string }) {
   const original = await tx.payment.findUniqueOrThrow({ where: { id: params.paymentId } });
-  if (original.status !== 'SUCCESS') throw new PaymentError('Only a SUCCESS payment can be reversed');
-  if (original.reversesPaymentId) throw new PaymentError('Cannot reverse a reversal');
+  const problem = reversalProblem(original);
+  if (problem) throw new PaymentError(problem);
 
   const alreadyReversed = await tx.payment.findUnique({ where: { reversesPaymentId: original.id } });
   if (alreadyReversed) throw new PaymentError('This payment has already been reversed');

@@ -9,4 +9,5 @@ export interface AuthenticatedUser {
   roleName: RoleName;
   branchId: string | null;
   permissions: Permission[];
+  mustChangePassword: boolean;
 }

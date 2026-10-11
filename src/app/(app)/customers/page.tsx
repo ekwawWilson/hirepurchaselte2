@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { AccessDenied } from '@/components/AccessDenied';
 import { PhoneVerifyField } from '@/components/PhoneVerifyField';
 import { CustomerPhotoField } from '@/components/CustomerPhotoField';
+import { OneTimePasswordDialog } from '@/components/OneTimePasswordDialog';
 
 interface Customer {
   id: string;
@@ -49,6 +50,7 @@ export default function CustomersPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [saving, setSaving] = useState(false);
+  const [issued, setIssued] = useState<{ name: string; phone: string; password: string } | null>(null);
 
   async function load(search?: string) {
     setIsLoading(true);
@@ -94,8 +96,9 @@ export default function CustomersPage() {
     }
     setSaving(true);
     try {
-      await api.post('/customers', form);
+      const { customer, portalPassword } = await api.post<{ customer: Customer; portalPassword: string }>('/customers', form);
       toast({ title: 'Customer registered', description: `${form.firstName} ${form.lastName} was added.` });
+      setIssued({ name: `${customer.firstName} ${customer.lastName}`, phone: customer.phone ?? form.phone, password: portalPassword });
       setForm(EMPTY_FORM);
       setShowForm(false);
       await load(q);
@@ -151,7 +154,7 @@ export default function CustomersPage() {
                 <PhoneVerifyField required label="Phone number" value={form.phone} onChange={(v) => set('phone', v)} />
                 <div>
                   <Label>National ID (optional)</Label>
-                  <Input className="mt-1.5" value={form.nationalId} onChange={(e) => set('nationalId', e.target.value)} />
+                  <Input className="mt-1.5" value={form.nationalId} onChange={(e) => set('nationalId', e.target.value)} placeholder="e.g. GHA-123456789-0" />
                 </div>
               </div>
             </CardContent>
@@ -264,6 +267,13 @@ export default function CustomersPage() {
           )}
         </CardContent>
       </Card>
+
+      <OneTimePasswordDialog password={issued?.password ?? null} title="Customer portal password" onClose={() => setIssued(null)}>
+        <p>
+          <strong>{issued?.name}</strong> can sign in to the customer portal with their phone number ({issued?.phone}) and this
+          one-time password. They will be asked to choose their own when they first sign in.
+        </p>
+      </OneTimePasswordDialog>
     </div>
   );
 }

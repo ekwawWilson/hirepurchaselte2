@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '../db/prisma';
 import { verifyToken } from './jwt';
+import { issuedBeforePasswordChange } from '../services/authService';
+
+/** The only portal routes open to a customer still on the one-time password staff gave them. */
+const OPEN_BEFORE_PASSWORD_CHANGE = ['/api/portal/me', '/api/portal/me/password'];
 
 export interface AuthenticatedCustomer {
   id: string;
@@ -30,6 +34,14 @@ export async function requireCustomer(req: NextRequest): Promise<{ customer: Aut
 
     const customer = await prisma.customer.findUnique({ where: { id: payload.sub } });
     if (!customer) return { error: NextResponse.json({ error: 'Account not found' }, { status: 401 }) };
+    if (issuedBeforePasswordChange(payload.iat, customer.passwordChangedAt)) {
+      return { error: NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 }) };
+    }
+    if (customer.mustChangePassword && !OPEN_BEFORE_PASSWORD_CHANGE.includes(req.nextUrl.pathname)) {
+      return {
+        error: NextResponse.json({ error: 'Choose your own password before continuing', code: 'PASSWORD_CHANGE_REQUIRED' }, { status: 403 }),
+      };
+    }
 
     return {
       customer: {

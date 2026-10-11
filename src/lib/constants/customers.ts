@@ -37,6 +37,20 @@ export function networkForOperator(operator: string | null | undefined): MobileM
   return null;
 }
 
+/**
+ * A Ghana phone number as this app stores it — ten digits starting with 0 —
+ * from any of the ways it gets typed (024 123 4567, +233 24 123 4567,
+ * 233241234567, 24-123-4567). Null if it is not a ten-digit Ghana number.
+ */
+export function normalizeGhanaPhone(input: string): string | null {
+  const digits = input.replace(/[\s\-().]/g, '').replace(/^\+/, '');
+  if (!/^\d+$/.test(digits)) return null;
+  const local = digits.startsWith('233') && digits.length === 12 ? '0' + digits.slice(3) : digits.length === 9 && !digits.startsWith('0') ? '0' + digits : digits;
+  return /^0\d{9}$/.test(local) ? local : null;
+}
+
+export const INVALID_MOBILE_NUMBER = 'is not a valid Ghana mobile number. Enter ten digits on MTN, Telecel or AirtelTigo, e.g. 0241234567';
+
 /** The network a Ghana mobile number belongs to, or null if the prefix is unknown. */
 export function networkForPhone(phone: string): MobileMoneyNetwork | null {
   const digits = phone.replace(/[\s-]/g, '').replace(/^\+/, '');

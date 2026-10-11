@@ -199,8 +199,8 @@ export default function PortalLoginPage() {
             </form>
 
             <p className="mt-6 text-xs text-gray-400 leading-relaxed">
-              First time here? Sign in with your phone number as both your number and your password —
-              you will be asked to choose a password straight away.
+              First time here, or forgotten your password? Ask at the shop for a one-time password —
+              you will be asked to choose your own straight away.
             </p>
           </div>
         </div>

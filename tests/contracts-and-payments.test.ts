@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { makeRequest, makeParams, enableOptionalContractTypes, registrationFields } from './helpers';
+import { makeRequest, makeParams, enableOptionalContractTypes, registrationFields, freshPhone } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 import { accrueDailyLoanInterest } from '@/lib/services/loanService';
 
@@ -27,11 +27,7 @@ async function login(email: string): Promise<string> {
 }
 
 const runId = Date.now().toString().slice(-8);
-let counter = 0;
-function uniquePhone() {
-  counter += 1;
-  return `020${runId}${counter}`;
-}
+const uniquePhone = () => freshPhone('020');
 function uniqueSerial(label: string) {
   return `IMEI-${label}-${runId}`;
 }
@@ -65,7 +61,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
   async function makeCustomer(label: string) {
     const res = await customersPOST(makeRequest('POST', '/api/customers', {
-      token: cashier, body: { ...registrationFields(), firstName: 'Test', lastName: label, phone: uniquePhone() },
+      token: cashier, body: { ...registrationFields(), firstName: 'Test', lastName: label, phone: await uniquePhone() },
     }));
     expect(res.status).toBe(201);
     return (await res.json()).customer.id as string;

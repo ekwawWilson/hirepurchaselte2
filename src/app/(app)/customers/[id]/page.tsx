@@ -16,6 +16,7 @@ import { AccessDenied } from '@/components/AccessDenied';
 import { PhoneVerifyField } from '@/components/PhoneVerifyField';
 import { CustomerPhotoField } from '@/components/CustomerPhotoField';
 import { Textarea } from '@/components/ui/textarea';
+import { OneTimePasswordDialog } from '@/components/OneTimePasswordDialog';
 
 interface Customer {
   id: string; membershipId: string; firstName: string; lastName: string;
@@ -23,6 +24,7 @@ interface Customer {
   email: string | null; address: string | null; nationalId: string | null;
   occupation: string | null; workAddress: string | null; photoUrl: string | null;
   guarantorName: string | null; guarantorPhone: string | null; createdAt: string;
+  isActivated: boolean; portalLastLoginAt: string | null;
 }
 interface Contract {
   id: string; contractNumber: string; contractType: string; status: string;
@@ -34,12 +36,15 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const { id } = use(params);
   const canView = useAuthStore((s) => s.hasPermission('customer.view'));
   const canUpdate = useAuthStore((s) => s.hasPermission('customer.update'));
+  const canIssuePassword = useAuthStore((s) => s.hasPermission('customer.create', 'customer.update'));
   const { toast } = useToast();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ phone: '', email: '', address: '', occupation: '', workAddress: '', photoUrl: '', nationalId: '', guarantorName: '', guarantorPhone: '' });
   const [saving, setSaving] = useState(false);
+  const [issuing, setIssuing] = useState(false);
+  const [portalPassword, setPortalPassword] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -86,6 +91,18 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to update customer', variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function issuePortalPassword() {
+    setIssuing(true);
+    try {
+      const res = await api.post<{ portalPassword: string }>(`/customers/${id}/portal-password`);
+      setPortalPassword(res.portalPassword);
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to issue a portal password', variant: 'destructive' });
+    } finally {
+      setIssuing(false);
     }
   }
 
@@ -183,6 +200,35 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Customer portal</CardTitle></CardHeader>
+        <CardContent className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm">
+            <p className="text-gray-900">
+              {customer.portalLastLoginAt
+                ? `Last signed in ${formatDate(customer.portalLastLoginAt)}`
+                : 'Has never signed in'}
+              {customer.isActivated ? '' : ' · has not yet chosen their own password'}
+            </p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              The customer signs in with their phone number. If they have no password or have forgotten it, issue a one-time one.
+            </p>
+          </div>
+          {canIssuePassword && (
+            <Button variant="outline" size="sm" disabled={issuing} onClick={issuePortalPassword}>
+              {issuing ? 'Issuing...' : 'Issue one-time password'}
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      <OneTimePasswordDialog password={portalPassword} title="Customer portal password" onClose={() => { setPortalPassword(null); void load(); }}>
+        <p>
+          <strong>{customer.firstName} {customer.lastName}</strong> can now sign in to the customer portal with their phone number and
+          this one-time password. Any password they had before no longer works, and they will be asked to choose a new one.
+        </p>
+      </OneTimePasswordDialog>
 
       <Card>
         <CardHeader><CardTitle>Contracts</CardTitle></CardHeader>

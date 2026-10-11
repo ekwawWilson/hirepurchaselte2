@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
+import { logAudit } from '@/lib/services/auditService';
 
 function toUserResponse(user: {
   id: string; email: string; firstName: string; lastName: string; isActive: boolean;
-  branchId: string | null; role: { name: string };
+  mustChangePassword: boolean; branchId: string | null; role: { name: string };
 }) {
   return {
     id: user.id,
@@ -12,6 +13,7 @@ function toUserResponse(user: {
     firstName: user.firstName,
     lastName: user.lastName,
     isActive: user.isActive,
+    mustChangePassword: user.mustChangePassword,
     branchId: user.branchId,
     role: user.role.name,
   };
@@ -50,6 +52,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(isActive !== undefined && { isActive }),
     },
     include: { role: true },
+  });
+  await logAudit({
+    userId: auth.user.id, action: 'USER_UPDATE', entityType: 'User', entityId: id,
+    oldValues: { roleId: existing.roleId, branchId: existing.branchId, isActive: existing.isActive },
+    newValues: { roleId: user.roleId, branchId: user.branchId, isActive: user.isActive },
   });
 
   return NextResponse.json({ user: toUserResponse(user) });

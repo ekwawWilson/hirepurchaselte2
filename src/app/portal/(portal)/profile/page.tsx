@@ -29,7 +29,7 @@ interface Profile {
 export default function PortalProfilePage() {
   const { toast } = useToast();
   const customer = useCustomerAuthStore((s) => s.customer);
-  const setCustomer = useCustomerAuthStore((s) => s.setCustomer);
+  const setAuth = useCustomerAuthStore((s) => s.setAuth);
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -56,9 +56,9 @@ export default function PortalProfilePage() {
     }
     setSaving(true);
     try {
-      await portalApi.post('/me/password', { currentPassword, newPassword });
+      const { token } = await portalApi.post<{ token: string }>('/me/password', { currentPassword, newPassword });
       setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
-      if (customer) setCustomer({ ...customer, mustChangePassword: false });
+      if (customer) setAuth({ ...customer, mustChangePassword: false }, token);
       await load();
       toast({ title: 'Password changed', description: 'Use your new password next time you sign in.' });
     } catch (e) {
@@ -81,8 +81,7 @@ export default function PortalProfilePage() {
         <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
           <span>
-            You are still signing in with your phone number as your password. Choose a password below so no one
-            else can open your account.
+            You signed in with a one-time password. Choose your own below to open the rest of your account.
           </span>
         </div>
       )}
@@ -110,7 +109,7 @@ export default function PortalProfilePage() {
               <Label htmlFor="current">Current password</Label>
               <Input id="current" type="password" className="mt-1.5" required value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder={profile?.mustChangePassword ? 'Your phone number' : ''} />
+                placeholder={profile?.mustChangePassword ? 'The one-time password you were given' : ''} />
             </div>
             <div>
               <Label htmlFor="new">New password</Label>

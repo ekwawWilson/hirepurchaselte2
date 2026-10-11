@@ -14,10 +14,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { OneTimePasswordDialog } from '@/components/OneTimePasswordDialog';
 
 interface User {
   id: string; email: string; firstName: string; lastName: string; isActive: boolean;
-  branchId: string | null; role: string;
+  mustChangePassword: boolean; branchId: string | null; role: string;
 }
 interface Branch { id: string; name: string; code: string }
 // Fetched from /api/roles rather than a hardcoded list — includes any custom
@@ -29,6 +30,7 @@ const ALL_BRANCHES = '__all__';
 
 export default function UsersPage() {
   const canManage = useAuthStore((s) => s.hasPermission('user.manage'));
+  const ownId = useAuthStore((s) => s.user?.id);
   const { toast } = useToast();
   const [users, setUsers] = useState<User[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -42,6 +44,8 @@ export default function UsersPage() {
   const [editUser, setEditUser] = useState<User | null>(null);
   const [editForm, setEditForm] = useState({ role: '', branchId: ALL_BRANCHES, isActive: true });
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [issued, setIssued] = useState<{ name: string; password: string } | null>(null);
 
   const branchName = (id: string | null) => (id ? branches.find((b) => b.id === id)?.name ?? id : 'All branches');
 
@@ -128,6 +132,21 @@ export default function UsersPage() {
     }
   }
 
+  async function onResetPassword() {
+    if (!editUser) return;
+    setResetting(true);
+    try {
+      const { temporaryPassword } = await api.post<{ temporaryPassword: string }>(`/users/${editUser.id}/reset-password`);
+      setIssued({ name: `${editUser.firstName} ${editUser.lastName}`, password: temporaryPassword });
+      setEditUser(null);
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to reset the password', variant: 'destructive' });
+    } finally {
+      setResetting(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
@@ -170,7 +189,10 @@ export default function UsersPage() {
                     <TableCell>{u.email}</TableCell>
                     <TableCell><Badge variant="secondary">{u.role}</Badge></TableCell>
                     <TableCell>{branchName(u.branchId)}</TableCell>
-                    <TableCell><Badge variant={u.isActive ? 'success' : 'secondary'}>{u.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
+                    <TableCell>
+                      <Badge variant={u.isActive ? 'success' : 'secondary'}>{u.isActive ? 'Active' : 'Inactive'}</Badge>
+                      {u.isActive && u.mustChangePassword && <span className="ml-2 text-xs text-amber-700">Password change due</span>}
+                    </TableCell>
                     <TableCell>
                       <button className="text-xs text-blue-700 hover:underline" onClick={() => openEdit(u)}>Edit</button>
                     </TableCell>
@@ -200,8 +222,9 @@ export default function UsersPage() {
               <Input required type="email" className="mt-1.5" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} />
             </div>
             <div className="col-span-2">
-              <Label>Password</Label>
+              <Label>First password</Label>
               <Input required type="password" minLength={8} className="mt-1.5" value={createForm.password} onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })} />
+              <p className="text-xs text-gray-400 mt-1.5">At least 8 characters, with a letter and a number. They will be asked to replace it when they first sign in.</p>
             </div>
             <div>
               <Label>Role</Label>
@@ -258,6 +281,17 @@ export default function UsersPage() {
               <input type="checkbox" checked={editForm.isActive} onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })} />
               Active (can sign in)
             </label>
+            {editUser && editUser.id !== ownId && (
+              <div className="rounded-xl border border-gray-200 p-3">
+                <p className="text-sm font-medium text-gray-900">Forgotten or compromised password</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Gives them a one-time password to pass on, signs them out everywhere and lifts any sign-in lock.
+                </p>
+                <Button type="button" variant="outline" size="sm" className="mt-2.5" disabled={resetting} onClick={onResetPassword}>
+                  {resetting ? 'Resetting...' : 'Reset password'}
+                </Button>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditUser(null)}>Cancel</Button>
@@ -265,6 +299,12 @@ export default function UsersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <OneTimePasswordDialog password={issued?.password ?? null} title="Password reset" onClose={() => setIssued(null)}>
+        <p>
+          Give this one-time password to <strong>{issued?.name}</strong>. They will be asked to choose their own as soon as they sign in with it.
+        </p>
+      </OneTimePasswordDialog>
     </div>
   );
 }

@@ -5,9 +5,10 @@ import { requireAuth, requirePermission, branchScopeWhere, ownRecordsWhere } fro
 import { generateMembershipId } from '@/lib/utils/idGenerators';
 import { logAudit } from '@/lib/services/auditService';
 import {
-  assertPhonesNotTaken, validateRegistration, registrationBranch,
-  CUSTOMER_SUMMARY_SELECT, CUSTOMER_DETAIL_SELECT,
+  assertPhonesNotTaken, validateRegistration, registrationBranch, cleanMobileNumber, cleanContactNumber,
+  cleanNationalId, assertNationalIdNotTaken, CUSTOMER_SUMMARY_SELECT, CUSTOMER_DETAIL_SELECT,
 } from '@/lib/services/customerService';
+import { issuePortalPassword } from '@/lib/services/customerPortalService';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -58,9 +59,17 @@ export async function POST(req: NextRequest) {
     }, { status: 400 });
   }
 
-  const phone = body.phone!.trim();
+  const cleaned = cleanMobileNumber(body.phone!);
+  if ('error' in cleaned) return NextResponse.json({ error: cleaned.error }, { status: 400 });
+  const { phone } = cleaned;
+  const guarantor = body.guarantorPhone?.trim() ? cleanContactNumber(body.guarantorPhone, "The guarantor's phone number") : null;
+  if (guarantor && 'error' in guarantor) return NextResponse.json({ error: guarantor.error }, { status: 400 });
+
   const clashError = await assertPhonesNotTaken({ phone });
   if (clashError) return NextResponse.json({ error: clashError }, { status: 409 });
+  const nationalId = body.nationalId?.trim() ? cleanNationalId(body.nationalId) : null;
+  const idClash = nationalId && await assertNationalIdNotTaken(nationalId);
+  if (idClash) return NextResponse.json({ error: idClash }, { status: 409 });
 
   const customer = await prisma.customer.create({
     data: {
@@ -73,10 +82,10 @@ export async function POST(req: NextRequest) {
       workAddress: body.workAddress!.trim(),
       photoUrl: body.photoUrl!,
       email: body.email?.trim() || null,
-      nationalId: body.nationalId?.trim() || null,
+      nationalId,
       dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null,
       guarantorName: body.guarantorName?.trim() || null,
-      guarantorPhone: body.guarantorPhone?.trim() || null,
+      guarantorPhone: guarantor?.phone ?? null,
       branchId: branch.id,
       createdById: user.id,
     },
@@ -88,5 +97,8 @@ export async function POST(req: NextRequest) {
     userId: user.id, action: 'CUSTOMER_CREATE', entityType: 'Customer', entityId: customer.id,
     newValues: { ...customer, photoUrl: '[photo]' },
   });
-  return NextResponse.json({ customer }, { status: 201 });
+  // The customer's way into the portal: a one-time password, shown to the
+  // person registering them this once and stored only as a hash.
+  const portalPassword = await issuePortalPassword(customer.id);
+  return NextResponse.json({ customer, portalPassword }, { status: 201 });
 }
