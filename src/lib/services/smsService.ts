@@ -115,5 +115,13 @@ export async function deliverQueuedSms(smsMessageId: string): Promise<void> {
       data: { status: 'FAILED', attempts: { increment: 1 }, lastAttemptAt: new Date() },
     });
     console.error(`SMS delivery failed for message ${sms.id}:`, e);
+    // Raised once however many messages fail; texting the owner about it would
+    // only fail too, so this one is seen on the dashboard (alertService.ts).
+    const { raiseAlert } = await import('./alertService');
+    await raiseAlert({
+      kind: 'SMS_FAILING',
+      message: `Text messages are failing to send: ${e instanceof Error ? e.message.slice(0, 160) : 'the SMS provider returned an error'}`,
+      dedupeKey: 'sms-failing',
+    });
   }
 }

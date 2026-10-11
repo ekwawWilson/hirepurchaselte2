@@ -23,90 +23,70 @@ export async function register() {
   const { runDirectDebitCollections } = await import('@/lib/services/collectionsService');
   const { accrueDailyLoanInterest } = await import('@/lib/services/loanService');
   const { sendDueTodayReminders, sendOverdueReminders } = await import('@/lib/services/reminderService');
+  const { sendDirectDebitNotices, sendOwnerDailySummary } = await import('@/lib/services/dailyNoticesService');
+  const { pruneLoginThrottles } = await import('@/lib/auth/loginThrottle');
+  const { raiseAlert } = await import('@/lib/services/alertService');
 
-  // Daily at 08:00 — matches the legacy app's own schedule.
+  /**
+   * Runs one scheduled job. A failure is logged, raised as an alert on the
+   * dashboard (one alert per job, however many times it fails) and never
+   * stops the jobs after it.
+   */
+  async function job<T>(name: string, label: string, run: () => Promise<T>, report?: (result: T) => string | null) {
+    try {
+      const message = report?.(await run());
+      if (message) console.log(`[cron] ${message}`);
+    } catch (e) {
+      console.error(`[cron] ${name} failed:`, e);
+      await raiseAlert({
+        kind: 'JOB_FAILED',
+        message: `The scheduled job "${label}" failed: ${e instanceof Error ? e.message.slice(0, 200) : 'unknown error'}`,
+        dedupeKey: `job-failed:${name}`,
+      });
+    }
+  }
+  const counted = (text: (n: number) => string) => (n: number) => (n > 0 ? text(n) : null);
+
+  // Daily at 08:00 — matches the legacy app's own schedule. In order: the
+  // defaulted and late-fee sweeps must see today's OVERDUE flips, and retries
+  // run after collections so a contract is only ever attempted once a morning.
   cron.schedule('0 8 * * *', async () => {
-    try {
-      const count = await markOverdueInstalments();
-      if (count > 0) console.log(`[cron] marked ${count} instalment(s) OVERDUE`);
-    } catch (e) {
-      console.error('[cron] markOverdueInstalments failed:', e);
-    }
-    try {
-      // Must run after markOverdueInstalments above so it sees today's OVERDUE flips.
-      const count = await markDefaultedContracts();
-      if (count > 0) console.log(`[cron] marked ${count} contract(s) DEFAULTED`);
-    } catch (e) {
-      console.error('[cron] markDefaultedContracts failed:', e);
-    }
-    try {
-      // Same ordering requirement as markDefaultedContracts above.
-      const count = await applyLatePenalties();
-      if (count > 0) console.log(`[cron] applied ${count} late-payment penalty(ies)`);
-    } catch (e) {
-      console.error('[cron] applyLatePenalties failed:', e);
-    }
-    try {
-      const count = await runDirectDebitCollections();
-      if (count > 0) console.log(`[cron] direct debit collections: charged ${count} contract(s)`);
-    } catch (e) {
-      console.error('[cron] runDirectDebitCollections failed:', e);
-    }
-    try {
-      const count = await retryFailedDirectDebits();
-      if (count > 0) console.log(`[cron] retried ${count} failed direct debit charge(s)`);
-    } catch (e) {
-      console.error('[cron] retryFailedDirectDebits failed:', e);
-    }
-    try {
-      const count = await accrueDailyLoanInterest();
-      if (count > 0) console.log(`[cron] accrued daily interest on ${count} DEVICE_LOAN contract(s)`);
-    } catch (e) {
-      console.error('[cron] accrueDailyLoanInterest failed:', e);
-    }
+    await job('markOverdueInstalments', 'mark overdue instalments', markOverdueInstalments, counted((n) => `marked ${n} instalment(s) OVERDUE`));
+    await job('markDefaultedContracts', 'mark defaulted contracts', markDefaultedContracts, counted((n) => `marked ${n} contract(s) DEFAULTED`));
+    await job('applyLatePenalties', 'apply late-payment charges', applyLatePenalties, counted((n) => `applied ${n} late-payment penalty(ies)`));
+    await job('runDirectDebitCollections', 'collect direct debits', runDirectDebitCollections, counted((n) => `direct debit collections: charged ${n} contract(s)`));
+    await job('retryFailedDirectDebits', 'retry failed direct debits', retryFailedDirectDebits, counted((n) => `retried ${n} failed direct debit charge(s)`));
+    await job('accrueDailyLoanInterest', 'accrue daily loan interest', accrueDailyLoanInterest, counted((n) => `accrued daily interest on ${n} DEVICE_LOAN contract(s)`));
+    await job('pruneLoginThrottles', 'clear old sign-in counts', pruneLoginThrottles);
   });
 
   // Daily at 09:00 and 10:00 — customer payment reminders, after the 08:00
   // sweep has settled today's arrears (the legacy app's own times).
-  cron.schedule('0 9 * * *', async () => {
-    try {
-      const run = await sendDueTodayReminders();
-      if (run.sent > 0) console.log(`[cron] sent ${run.sent} due-today payment reminder(s)`);
-    } catch (e) {
-      console.error('[cron] sendDueTodayReminders failed:', e);
-    }
-  });
-  cron.schedule('0 10 * * *', async () => {
-    try {
-      const run = await sendOverdueReminders();
-      if (run.sent > 0) console.log(`[cron] sent ${run.sent} overdue payment reminder(s)`);
-    } catch (e) {
-      console.error('[cron] sendOverdueReminders failed:', e);
-    }
-  });
+  cron.schedule('0 9 * * *', () => job('sendDueTodayReminders', 'send due-today reminders', sendDueTodayReminders,
+    (run) => (run.sent > 0 ? `sent ${run.sent} due-today payment reminder(s)` : null)));
+  cron.schedule('0 10 * * *', () => job('sendOverdueReminders', 'send overdue reminders', sendOverdueReminders,
+    (run) => (run.sent > 0 ? `sent ${run.sent} overdue payment reminder(s)` : null)));
+
+  // Daily at 16:00 — tell customers whose wallet will be debited tomorrow,
+  // while there is still an afternoon to put the money in it.
+  cron.schedule('0 16 * * *', () => job('sendDirectDebitNotices', 'send direct debit notices', sendDirectDebitNotices,
+    (run) => (run.sent > 0 ? `sent ${run.sent} direct debit notice(s)` : null)));
+
+  // Daily at 19:00 — the day's figures, texted to the owner.
+  cron.schedule('0 19 * * *', () => job('sendOwnerDailySummary', "send the owner's daily summary", sendOwnerDailySummary,
+    (sent) => (sent ? "sent the owner's daily summary" : null)));
 
   // Every 5 minutes — Hubtel requires a status check on any transaction that
   // has gone five minutes without its callback. Also sweeps expired USSD sessions.
   cron.schedule('*/5 * * * *', async () => {
-    try {
-      const result = await reconcilePendingHubtelTransactions();
-      if (result.checked > 0) console.log(`[cron] Hubtel reconciliation: checked ${result.checked}, failed ${result.failed}`);
+    await job('reconcilePendingHubtelTransactions', 'check unanswered mobile money payments', reconcilePendingHubtelTransactions, (result) => {
       if (result.unrecordedRetried > 0) console.log(`[cron] Hubtel reconciliation: retried ledger posting for ${result.unrecordedRetried} collected charge(s)`);
-    } catch (e) {
-      console.error('[cron] reconcilePendingHubtelTransactions failed:', e);
-    }
-    try {
-      const result = await reconcilePendingPreapprovals();
-      if (result.checked > 0) console.log(`[cron] Hubtel mandate reconciliation: checked ${result.checked}, resolved ${result.resolved}`);
-    } catch (e) {
-      console.error('[cron] reconcilePendingPreapprovals failed:', e);
-    }
-    try {
-      await pruneExpiredUssdSessions();
-    } catch (e) {
-      console.error('[cron] pruneExpiredUssdSessions failed:', e);
-    }
+      return result.checked > 0 ? `Hubtel reconciliation: checked ${result.checked}, failed ${result.failed}` : null;
+    });
+    await job('reconcilePendingPreapprovals', 'check unanswered direct debit approvals', reconcilePendingPreapprovals,
+      (result) => (result.checked > 0 ? `Hubtel mandate reconciliation: checked ${result.checked}, resolved ${result.resolved}` : null));
+    await job('pruneExpiredUssdSessions', 'clear expired USSD sessions', pruneExpiredUssdSessions);
   });
 
-  console.log('[instrumentation] Scheduled jobs registered (overdue sweep @ 08:00, payment reminders @ 09:00 and 10:00 daily, Hubtel reconciliation every 15min).');
+  console.log('[instrumentation] Scheduled jobs registered (overdue sweep and collections @ 08:00, reminders @ 09:00 and 10:00, debit notices @ 16:00, owner summary @ 19:00, Hubtel reconciliation every 5 minutes).');
 }

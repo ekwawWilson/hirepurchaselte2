@@ -8,6 +8,8 @@ import {
   callHubtelPreapprovalStatus, callHubtelPreapprovalCancel, callHubtelPreapprovalReactivate, HubtelApiError,
 } from './hubtelClient';
 
+import { getControlSettings } from './controlSettingsService';
+
 export class PreapprovalError extends Error {}
 
 /**
@@ -31,6 +33,19 @@ export function preapprovalCallbackUrl(): string {
 }
 
 const RETRY_SCHEDULE_DAYS = [1, 3, 7];
+/** A partial attempt is never for less than this (GHS 1) unless less than this is all that is due. */
+const MIN_PARTIAL_DEBIT_MINOR = 100;
+
+/**
+ * What a retry asks for after an attempt for `previousMinor` bounced. With
+ * partial debits on, half of it: a wallet that could not cover the whole
+ * instalment often holds part of it, and part collected today is better than
+ * the whole of it refused again. Never more than is due right now.
+ */
+export function retryAmountMinor(previousMinor: number, dueNowMinor: number, partial: boolean): number {
+  const wanted = partial ? Math.max(Math.ceil(previousMinor / 2), MIN_PARTIAL_DEBIT_MINOR) : previousMinor;
+  return Math.min(wanted, dueNowMinor);
+}
 
 /**
  * Requests a direct-debit mandate ("one-time approval"): the customer approves
@@ -482,7 +497,10 @@ export async function processDirectDebitCallback(params: { clientReference: stri
     // Fixed schedule (1, 3, 7 days), capped at 3 attempts — a deliberately simple,
     // hardcoded policy rather than a configurable settings model (matches this
     // codebase's existing style, e.g. overdueService's fixed DEFAULT_THRESHOLD_DAYS).
-    const nextRetryAt = new Date(Date.now() + RETRY_SCHEDULE_DAYS[txn.retryCount] * 24 * 60 * 60_000);
+    // Counted in whole days from the start of today, so the morning run that
+    // many days on finds it due — "24 hours after an 08:01 failure" would miss
+    // the next day's 08:00 run by a minute and wait a day more.
+    const nextRetryAt = new Date(new Date().setHours(0, 0, 0, 0) + RETRY_SCHEDULE_DAYS[txn.retryCount] * 24 * 60 * 60_000);
     await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { retryCount: { increment: 1 }, nextRetryAt } });
   }
 
@@ -493,41 +511,76 @@ export async function processDirectDebitCallback(params: { clientReference: stri
  * Re-attempts every direct-debit charge whose scheduled retry time has arrived —
  * mirrors the legacy app's auto-retry (a failed charge is retried automatically,
  * manual/cash payments never are). Run on a schedule (instrumentation.ts).
+ *
+ * A retry collects what is still due, not what was asked for days ago: if the
+ * customer has paid in the meantime, the contract has closed or the mandate
+ * has gone, it is dropped. With partial debits on (Settings > Controls) each
+ * retry asks for half of the attempt before it — see retryAmountMinor.
  */
 export async function retryFailedDirectDebits() {
   const due = await prisma.hubtelTransaction.findMany({
     where: { channel: 'DIRECT_DEBIT', status: 'FAILED', nextRetryAt: { lte: new Date() } },
+    orderBy: { nextRetryAt: 'asc' },
   });
+  if (due.length === 0) return 0;
+  const { partialDirectDebitEnabled } = await getControlSettings();
 
   let retried = 0;
   for (const txn of due) {
+    const contract = await prisma.contract.findUniqueOrThrow({
+      where: { id: txn.contractId },
+      include: {
+        customer: true, hubtelPreapproval: true,
+        instalments: { where: { status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] }, dueDate: { lte: new Date() } } },
+      },
+    });
+    const mandate = contract.hubtelPreapproval;
+    const dueNowMinor = Math.min(
+      contract.instalments.reduce((sum, i) => sum + (i.amountDueMinor - i.amountPaidMinor), 0),
+      contract.balanceMinor ?? 0,
+    );
+    const callOff = () => prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { nextRetryAt: null } });
+    if (contract.status !== 'ACTIVE' || !mandate || mandate.status !== 'APPROVED' || dueNowMinor <= 0) {
+      await callOff();
+      continue;
+    }
+    // Another attempt on this contract has not been answered yet: wait for it
+    // rather than risk both succeeding. This retry stays due for the next run.
+    const unanswered = await prisma.hubtelTransaction.count({ where: { contractId: contract.id, channel: 'DIRECT_DEBIT', status: 'PENDING' } });
+    if (unanswered > 0) continue;
+
+    const amountMinor = retryAmountMinor(txn.amountMinor, dueNowMinor, partialDirectDebitEnabled);
+    const fullAmountMinor = txn.baseAmountMinor ?? txn.amountMinor;
     // A reference of its own: Hubtel never accepts one twice, and a suffix on
     // the original would take it past the 36 characters Hubtel allows.
     const clientReference = generateTransactionRef();
     await prisma.hubtelTransaction.create({
       data: {
-        clientReference, contractId: txn.contractId, msisdn: txn.msisdn, amountMinor: txn.amountMinor,
-        status: 'PENDING', channel: 'DIRECT_DEBIT', preapprovalId: txn.preapprovalId, retryCount: txn.retryCount,
+        clientReference, contractId: txn.contractId, msisdn: mandate.customerMsisdn, amountMinor,
+        baseAmountMinor: amountMinor < fullAmountMinor ? fullAmountMinor : null,
+        status: 'PENDING', channel: 'DIRECT_DEBIT', preapprovalId: mandate.id, retryCount: txn.retryCount,
       },
     });
+    await callOff(); // the new row carries the chain on; never pick the original up again
 
-    if (isHubtelLiveMode()) {
-      const contract = await prisma.contract.findUniqueOrThrow({ where: { id: txn.contractId }, include: { customer: true } });
-      const preapproval = await prisma.hubtelPreapproval.findUniqueOrThrow({ where: { id: txn.preapprovalId! } });
-      await chargeDirectDebitLive({
-        clientReference,
-        contractNumber: contract.contractNumber,
-        customerName: `${contract.customer.firstName} ${contract.customer.lastName}`,
-        customerEmail: contract.customer.email,
-        msisdn: txn.msisdn,
-        network: preapproval.network,
-        amountMinor: txn.amountMinor,
-      });
-    } else {
-      await processDirectDebitCallback({ clientReference, status: 'SUCCESS', rawPayload: JSON.stringify({ mock: true, retry: true }) });
+    try {
+      if (isHubtelLiveMode()) {
+        await chargeDirectDebitLive({
+          clientReference,
+          contractNumber: contract.contractNumber,
+          customerName: `${contract.customer.firstName} ${contract.customer.lastName}`,
+          customerEmail: contract.customer.email,
+          msisdn: mandate.customerMsisdn,
+          network: mandate.network,
+          amountMinor,
+        });
+      } else {
+        await processDirectDebitCallback({ clientReference, status: 'SUCCESS', rawPayload: JSON.stringify({ mock: true, retry: true }) });
+      }
+    } catch (e) {
+      // One contract's refusal must not stop the rest of the run.
+      console.error(`[collections] direct debit retry failed for contract ${contract.id}:`, e);
     }
-
-    await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { nextRetryAt: null } }); // don't re-pick the original row up again
     retried += 1;
   }
   return retried;

@@ -50,7 +50,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <ServiceWorkerRegister />
         {/* Above the mobile tab bar on phones (bottom-20), in the corner on desktop.
             Legacy used bottom-4 everywhere, which covered its own "More" tab. */}
-        <div className="fixed bottom-20 right-4 z-40 lg:bottom-4">
+        <div className="fixed bottom-20 right-4 z-40 lg:bottom-4 print:hidden">
           <InstallAppButton />
         </div>
       </body>

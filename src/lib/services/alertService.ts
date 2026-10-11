@@ -40,6 +40,11 @@ export async function listOpenAlerts() {
   return prisma.systemAlert.findMany({ where: { acknowledgedAt: null }, orderBy: { lastSeenAt: 'desc' }, take: 50 });
 }
 
+/** Closes whatever alert is open under `dedupeKey` — for a fault the system itself can see has been dealt with. */
+export async function closeAlert(dedupeKey: string): Promise<void> {
+  await prisma.systemAlert.updateMany({ where: { dedupeKey, acknowledgedAt: null }, data: { acknowledgedAt: new Date() } });
+}
+
 export async function acknowledgeAlert(id: string) {
   return prisma.systemAlert.update({ where: { id }, data: { acknowledgedAt: new Date() } });
 }

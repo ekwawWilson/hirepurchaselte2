@@ -48,10 +48,23 @@ export async function runDirectDebitCollections() {
     },
   });
 
+  // One attempt at a time per contract. A charge still waiting on the
+  // customer's network, or a failed one with its retry already scheduled
+  // (retryFailedDirectDebits), is the attempt in hand — a second charge on top
+  // of it could take the same instalment twice.
+  const inHand = await prisma.hubtelTransaction.findMany({
+    where: {
+      channel: 'DIRECT_DEBIT', contractId: { in: contracts.map((c) => c.id) },
+      OR: [{ status: 'PENDING' }, { status: 'FAILED', nextRetryAt: { not: null } }],
+    },
+    select: { contractId: true },
+  });
+  const busy = new Set(inHand.map((t) => t.contractId));
+
   let charged = 0;
   for (const contract of contracts) {
     const due = contract.instalments[0];
-    if (!due) continue;
+    if (!due || busy.has(contract.id)) continue;
     // BOTH mode leaves an instalment that's due-today-but-not-yet-overdue for
     // the customer to pay themselves — only an already-OVERDUE one (the
     // customer defaulted on it) triggers direct debit.

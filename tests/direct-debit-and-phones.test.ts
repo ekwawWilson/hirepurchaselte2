@@ -464,32 +464,62 @@ describe('Hubtel Direct Debit', () => {
     expect(stillApproved.status).toBe('APPROVED');
   });
 
-  it('a failed charge schedules a retry, and retryFailedDirectDebits re-attempts it', async () => {
+  it('a failed charge schedules a retry, which asks for half of it and never for more than is still due', async () => {
+    // Six weekly instalments of GHS 100, the first of them due yesterday.
     const { contract, customerId, msisdn } = await makeDepositInstalment('RETRY', { totalPayableMinor: 60000, depositAmountMinor: 0, termWeeks: 6 });
     // 0% deposit clears the gate immediately with any positive payment.
     await postPayment({ contractId: contract.id, amountMinor: 1, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
+    await prisma.instalment.updateMany({ where: { contractId: contract.id, instalmentNo: 1 }, data: { dueDate: new Date(Date.now() - 24 * 60 * 60_000) } });
 
     const { preapproval } = await initiatePreapproval({ customerId, msisdn, network: 'MTN', createdById: adminUserId });
     await enableDirectDebit({ contractId: contract.id, preapprovalId: preapproval.id, userId: adminUserId });
 
     // Simulate a failed charge directly (mock chargeDirectDebit always succeeds — this
     // exercises the retry-scheduling path the same way the USSD reconciliation tests do).
-    const clientReference = `TEST-DD-FAIL-${runId}`;
-    await prisma.hubtelTransaction.create({
-      data: { clientReference, contractId: contract.id, msisdn, amountMinor: 5000, status: 'PENDING', channel: 'DIRECT_DEBIT', preapprovalId: preapproval.id },
-    });
-    const failed = await processDirectDebitCallback({ clientReference, status: 'FAILED', rawPayload: '{}' });
+    const failCharge = async (amountMinor: number) => {
+      const clientReference = `TEST-DD-FAIL-${runId}-${Math.random().toString(36).slice(2, 8)}`;
+      await prisma.hubtelTransaction.create({
+        data: { clientReference, contractId: contract.id, msisdn, amountMinor, status: 'PENDING', channel: 'DIRECT_DEBIT', preapprovalId: preapproval.id },
+      });
+      return processDirectDebitCallback({ clientReference, status: 'FAILED', rawPayload: '{}' });
+    };
+    const makeDue = (id: string) => prisma.hubtelTransaction.update({ where: { id }, data: { nextRetryAt: new Date(Date.now() - 1000) } });
+
+    const failed = await failCharge(10000);
     expect(failed.status).toBe('FAILED');
     expect(failed.retryCount).toBe(1);
-    expect(failed.nextRetryAt).not.toBeNull();
+    // Due at the start of tomorrow, so tomorrow morning's run picks it up.
+    expect(failed.nextRetryAt!.getTime()).toBe(new Date().setHours(0, 0, 0, 0) + 24 * 60 * 60_000);
 
-    // Force the retry to be due now, then run the sweep.
-    await prisma.hubtelTransaction.update({ where: { id: failed.id }, data: { nextRetryAt: new Date(Date.now() - 1000) } });
-    const retried = await retryFailedDirectDebits();
-    expect(retried).toBeGreaterThanOrEqual(1);
+    // While that retry is in hand, the daily run leaves the contract alone.
+    await runDirectDebitCollections();
+    expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).totalPaidMinor).toBe(1);
 
-    const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
-    expect(updated.totalPaidMinor).toBe(1 + 5000); // the 1-pesewa deposit plus the retried charge
+    // Force the retry to be due now, then run the sweep: half of the GHS 100 that bounced.
+    await makeDue(failed.id);
+    expect(await retryFailedDirectDebits()).toBeGreaterThanOrEqual(1);
+    const retry = await prisma.hubtelTransaction.findFirstOrThrow({ where: { contractId: contract.id, status: 'SUCCESS' } });
+    expect(retry).toMatchObject({ amountMinor: 5000, baseAmountMinor: 10000, retryCount: 1 });
+    expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).totalPaidMinor).toBe(1 + 5000);
+    expect((await prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: failed.id } })).nextRetryAt).toBeNull();
+
+    // GHS 50 is still due. A retry of another failed GHS 100 attempt asks for no more than that...
+    const again = await failCharge(10000);
+    await prisma.controlSettings.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', partialDirectDebitEnabled: false }, update: { partialDirectDebitEnabled: false } });
+    try {
+      await makeDue(again.id);
+      await retryFailedDirectDebits();
+    } finally {
+      await prisma.controlSettings.update({ where: { id: 'singleton' }, data: { partialDirectDebitEnabled: true } });
+    }
+    expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).totalPaidMinor).toBe(1 + 10000);
+
+    // ...and once nothing is due, a retry is dropped rather than taking an instalment early.
+    const late = await failCharge(10000);
+    await makeDue(late.id);
+    await retryFailedDirectDebits();
+    expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).totalPaidMinor).toBe(1 + 10000);
+    expect((await prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: late.id } })).nextRetryAt).toBeNull();
   });
 
   it('the collections run charges every ACTIVE contract with an approved mandate and a due instalment, and never double-charges', async () => {

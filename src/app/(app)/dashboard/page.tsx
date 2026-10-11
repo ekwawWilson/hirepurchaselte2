@@ -7,6 +7,7 @@ import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { formatCurrency, formatDate, contractTypeLabel, getStatusColor, cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { NeedsAttention } from '@/components/NeedsAttention';
 
 interface DashboardSummary {
   todayCashMinor: number;
@@ -184,6 +185,8 @@ export default function DashboardPage() {
         </div>
       )}
 
+      <NeedsAttention />
+
       {hasAnyQuickAction && (
         <section>
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h2>
@@ -280,6 +283,8 @@ function AgentDashboard({ contracts }: { contracts: RecentContract[] | null }) {
         <StatCard title="Revision requested" value={String(revisionRequested)} icon={AlertCircle} iconClass="text-orange-600" iconBg="bg-orange-50" href="/contracts?status=REVISION_REQUESTED" highlight={revisionRequested > 0} />
         <StatCard title="Active" value={String(stillGoing)} icon={FileText} iconClass="text-emerald-600" iconBg="bg-emerald-50" href="/contracts" />
       </div>
+
+      <NeedsAttention />
 
       <section>
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h2>

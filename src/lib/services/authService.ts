@@ -1,5 +1,4 @@
 import bcrypt from 'bcryptjs';
-import { randomInt } from 'crypto';
 import { prisma } from '../db/prisma';
 
 export class AuthError extends Error {}
@@ -15,6 +14,18 @@ export function staffPasswordProblem(password: string, email?: string): string |
   if (!/[a-zA-Z]/.test(password) || !/\d/.test(password)) return 'The password must contain at least one letter and one number';
   if (email && password.toLowerCase() === email.toLowerCase()) return 'The password cannot be the email address';
   return null;
+}
+
+/**
+ * A uniform random integer in [0, max) from the platform's secure generator.
+ * Web Crypto rather than Node's `crypto` module, because this file is also
+ * bundled for the Edge runtime (through instrumentation.ts's imports).
+ */
+function randomInt(max: number): number {
+  const limit = Math.floor(0x1_0000_0000 / max) * max; // reject the uneven tail, so every value is equally likely
+  const buffer = new Uint32Array(1);
+  do { globalThis.crypto.getRandomValues(buffer); } while (buffer[0] >= limit);
+  return buffer[0] % max;
 }
 
 // No 0/O, 1/l/I: a temporary password is read off a screen and typed by hand.

@@ -1,5 +1,6 @@
 import { prisma } from '../db/prisma';
 import { recordSuccessfulHubtelCharge, HubtelError } from './hubtelPaymentService';
+import { closeAlert } from './alertService';
 
 export const MOBILE_MONEY_PAGE_SIZE = 50;
 
@@ -93,7 +94,9 @@ export async function reapplyCollectedCharge(txnId: string) {
 
   await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { status: 'SUCCESS' } });
   await recordSuccessfulHubtelCharge(txn.id, txn.rawCallbackPayload ?? JSON.stringify({ manualReapply: true }));
-  return prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: txn.id } });
+  const after = await prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: txn.id } });
+  if (after.status === 'SUCCESS') await closeAlert(`payment-needs-review:${txn.id}`);
+  return after;
 }
 
 /** Closes a collected-but-unapplied charge staff dealt with outside the ledger (refunded it, say), with what they did. */
@@ -101,8 +104,10 @@ export async function resolveCollectedCharge(params: { txnId: string; userId: st
   const txn = await prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: params.txnId } });
   if (txn.status !== 'NEEDS_REVIEW' || txn.resolvedAt) throw new HubtelError('This payment is not waiting for review');
   if (!params.note.trim()) throw new HubtelError('Say what was done with the money');
-  return prisma.hubtelTransaction.update({
+  const resolved = await prisma.hubtelTransaction.update({
     where: { id: txn.id },
     data: { resolvedAt: new Date(), resolvedById: params.userId, resolutionNote: params.note.trim() },
   });
+  await closeAlert(`payment-needs-review:${txn.id}`);
+  return resolved;
 }

@@ -27,11 +27,14 @@ export default function ContractAgreementPage({ params }: { params: Promise<{ id
   const first = c.instalments[0];
   const last = c.instalments[c.instalments.length - 1];
   const frequency = c.paymentFrequency === 'DAILY' ? 'daily' : c.paymentFrequency === 'WEEKLY' ? 'weekly' : 'monthly';
+  // "12 weekly of GHS 40" only when that is true of the schedule as it stands —
+  // after a reschedule the instalments are no longer all one amount.
+  const uniform = c.instalments.slice(0, -1).every((i) => i.amountDueMinor === first?.amountDueMinor);
 
   return (
     <PrintDocument backHref={`/contracts/${c.id}`} title={AGREEMENT_TITLES[c.contractType] ?? 'Agreement'} subtitle={`Contract ${c.contractNumber} · dated ${formatDate(c.startDate)}`}>
       <p className="text-sm leading-relaxed">
-        This agreement is made between <strong>{companyName}</strong>{c.branch ? ` (${c.branch.name} branch${c.branch.address ? `, ${c.branch.address}` : ''})` : ''},
+        This agreement is made between <strong>{companyName}</strong>{c.branch ? ` (${c.branch.name}${c.branch.address ? `, ${c.branch.address}` : ''})` : ''},
         called &ldquo;the Company&rdquo;, and the customer named below, called &ldquo;the Customer&rdquo;.
       </p>
 
@@ -56,7 +59,7 @@ export default function ContractAgreementPage({ params }: { params: Promise<{ id
             <Field label="Total price">{formatCurrency(c.totalPayableMinor ?? 0)}</Field>
             <Field label="Deposit">{formatCurrency(c.depositAmountMinor)}</Field>
             <Field label="Balance by instalments">{formatCurrency((c.totalPayableMinor ?? 0) - c.depositAmountMinor)}</Field>
-            <Field label="Instalments">{c.instalments.length} {frequency}{c.instalmentAmountMinor ? ` of ${formatCurrency(c.instalmentAmountMinor)}` : ''}</Field>
+            <Field label="Instalments">{c.instalments.length} {frequency}{uniform && first ? ` of ${formatCurrency(first.amountDueMinor)}` : ', as set out in the schedule'}</Field>
             {first && <Field label="First instalment due">{formatDate(first.dueDate)}</Field>}
             {last && <Field label="Last instalment due">{formatDate(last.dueDate)}</Field>}
             <Field label="Grace period">{c.gracePeriodDays} day{c.gracePeriodDays === 1 ? '' : 's'}</Field>
@@ -89,7 +92,7 @@ export default function ContractAgreementPage({ params }: { params: Promise<{ id
       )}
 
       <h2 className="mt-6 mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Terms</h2>
-      <ol className="list-decimal space-y-1.5 pl-5 text-sm leading-relaxed">
+      <ol className="list-decimal space-y-1.5 pl-7 text-sm leading-relaxed">
         {(AGREEMENT_TERMS[c.contractType] ?? []).map((term) => <li key={term}>{term}</li>)}
       </ol>
 

@@ -15,6 +15,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { HubtelDiagnostics } from '@/components/settings/HubtelDiagnostics';
 import { CompanyLogo } from '@/components/CompanyLogo';
 import { AppIconCard } from '@/components/settings/AppIconCard';
+import { ControlsCard } from '@/components/settings/ControlsCard';
 
 export default function SettingsPage() {
   const canManage = useAuthStore((s) => s.hasPermission('settings.manage'));
@@ -407,6 +408,8 @@ export default function SettingsPage() {
           </form>
         </CardContent>
       </Card>
+
+      <ControlsCard />
 
       <HubtelDiagnostics />
     </div>

@@ -302,3 +302,29 @@ An `AGENT` role added alongside `SALES` (same permission shape: `customer.create
 The agent who created a `REVISION_REQUESTED` contract (and only them — `assertOwnRecordAccess`) can edit its terms and resubmit (`resubmitContract`): back to `PENDING_APPROVAL`, reason cleared, and for `DEPOSIT_INSTALMENT` the instalment schedule is rebuilt from scratch (safe — nothing on the old one can have been paid, since payments are refused on both pre-approval statuses).
 
 **Commission + deposit-custody ledger.** An agent who collects a `DEPOSIT_INSTALMENT` contract's deposit in cash is holding company money, separately from the fact that the deposit is already correctly recorded as paid on the contract itself. The moment such a deposit posts (`entryType: 'DEPOSIT'`, `channel: 'CASH'`, contract's creator has role `AGENT` — checked inside `postPayment`'s own transaction, so it can never desync from the payment it's derived from), an `AgentDepositLedger` row is created: `commissionAmountMinor` snapshotted from `CommissionSettings` (Settings > Agent commission, one fixed amount, editable by `settings.manage`) and clamped to the deposit itself, `amountOwedMinor = depositAmountMinor − commissionAmountMinor`. Deliberately **not** wired to an automated mobile-money remittance (no new parallel Hubtel integration, given money-correctness stakes and no way to test live callbacks here) — an agent instead *files* a remittance claim (`AgentRemittance`: amount, method, an optional self-reported reference) against a ledger entry, capped so pending+confirmed claims can never exceed what remains owed, and an approver (`agent.ledger.manage`: `BRANCH_MANAGER`/`ADMIN`/`SUPER_ADMIN`/`AUDITOR`) confirms or rejects it — only confirming ever touches the ledger's running total, flipping it to `SETTLED` once fully remitted.
+
+---
+
+## 23. Operations and controls (October 2026)
+
+Added after a review of the running system. Each item names the service that owns it; trust the service over this summary.
+
+**Money that was collected but not applied.** A Hubtel charge the contract would not take ends up `NEEDS_REVIEW`. It is now listed (Mobile Money, with every other attempt and Hubtel's own reason for a failure), can be applied again once the contract will take it, or closed with a note of what was done with the money (`mobileMoneyOpsService`). Each one raises an alert that closes itself when the payment is dealt with.
+
+**Finding records.** Customers, contracts and units are searched on the server (`utils/search.ts`): every word must match, in any case. Lists still show the newest first, but nothing is unreachable.
+
+**Signing in.** Five wrong passwords lock an account's sign-in for fifteen minutes, staff and portal alike (`auth/loginThrottle.ts`, counted in the database). Staff change their own password (`/account`); an administrator resets another's to a one-time password. A one-time password opens nothing but the change of password — enforced in `requireAuth` / `requireCustomer`, not only by the screen. Changing or resetting a password stamps `passwordChangedAt`, and a token issued before it is refused. A customer's phone number is never accepted as a password: staff issue a six-digit one-time password at registration or on request (`customerPortalService.issuePortalPassword`).
+
+**A second person.** With `ControlSettings.requireSecondApproval` on (the default), reversing a payment, writing off a live contract, or cancelling a contract money has been paid on only files an `ApprovalRequest`; a different person holding the same permission approves it, and only then does it happen (`approvalService`). The requester can withdraw but never approve. Turning down a contract an agent submitted is not affected.
+
+**Registration.** A phone number must be a ten-digit Ghana mobile number on a known network and is stored as `0XXXXXXXXX` however it was typed; a National ID already on file is refused (`customerService`).
+
+**After a customer falls behind.** Collections (`arrearsFollowUpService`) lists every contract in arrears, worst first, with the last contact logged (`CollectionNote`), any promise to pay checked against what was actually paid, and follow-ups that come back on their day. `rescheduleService` spreads what is still owed on a deposit and instalment contract over a new term without touching anything already paid or the total owed (`contract.reschedule`).
+
+**Refunds.** Cancelling a contract with money on it records `refundDueMinor`; it stays on the Refunds list until someone records what was handed back (`refundService`).
+
+**Paper.** A receipt for any payment, a statement of account and the agreement to sign are print pages under `/contracts/[id]/…` ("Print / Save as PDF"), with a short text version that opens in the customer's WhatsApp. The agreement's standard terms live in `constants/agreementTerms.ts` — plain-language defaults, to be reviewed against the business's own terms.
+
+**Direct debit.** One attempt at a time per contract: the daily run skips a contract whose last attempt is unanswered or has a retry scheduled. A retry collects what is still due, not what was asked for days earlier, and with `partialDirectDebitEnabled` asks for half of the attempt before it (`retryAmountMinor`). Customers on `DIRECT_DEBIT` are texted at 16:00 the day before a debit (`dailyNoticesService.sendDirectDebitNotices`).
+
+**Telling the owner.** `alertService.raiseAlert` records a fault once (deduplicated, counting repeats) and texts the owner's number the first time it opens: a scheduled job failing (`instrumentation.ts`'s `job` wrapper), Hubtel refusing this server (401/403), SMS failing to send. The dashboard's Needs attention panel (`attentionService`) lists open alerts and everything else waiting on a person, each only to someone who can act on it. A summary of the day goes to the owner at 19:00 (`sendOwnerDailySummary`). All of it is switched from Settings > Controls and notifications.

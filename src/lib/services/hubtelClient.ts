@@ -38,6 +38,19 @@ async function hubtelFetch(url: string, init: RequestInit = {}): Promise<Respons
 
 /** The reason to report for a non-2xx answer: Hubtel's own if it gave one. */
 export function hubtelHttpFailure(what: string, status: number, message?: string | null): string {
+  // 401/403 is Hubtel turning this server or these credentials away — every
+  // payment will fail the same way until someone acts, so it is raised where
+  // the owner will see it rather than left in a log. One alert, however many
+  // requests are refused (alertService dedupes).
+  if (status === 401 || status === 403) {
+    void import('./alertService').then(({ raiseAlert }) => raiseAlert({
+      kind: 'HUBTEL_REFUSED',
+      message: status === 403
+        ? "Hubtel is refusing this server's requests (403). Mobile money payments will not work until Hubtel whitelists the server's IP address."
+        : 'Hubtel rejected the API credentials (401). Mobile money payments will not work until the API ID and key are corrected.',
+      dedupeKey: `hubtel-refused:${status}`,
+    }));
+  }
   if (message) return message;
   if (status === 403) return `Hubtel refused the ${what} request (403 Forbidden) — this server's IP address is not whitelisted for the account`;
   return `Hubtel ${what} failed with HTTP ${status}`;
