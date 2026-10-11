@@ -19,7 +19,7 @@ export async function register() {
   const { markOverdueInstalments, markDefaultedContracts, applyLatePenalties } = await import('@/lib/services/overdueService');
   const { reconcilePendingHubtelTransactions } = await import('@/lib/services/hubtelPaymentService');
   const { pruneExpiredUssdSessions } = await import('@/lib/services/ussdService');
-  const { retryFailedDirectDebits } = await import('@/lib/services/hubtelPreapprovalService');
+  const { retryFailedDirectDebits, reconcilePendingPreapprovals } = await import('@/lib/services/hubtelPreapprovalService');
   const { runDirectDebitCollections } = await import('@/lib/services/collectionsService');
   const { accrueDailyLoanInterest } = await import('@/lib/services/loanService');
   const { sendDueTodayReminders, sendOverdueReminders } = await import('@/lib/services/reminderService');
@@ -93,6 +93,12 @@ export async function register() {
       if (result.unrecordedRetried > 0) console.log(`[cron] Hubtel reconciliation: retried ledger posting for ${result.unrecordedRetried} collected charge(s)`);
     } catch (e) {
       console.error('[cron] reconcilePendingHubtelTransactions failed:', e);
+    }
+    try {
+      const result = await reconcilePendingPreapprovals();
+      if (result.checked > 0) console.log(`[cron] Hubtel mandate reconciliation: checked ${result.checked}, resolved ${result.resolved}`);
+    } catch (e) {
+      console.error('[cron] reconcilePendingPreapprovals failed:', e);
     }
     try {
       await pruneExpiredUssdSessions();

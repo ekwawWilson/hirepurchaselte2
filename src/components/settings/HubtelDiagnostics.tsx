@@ -30,6 +30,9 @@ const SAMPLE_SECTIONS: { key: keyof DiagnosticsSamples; title: string; emptyHint
   { key: 'directDebitCharge', title: 'Direct-debit charge — outbound', emptyHint: 'Only fires in live mode, when this server charges an approved mandate.' },
   { key: 'preapprovalInitiate', title: 'Preapproval initiate (mandate request) — outbound', emptyHint: 'Only fires in live mode, when a direct-debit mandate is requested for a customer.' },
   { key: 'preapprovalVerifyOtp', title: 'Preapproval verify OTP — outbound', emptyHint: 'Only fires in live mode, when staff submit the OTP code for a mandate stuck on verificationType OTP.' },
+  { key: 'preapprovalStatusCheck', title: 'Preapproval status check — outbound', emptyHint: 'Only fires in live mode, when a mandate is still pending a few minutes after it was requested, or staff press Check status.' },
+  { key: 'preapprovalCancel', title: 'Cancel preapproval — outbound', emptyHint: 'Only fires in live mode, when staff revoke a mandate.' },
+  { key: 'preapprovalReactivate', title: 'Reactivate preapproval — outbound', emptyHint: 'Only fires in live mode, when staff reactivate a cancelled mandate.' },
   { key: 'statusCheck', title: 'Transaction status check — outbound', emptyHint: 'Only fires in live mode, when the reconcile sweep checks a pending transaction.' },
   { key: 'paymentCallback', title: 'Payment callback — inbound', emptyHint: 'Take (or simulate) a payment to capture one.' },
   { key: 'preapprovalCallback', title: 'Preapproval callback — inbound', emptyHint: 'Only fires in live mode, once a customer completes a real direct-debit mandate prompt.' },
@@ -67,6 +70,9 @@ interface DiagnosticsSamples {
   directDebitCharge: SamplePayload | null;
   preapprovalInitiate: SamplePayload | null;
   preapprovalVerifyOtp: SamplePayload | null;
+  preapprovalStatusCheck: SamplePayload | null;
+  preapprovalCancel: SamplePayload | null;
+  preapprovalReactivate: SamplePayload | null;
 }
 
 interface Diagnostics {

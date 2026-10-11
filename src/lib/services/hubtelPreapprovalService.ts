@@ -3,7 +3,10 @@ import { generateTransactionRef } from '../utils/idGenerators';
 import { DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName } from '../constants/contracts';
 import { recordSuccessfulHubtelCharge } from './hubtelPaymentService';
 import { appendWebhookToken } from '../auth/webhookSecurity';
-import { isHubtelLiveMode, callHubtelReceiveMoney, callHubtelPreapprovalInitiate, callHubtelPreapprovalVerifyOtp, HubtelApiError } from './hubtelClient';
+import {
+  isHubtelLiveMode, callHubtelReceiveMoney, callHubtelPreapprovalInitiate, callHubtelPreapprovalVerifyOtp,
+  callHubtelPreapprovalStatus, callHubtelPreapprovalCancel, callHubtelPreapprovalReactivate, HubtelApiError,
+} from './hubtelClient';
 
 export class PreapprovalError extends Error {}
 
@@ -31,11 +34,15 @@ const RETRY_SCHEDULE_DAYS = [1, 3, 7];
 
 /**
  * Requests a direct-debit mandate ("one-time approval"): the customer approves
- * ONCE — via a USSD prompt or an OTP Hubtel sends straight to their phone; this
- * app never sees or handles that code — after which the merchant can charge the
- * mandate repeatedly with no further customer action (docs/01-plan.md, modeled
- * on the legacy hirepurchase app's Hubtel Preapproval API). Reuses an existing
- * APPROVED mandate for the same customer+number+network instead of re-prompting.
+ * ONCE, after which the merchant can charge the mandate repeatedly with no
+ * further customer action (Hubtel's Direct Debit Preapproval API). Hubtel picks
+ * how the customer approves, and says which in its answer:
+ *  - USSD: a prompt on the customer's own phone. Nothing for staff to do but
+ *    wait for the callback.
+ *  - OTP: the number is already preapproved with another merchant, so Hubtel
+ *    texts a code instead, which staff submit through submitPreapprovalOtp.
+ * Reuses an existing APPROVED mandate for the same customer+number+network
+ * instead of re-prompting.
  */
 export async function initiatePreapproval(params: {
   customerId: string;
@@ -66,6 +73,7 @@ export async function initiatePreapproval(params: {
 
   if (isHubtelLiveMode()) {
     let result;
+    let immediate;
     try {
       result = await callHubtelPreapprovalInitiate({
         msisdn: params.msisdn,
@@ -73,31 +81,36 @@ export async function initiatePreapproval(params: {
         clientReferenceId,
         callbackUrl: preapprovalCallbackUrl(),
       });
+      immediate = normalizePreapprovalStatus(result.preapprovalStatus ?? '');
+      if (immediate && immediate !== 'APPROVED') {
+        throw new HubtelApiError(result.message || 'Hubtel rejected the mandate request');
+      }
     } catch (e) {
       // The call never reached Hubtel (network failure, bad credentials) or
-      // was rejected outright — either way, no hubtelPreapprovalId exists for
-      // Hubtel to ever send a callback about, so this row would otherwise sit
-      // PENDING forever: unlike a HubtelTransaction, nothing sweeps stale
-      // preapprovals, and it's never attached to a contract (enableDirectDebit
-      // hasn't run yet), so staff can't even see it to clean it up. Delete it
-      // rather than leave an invisible, permanently-stuck row behind.
+      // was rejected outright — either way Hubtel is not tracking a request
+      // it will ever call back about, and the row is not attached to a
+      // contract yet (enableDirectDebit hasn't run), so staff could not even
+      // see it to clean it up. Delete it rather than leave an invisible row.
       await prisma.hubtelPreapproval.delete({ where: { id: preapproval.id } });
       throw e instanceof HubtelApiError ? new PreapprovalError(e.message) : e;
     }
-    // Stays PENDING — a real mandate is only APPROVED once the customer
-    // completes the USSD prompt or the OTP is verified; the preapproval
-    // callback route flips it once Hubtel confirms. verificationType is
-    // Hubtel's own decision (not something this app requests — see
-    // callHubtelPreapprovalInitiate's docs), stored so staff can tell "still
-    // waiting on the customer" (USSD) apart from "needs an OTP" (OTP) instead
-    // of both looking like the same silent PENDING. otpPrefix is only ever
-    // set alongside verificationType 'OTP' — submitPreapprovalOtp needs it to
-    // build the full code Hubtel expects.
-    const pending = await prisma.hubtelPreapproval.update({
+    // Normally stays PENDING — a mandate is only APPROVED once the customer
+    // completes the USSD prompt or the OTP is verified, and the preapproval
+    // callback flips it then. The exception is a number already preapproved
+    // for this merchant: Hubtel answers APPROVED on the spot, prompts nobody,
+    // and so never calls back, which would otherwise leave it PENDING for
+    // good. verificationType/otpPrefix are stored so staff can tell "waiting
+    // on the customer's phone" (USSD) from "enter the code" (OTP).
+    const requested = await prisma.hubtelPreapproval.update({
       where: { id: preapproval.id },
-      data: { hubtelPreapprovalId: result.hubtelPreapprovalId, verificationType: result.verificationType, otpPrefix: result.otpPrefix },
+      data: {
+        hubtelPreapprovalId: result.hubtelPreapprovalId,
+        verificationType: result.verificationType,
+        otpPrefix: result.otpPrefix,
+        ...(immediate === 'APPROVED' && { status: 'APPROVED', approvedAt: new Date() }),
+      },
     });
-    return { preapproval: pending, reused: false as const };
+    return { preapproval: requested, reused: false as const };
   }
 
   // Mock mode resolves the mandate synchronously — same convention as
@@ -141,15 +154,133 @@ export async function submitPreapprovalOtp(params: { preapprovalId: string; otpC
   }
   if (!result.accepted) throw new PreapprovalError(result.message || 'Hubtel rejected that code');
 
-  return preapproval;
+  // Hubtel's sample answers PENDING here and settles it by callback, but the
+  // field is the same one initiate uses, so a final status is taken if given.
+  return applyPreapprovalStatus(preapproval, result.preapprovalStatus ?? '');
 }
 
+/**
+ * Asks Hubtel where a mandate request stands — the failsafe for a preapproval
+ * callback that never arrived, whichever way the customer was verifying.
+ * Mock mode has nothing to ask: it settles every mandate synchronously.
+ */
+export async function checkPreapprovalStatus(params: { preapprovalId: string }) {
+  const preapproval = await prisma.hubtelPreapproval.findUniqueOrThrow({ where: { id: params.preapprovalId } });
+  if (!isHubtelLiveMode()) return preapproval;
+
+  let result;
+  try {
+    result = await callHubtelPreapprovalStatus(preapproval.clientReferenceId);
+  } catch (e) {
+    throw e instanceof HubtelApiError ? new PreapprovalError(e.message) : e;
+  }
+  return applyPreapprovalStatus(preapproval, result.preapprovalStatus ?? '');
+}
+
+// Past this age a request Hubtel still reports as pending is left to staff's
+// own "Check status" button rather than polled every sweep indefinitely.
+const PREAPPROVAL_SWEEP_MAX_AGE_HOURS = 72;
+
+/**
+ * Status-checks every mandate still PENDING a while after it was requested.
+ * Run on a schedule (instrumentation.ts) alongside the transaction sweep.
+ * A check that itself fails leaves the mandate alone for the next run.
+ */
+export async function reconcilePendingPreapprovals(staleAfterMinutes = 5) {
+  if (!isHubtelLiveMode()) return { checked: 0, resolved: 0 };
+
+  const now = Date.now();
+  const stale = await prisma.hubtelPreapproval.findMany({
+    where: {
+      status: 'PENDING',
+      updatedAt: { lt: new Date(now - staleAfterMinutes * 60_000), gt: new Date(now - PREAPPROVAL_SWEEP_MAX_AGE_HOURS * 3_600_000) },
+    },
+  });
+
+  let resolved = 0;
+  for (const preapproval of stale) {
+    try {
+      const checked = await checkPreapprovalStatus({ preapprovalId: preapproval.id });
+      if (checked.status !== 'PENDING') resolved += 1;
+    } catch (e) {
+      console.error(`[hubtel] preapproval status check for ${preapproval.clientReferenceId} failed:`, e);
+    }
+  }
+  return { checked: stale.length, resolved };
+}
+
+/**
+ * Revokes the mandate with Hubtel, not just in this app: the customer's
+ * wallet stops being debitable by this merchant at all. Hubtel cancels by
+ * wallet number, so every contract sharing this mandate loses it together —
+ * disableDirectDebit is the one that takes a single contract off a mandate.
+ */
 export async function cancelPreapproval(params: { preapprovalId: string }) {
   const preapproval = await prisma.hubtelPreapproval.findUniqueOrThrow({ where: { id: params.preapprovalId } });
-  if (preapproval.status !== 'APPROVED') throw new PreapprovalError('Only an approved mandate can be cancelled');
+  if (preapproval.status !== 'APPROVED' && preapproval.status !== 'PENDING') {
+    throw new PreapprovalError(`This mandate is already ${preapproval.status.toLowerCase()}`);
+  }
+
+  if (isHubtelLiveMode()) {
+    let result;
+    try {
+      result = await callHubtelPreapprovalCancel(preapproval.customerMsisdn);
+    } catch (e) {
+      throw e instanceof HubtelApiError ? new PreapprovalError(e.message) : e;
+    }
+    if (!result.cancelled) throw new PreapprovalError(result.message || 'Hubtel did not cancel the mandate');
+  }
+
   return prisma.hubtelPreapproval.update({
     where: { id: preapproval.id },
     data: { status: 'CANCELLED', cancelledAt: new Date() },
+  });
+}
+
+/**
+ * Restores a cancelled mandate. Hubtel treats this like a new request — the
+ * customer approves again, by USSD prompt or OTP as Hubtel decides — so the
+ * mandate returns to PENDING and goes through the same verification as a
+ * first-time one.
+ */
+export async function reactivatePreapproval(params: { preapprovalId: string }) {
+  const preapproval = await prisma.hubtelPreapproval.findUniqueOrThrow({ where: { id: params.preapprovalId } });
+  if (preapproval.status !== 'CANCELLED') throw new PreapprovalError('Only a cancelled mandate can be reactivated');
+
+  if (!isHubtelLiveMode()) {
+    return prisma.hubtelPreapproval.update({
+      where: { id: preapproval.id },
+      data: { status: 'APPROVED', approvedAt: new Date(), cancelledAt: null },
+    });
+  }
+
+  let result;
+  try {
+    result = await callHubtelPreapprovalReactivate({ msisdn: preapproval.customerMsisdn, callbackUrl: preapprovalCallbackUrl() });
+  } catch (e) {
+    throw e instanceof HubtelApiError ? new PreapprovalError(e.message) : e;
+  }
+  const immediate = normalizePreapprovalStatus(result.preapprovalStatus ?? '');
+  if (immediate && immediate !== 'APPROVED') throw new PreapprovalError(result.message || 'Hubtel rejected the reactivation');
+
+  // Hubtel's answer names the reference its callback will carry. It is only
+  // adopted when no other mandate row already holds it (the column is
+  // unique); processPreapprovalCallback also matches on hubtelPreapprovalId,
+  // so the callback still finds this row either way.
+  const adoptReference = result.clientReferenceId && result.clientReferenceId !== preapproval.clientReferenceId
+    && !(await prisma.hubtelPreapproval.findUnique({ where: { clientReferenceId: result.clientReferenceId } }));
+
+  return prisma.hubtelPreapproval.update({
+    where: { id: preapproval.id },
+    data: {
+      status: immediate === 'APPROVED' ? 'APPROVED' : 'PENDING',
+      approvedAt: immediate === 'APPROVED' ? new Date() : null,
+      cancelledAt: null,
+      hubtelPreapprovalId: result.hubtelPreapprovalId ?? preapproval.hubtelPreapprovalId,
+      verificationType: result.verificationType,
+      otpPrefix: result.otpPrefix,
+      ...(adoptReference && { clientReferenceId: result.clientReferenceId! }),
+    },
   });
 }
 
@@ -209,8 +340,14 @@ export async function disableDirectDebit(params: { contractId: string; userId: s
   return prisma.contract.update({
     where: { id: params.contractId },
     // No mandate left to collect against — reset to CUSTOMER_INITIATED so
-    // runDirectDebitCollections stops considering this contract.
-    data: { hubtelPreapprovalId: null, paymentMethod: 'CUSTOMER_INITIATED', updatedById: params.userId },
+    // runDirectDebitCollections stops considering this contract. The
+    // creation-time request is dropped with it: left in place, the deposit
+    // clearing would read it as "never attempted" and prompt the customer for
+    // a fresh mandate staff had just turned off (paymentService.advanceContractStatus).
+    data: {
+      hubtelPreapprovalId: null, paymentMethod: 'CUSTOMER_INITIATED',
+      pendingDirectDebitNetwork: null, pendingDirectDebitMsisdn: null, updatedById: params.userId,
+    },
   });
 }
 
@@ -385,12 +522,41 @@ export async function retryFailedDirectDebits() {
   return retried;
 }
 
+/**
+ * Null for PENDING or anything unrecognized — nothing to apply yet. EXPIRED
+ * is a request the customer never answered, so it is FAILED (ask again), not
+ * CANCELLED, which is reserved for a mandate that was revoked and that
+ * Hubtel's Reactivate call can restore.
+ */
 function normalizePreapprovalStatus(raw: string): 'APPROVED' | 'CANCELLED' | 'FAILED' | null {
   const upper = raw.toUpperCase();
   if (upper === 'APPROVED') return 'APPROVED';
-  if (['CANCELLED', 'CANCELED', 'EXPIRED'].includes(upper)) return 'CANCELLED';
-  if (['DECLINED', 'FAILED', 'REJECTED'].includes(upper)) return 'FAILED';
+  if (['CANCELLED', 'CANCELED'].includes(upper)) return 'CANCELLED';
+  if (['DECLINED', 'FAILED', 'REJECTED', 'EXPIRED'].includes(upper)) return 'FAILED';
   return null;
+}
+
+/**
+ * The one place a status reported by Hubtel — in a callback, a status check,
+ * or the answer to an OTP — lands on a mandate. Idempotent: a repeat of the
+ * current status changes nothing, and an approved mandate is never downgraded
+ * by a late or out-of-order report (only cancelPreapproval revokes one).
+ */
+async function applyPreapprovalStatus<T extends { id: string; status: string; approvedAt: Date | null; cancelledAt: Date | null }>(
+  preapproval: T, rawStatus: string,
+) {
+  const nextStatus = normalizePreapprovalStatus(rawStatus);
+  if (!nextStatus || preapproval.status === nextStatus) return preapproval;
+  if (preapproval.status === 'APPROVED') return preapproval;
+
+  return prisma.hubtelPreapproval.update({
+    where: { id: preapproval.id },
+    data: {
+      status: nextStatus,
+      approvedAt: nextStatus === 'APPROVED' ? new Date() : preapproval.approvedAt,
+      cancelledAt: nextStatus === 'CANCELLED' ? new Date() : preapproval.cancelledAt,
+    },
+  });
 }
 
 /**
@@ -409,24 +575,20 @@ export async function processPreapprovalCallback(body: unknown): Promise<void> {
 
   if (!clientReferenceId) throw new PreapprovalError('ClientReferenceId is required');
 
-  const preapproval = await prisma.hubtelPreapproval.findUnique({ where: { clientReferenceId } });
+  // By reference first; by Hubtel's own id when the reference is one this app
+  // never issued, which a reactivated mandate's callback can carry
+  // (reactivatePreapproval). The id is not unique here, so the mandate most
+  // recently acted on is the one a fresh callback is about.
+  const byReference = await prisma.hubtelPreapproval.findUnique({ where: { clientReferenceId } });
+  const preapproval = byReference
+    ?? (hubtelPreapprovalId
+      ? await prisma.hubtelPreapproval.findFirst({ where: { hubtelPreapprovalId }, orderBy: { updatedAt: 'desc' } })
+      : null);
   if (!preapproval) throw new PreapprovalError(`Unknown preapproval reference: ${clientReferenceId}`);
 
   if (hubtelPreapprovalId && preapproval.hubtelPreapprovalId && preapproval.hubtelPreapprovalId !== hubtelPreapprovalId) {
     throw new PreapprovalError(`Preapproval callback id mismatch for ${clientReferenceId}`);
   }
 
-  const nextStatus = normalizePreapprovalStatus(rawStatus);
-  if (!nextStatus) return; // an intermediate/unrecognized status — nothing to apply yet
-  if (preapproval.status === 'APPROVED' && nextStatus !== 'APPROVED') return; // never downgrade an approved mandate
-  if (preapproval.status === nextStatus) return; // duplicate callback
-
-  await prisma.hubtelPreapproval.update({
-    where: { id: preapproval.id },
-    data: {
-      status: nextStatus,
-      approvedAt: nextStatus === 'APPROVED' ? new Date() : preapproval.approvedAt,
-      cancelledAt: nextStatus === 'CANCELLED' ? new Date() : preapproval.cancelledAt,
-    },
-  });
+  await applyPreapprovalStatus(preapproval, rawStatus);
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Plus, FileText as FileTextIcon, ChevronRight, Search } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
@@ -51,6 +52,7 @@ export default function ContractsPage() {
   const canView = useAuthStore((s) => s.hasPermission('contract.view'));
   const canCreate = useAuthStore((s) => s.hasPermission('contract.create'));
   const { toast } = useToast();
+  const router = useRouter();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -262,7 +264,10 @@ export default function ContractsPage() {
     }
     setSaving(true);
     try {
-      const { contract } = await api.post<{ contract: { status: string } }>('/contracts', {
+      const { contract, directDebit } = await api.post<{
+        contract: { id: string; status: string };
+        directDebit: { mandate: { status: string; verificationType: string | null } | null } | null;
+      }>('/contracts', {
         contractType, customerId, inventoryItemId,
         totalPayableMinor: parsedTotalPrice, depositAmountMinor: parsedDeposit,
         termWeeks: parsedTermWeeks, paymentFrequency,
@@ -272,6 +277,23 @@ export default function ContractsPage() {
         ...(paymentMethod !== 'CUSTOMER_INITIATED' && { directDebitNetwork, directDebitMsisdn: directDebitMsisdn.trim() }),
         ...(selectedCustomer?.branchId && { branchId: selectedCustomer.branchId }),
       });
+      if (directDebit) {
+        // The mandate still needs the customer, who is at the counter now:
+        // go to the contract, where the OTP is entered or the USSD approval
+        // is waited on, instead of back to the list.
+        const { mandate } = directDebit;
+        toast(
+          !mandate
+            ? { title: 'Contract created — direct debit not set up', description: 'The mandate request did not go through. Try it again from this page.', variant: 'destructive' }
+            : mandate.status === 'APPROVED'
+              ? { title: 'Contract created', description: 'Direct debit mandate approved.' }
+              : mandate.verificationType === 'OTP'
+                ? { title: 'Contract created — enter the OTP', description: 'Hubtel texted the customer a code. Enter it below to approve direct debit.' }
+                : { title: 'Contract created — waiting on the customer', description: 'They must approve the direct debit prompt on their phone.' },
+        );
+        router.push(`/contracts/${contract.id}`);
+        return;
+      }
       toast(contract.status === 'PENDING_APPROVAL'
         ? { title: 'Submitted for approval', description: 'A manager or admin needs to approve this before it goes live.' }
         : { title: 'Contract created' });

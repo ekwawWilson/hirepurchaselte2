@@ -10,7 +10,10 @@ export type HubtelSampleKind =
   | 'RECEIVE_MONEY_INITIATE'
   | 'DIRECT_DEBIT_CHARGE'
   | 'PREAPPROVAL_INITIATE'
-  | 'PREAPPROVAL_VERIFY_OTP';
+  | 'PREAPPROVAL_VERIFY_OTP'
+  | 'PREAPPROVAL_STATUS_CHECK'
+  | 'PREAPPROVAL_CANCEL'
+  | 'PREAPPROVAL_REACTIVATE';
 
 /**
  * Captures the most recent real request/response for a Hubtel integration

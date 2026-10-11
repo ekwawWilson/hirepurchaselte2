@@ -57,6 +57,8 @@ export function getStatusColor(status: string): string {
     OVERDUE: "bg-red-50 text-red-700 ring-1 ring-red-200/60",
     SUCCESS: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60",
     FAILED: "bg-red-50 text-red-700 ring-1 ring-red-200/60",
+    // Direct-debit mandate (its PENDING/FAILED/CANCELLED share the entries above)
+    APPROVED: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60",
     // Inventory statuses
     AVAILABLE: "bg-blue-50 text-blue-700 ring-1 ring-blue-200/60",
     RESERVED: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/60",

@@ -106,6 +106,19 @@ export function preapprovalVerifyOtpUrl(salesId: string): string {
   return `https://preapproval.hubtel.com/api/v2/merchant/${salesId}/preapproval/verifyotp`;
 }
 
+export function preapprovalStatusUrl(salesId: string, clientReferenceId: string): string {
+  return `https://preapproval.hubtel.com/api/v2/merchant/${salesId}/preapproval/${encodeURIComponent(clientReferenceId)}/status`;
+}
+
+/** Hubtel keys a cancellation on the wallet number, not on one request's reference. */
+export function preapprovalCancelUrl(salesId: string, msisdn: string): string {
+  return `https://preapproval.hubtel.com/api/v2/merchant/${salesId}/preapproval/${formatPhoneForHubtel(msisdn)}/cancel`;
+}
+
+export function preapprovalReactivateUrl(salesId: string): string {
+  return `https://preapproval.hubtel.com/api/v2/merchant/${salesId}/preapproval/reactivate`;
+}
+
 interface ReceiveMoneyResponse {
   Message: string;
   ResponseCode: string;
@@ -164,15 +177,55 @@ export async function callHubtelReceiveMoney(params: {
   };
 }
 
-interface PreapprovalInitiateResponse {
+interface PreapprovalRequestResponse {
+  message?: string;
+  responseCode?: string;
+  data?: {
+    hubtelPreApprovalId?: string;
+    clientReferenceId?: string;
+    verificationType?: 'USSD' | 'OTP';
+    otpPrefix?: string | null;
+    preapprovalStatus?: string;
+  } | null;
+}
+
+/** What Hubtel answers an initiate or a reactivate with — the two share one response shape. */
+export interface PreapprovalRequestResult {
+  hubtelPreapprovalId: string | null;
+  clientReferenceId: string | null;
+  /** Hubtel's own choice, never ours: a USSD prompt for a new number, an OTP
+   *  for one already preapproved with another merchant. */
+  verificationType: 'USSD' | 'OTP' | null;
+  otpPrefix: string | null;
+  /** APPROVED | REJECTED | PENDING. Hubtel answers APPROVED straight away,
+   *  with no prompt and so no callback, for a number already preapproved for
+   *  this merchant ("success, Customer is already preapproved"). */
+  preapprovalStatus: string | null;
   message: string;
-  responseCode: string;
-  data: {
-    hubtelPreApprovalId: string;
-    clientReferenceId: string;
-    verificationType: 'USSD' | 'OTP';
-    otpPrefix: string | null;
-    preapprovalStatus: string;
+  raw: unknown;
+}
+
+function parsePreapprovalRequestResponse(res: Response, parsed: unknown, what: string): PreapprovalRequestResult {
+  const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as PreapprovalRequestResponse;
+  const message = body.message ?? '';
+  if (!res.ok) throw new HubtelApiError(message || `Hubtel ${what} failed with HTTP ${res.status}`);
+
+  const data = body.data ?? null;
+  const alreadyApproved = String(data?.preapprovalStatus ?? '').toUpperCase() === 'APPROVED' || /already preapproved/i.test(message);
+  // A 2xx with neither a preapproval id nor an approval is not a request
+  // Hubtel is tracking: nothing would ever call back about it.
+  if (!data?.hubtelPreApprovalId && !alreadyApproved) {
+    throw new HubtelApiError(message || `Hubtel did not accept the ${what} request`);
+  }
+
+  return {
+    hubtelPreapprovalId: data?.hubtelPreApprovalId ?? null,
+    clientReferenceId: data?.clientReferenceId ?? null,
+    verificationType: data?.verificationType ?? null,
+    otpPrefix: data?.otpPrefix ?? null,
+    preapprovalStatus: alreadyApproved ? 'APPROVED' : data?.preapprovalStatus ?? null,
+    message,
+    raw: parsed,
   };
 }
 
@@ -181,7 +234,7 @@ export async function callHubtelPreapprovalInitiate(params: {
   network: string;
   clientReferenceId: string;
   callbackUrl: string;
-}): Promise<{ hubtelPreapprovalId: string; verificationType: 'USSD' | 'OTP'; otpPrefix: string | null; raw: unknown }> {
+}): Promise<PreapprovalRequestResult> {
   const creds = requireHubtelCredentials();
   const payload = {
     clientReferenceId: params.clientReferenceId,
@@ -200,15 +253,67 @@ export async function callHubtelPreapprovalInitiate(params: {
   // sample-payloads panel — both the request this app actually sent and
   // Hubtel's actual response, success or failure alike.
   await recordHubtelSample('PREAPPROVAL_INITIATE', payload, parsed);
-  const body = parsed as PreapprovalInitiateResponse;
-  if (!res.ok) throw new HubtelApiError(body?.message || `Hubtel preapproval initiate failed with HTTP ${res.status}`);
+  return parsePreapprovalRequestResponse(res, parsed, 'preapproval initiate');
+}
 
+/**
+ * Asks Hubtel to restore a mandate the customer cancelled. Answers like an
+ * initiate — a fresh USSD prompt or OTP for the customer to approve again —
+ * so the mandate goes back through the same two verification paths.
+ */
+export async function callHubtelPreapprovalReactivate(params: { msisdn: string; callbackUrl: string }): Promise<PreapprovalRequestResult> {
+  const creds = requireHubtelCredentials();
+  const payload = { callbackUrl: params.callbackUrl, customerMsisdn: formatPhoneForHubtel(params.msisdn) };
+
+  const res = await fetch(preapprovalReactivateUrl(creds.salesId), {
+    method: 'POST',
+    headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const parsed = await parseHubtelResponse(res);
+  await recordHubtelSample('PREAPPROVAL_REACTIVATE', payload, parsed);
+  return parsePreapprovalRequestResponse(res, parsed, 'preapproval reactivate');
+}
+
+/**
+ * The Preapproval Status Check — the failsafe for a mandate callback that
+ * never arrived. Hubtel's own sample answers with `code` where every other
+ * preapproval response says `responseCode`, and spells the id
+ * `hubtelPreapprovalId` here but `hubtelPreApprovalId` on initiate, so both
+ * spellings are read.
+ */
+export async function callHubtelPreapprovalStatus(clientReferenceId: string): Promise<{
+  preapprovalStatus: string | null; hubtelPreapprovalId: string | null; raw: unknown;
+}> {
+  const creds = requireHubtelCredentials();
+  const url = preapprovalStatusUrl(creds.salesId, clientReferenceId);
+
+  const res = await fetch(url, { headers: { Authorization: hubtelAuthHeader(creds) } });
+  const parsed = await parseHubtelResponse(res);
+  await recordHubtelSample('PREAPPROVAL_STATUS_CHECK', { url }, parsed);
+  const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Record<string, unknown>;
+  if (!res.ok) throw new HubtelApiError((body.message as string) || `Hubtel preapproval status check failed with HTTP ${res.status}`);
+
+  const data = (body.data ?? body.Data ?? {}) as Record<string, unknown>;
   return {
-    hubtelPreapprovalId: body.data?.hubtelPreApprovalId,
-    verificationType: body.data?.verificationType,
-    otpPrefix: body.data?.otpPrefix ?? null,
-    raw: body,
+    preapprovalStatus: (data.preapprovalStatus ?? data.PreapprovalStatus ?? null) as string | null,
+    hubtelPreapprovalId: (data.hubtelPreapprovalId ?? data.hubtelPreApprovalId ?? data.HubtelPreapprovalId ?? null) as string | null,
+    raw: parsed,
   };
+}
+
+/** Revokes the customer's mandate with this merchant. `data` is a bare boolean. */
+export async function callHubtelPreapprovalCancel(msisdn: string): Promise<{ cancelled: boolean; message: string; raw: unknown }> {
+  const creds = requireHubtelCredentials();
+  const url = preapprovalCancelUrl(creds.salesId, msisdn);
+
+  const res = await fetch(url, { headers: { Authorization: hubtelAuthHeader(creds) } });
+  const parsed = await parseHubtelResponse(res);
+  await recordHubtelSample('PREAPPROVAL_CANCEL', { url }, parsed);
+  const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as { message?: string; responseCode?: string; data?: unknown };
+  if (!res.ok) throw new HubtelApiError(body.message || `Hubtel preapproval cancel failed with HTTP ${res.status}`);
+
+  return { cancelled: body.responseCode === '2000' && body.data !== false, message: body.message ?? '', raw: parsed };
 }
 
 interface PreapprovalVerifyOtpResponse {
@@ -230,7 +335,7 @@ export async function callHubtelPreapprovalVerifyOtp(params: {
   hubtelPreapprovalId: string;
   clientReferenceId: string;
   otpCode: string;
-}): Promise<{ accepted: boolean; message: string; raw: unknown }> {
+}): Promise<{ accepted: boolean; preapprovalStatus: string | null; message: string; raw: unknown }> {
   const creds = requireHubtelCredentials();
   const payload = {
     customerMsisdn: formatPhoneForHubtel(params.msisdn),
@@ -251,6 +356,7 @@ export async function callHubtelPreapprovalVerifyOtp(params: {
 
   return {
     accepted: body.responseCode === '2000',
+    preapprovalStatus: body.data?.preapprovalStatus ?? null,
     message: body.message,
     raw: body,
   };

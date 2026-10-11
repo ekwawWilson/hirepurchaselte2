@@ -112,6 +112,7 @@ async function loadSamplePayloads(): Promise<Record<string, SamplePayload | null
   const kinds: HubtelSampleKind[] = [
     'USSD', 'PREAPPROVAL_CALLBACK', 'STATUS_CHECK',
     'RECEIVE_MONEY_INITIATE', 'DIRECT_DEBIT_CHARGE', 'PREAPPROVAL_INITIATE', 'PREAPPROVAL_VERIFY_OTP',
+    'PREAPPROVAL_STATUS_CHECK', 'PREAPPROVAL_CANCEL', 'PREAPPROVAL_REACTIVATE',
   ];
   const [logs, latestPaymentTxn] = await Promise.all([
     prisma.hubtelSampleLog.findMany({ where: { kind: { in: kinds } } }),
@@ -153,6 +154,9 @@ async function loadSamplePayloads(): Promise<Record<string, SamplePayload | null
     directDebitCharge: fromLog('DIRECT_DEBIT_CHARGE', 'The most recent Receive-Money call this server actually sent Hubtel to charge an approved direct-debit mandate (this path never runs in mock mode).'),
     preapprovalInitiate: fromLog('PREAPPROVAL_INITIATE', 'The most recent mandate-request call this server actually sent Hubtel (this path never runs in mock mode).'),
     preapprovalVerifyOtp: fromLog('PREAPPROVAL_VERIFY_OTP', 'The most recent OTP-verification call this server actually sent Hubtel for a mandate stuck on verificationType OTP (this path never runs in mock mode).'),
+    preapprovalStatusCheck: fromLog('PREAPPROVAL_STATUS_CHECK', 'The most recent Preapproval Status Check this server actually sent Hubtel for a mandate still pending (this path never runs in mock mode).'),
+    preapprovalCancel: fromLog('PREAPPROVAL_CANCEL', 'The most recent mandate cancellation this server actually sent Hubtel (this path never runs in mock mode).'),
+    preapprovalReactivate: fromLog('PREAPPROVAL_REACTIVATE', 'The most recent mandate reactivation this server actually sent Hubtel (this path never runs in mock mode).'),
   };
 }
 

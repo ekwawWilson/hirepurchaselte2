@@ -39,6 +39,10 @@ interface ContractDetail {
   payments: Payment[];
   hubtelPreapprovalId: string | null;
   hubtelPreapproval: Preapproval | null;
+  // The number/network asked for at creation — kept so a request that failed
+  // then can be retried from here without retyping them.
+  pendingDirectDebitNetwork: string | null;
+  pendingDirectDebitMsisdn: string | null;
   paymentMethod: string;
   // The Agent module (schema.prisma's Contract comment) — null on every
   // contract not created by an agent.
@@ -84,6 +88,8 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [charging, setCharging] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [otpSubmitting, setOtpSubmitting] = useState(false);
+  const [mandateBusy, setMandateBusy] = useState<'status' | 'cancel' | 'reactivate' | null>(null);
+  const [revokeOpen, setRevokeOpen] = useState(false);
 
   // The Agent module.
   const [approving, setApproving] = useState(false);
@@ -108,7 +114,8 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       }));
       setContract(contract);
       if (contract.status === 'PENDING_DEPOSIT') setEntryType('DEPOSIT');
-      setDdMsisdn((prev) => prev || contract.customer.phone || contract.customer.phone2 || contract.customer.phone3 || '');
+      setDdMsisdn((prev) => prev || contract.pendingDirectDebitMsisdn || contract.customer.phone || contract.customer.phone2 || contract.customer.phone3 || '');
+      if (contract.pendingDirectDebitNetwork) setDdNetwork(contract.pendingDirectDebitNetwork);
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load contract', variant: 'destructive' });
     }
@@ -274,26 +281,58 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     }
   }
 
-  async function setupDirectDebit(e: React.FormEvent) {
-    e.preventDefault();
+  /** What staff do next for a mandate Hubtel has just left pending — the two ways it gets approved. */
+  function pendingMandateHint(verificationType: string | null) {
+    return verificationType === 'OTP'
+      ? 'Hubtel texted the customer an OTP instead of sending a USSD prompt. Enter it below once they read it out.'
+      : 'The customer must confirm on their phone via a USSD prompt before this can be charged.';
+  }
+
+  async function requestMandate(msisdn: string, network: string, mode: 'DIRECT_DEBIT' | 'BOTH') {
     setDdSaving(true);
     try {
       const res = await api.post<{ reused: boolean; preapproval: { status: string; verificationType: string | null } }>(
-        `/contracts/${id}/direct-debit`, { msisdn: ddMsisdn, network: ddNetwork, paymentMethod: ddMode },
+        `/contracts/${id}/direct-debit`, { msisdn, network, paymentMethod: mode },
       );
       const pending = res.preapproval.status === 'PENDING';
-      const isOtp = res.preapproval.verificationType === 'OTP';
       toast({
         title: res.reused ? 'Existing mandate reused' : pending ? 'Awaiting customer approval' : 'Direct debit mandate approved',
-        description: !pending ? undefined : isOtp
-          ? 'This number already has a mandate with another Hubtel merchant — Hubtel texted them an OTP instead of a USSD prompt. Enter it below once they read it out.'
-          : 'The customer must confirm on their phone via a USSD prompt before this can be charged.',
+        description: pending ? pendingMandateHint(res.preapproval.verificationType) : undefined,
       });
       await load();
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to set up direct debit', variant: 'destructive' });
     } finally {
       setDdSaving(false);
+    }
+  }
+
+  function setupDirectDebit(e: React.FormEvent) {
+    e.preventDefault();
+    void requestMandate(ddMsisdn, ddNetwork, ddMode);
+  }
+
+  async function mandateAction(action: 'status' | 'cancel' | 'reactivate') {
+    setMandateBusy(action);
+    try {
+      const { preapproval } = await api.post<{ preapproval: Preapproval }>(`/contracts/${id}/direct-debit/${action}`);
+      if (action === 'cancel') {
+        toast({ title: 'Mandate revoked', description: 'Hubtel will no longer debit this number for this business.' });
+      } else if (preapproval.status === 'APPROVED') {
+        toast({ title: action === 'reactivate' ? 'Mandate reactivated' : 'Mandate approved' });
+      } else if (preapproval.status === 'PENDING') {
+        toast({
+          title: action === 'reactivate' ? 'Awaiting customer approval' : 'Still waiting on the customer',
+          description: pendingMandateHint(preapproval.verificationType),
+        });
+      } else {
+        toast({ title: 'Mandate was not approved', description: 'The customer declined the request, or it expired.', variant: 'destructive' });
+      }
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Could not reach Hubtel', variant: 'destructive' });
+    } finally {
+      setMandateBusy(null);
     }
   }
 
@@ -354,6 +393,12 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   }
 
   const canPay = hasPermission('payment.cash.record');
+  // Mirrors the routes: setting a mandate up, taking it off or revoking it is
+  // contract.reschedule; seeing an approval through (the OTP, a status check)
+  // is also open to whoever can create a contract, since they are the one at
+  // the counter with the customer when Hubtel asks for it.
+  const canManageMandate = hasPermission('contract.reschedule');
+  const canVerifyMandate = hasPermission('contract.reschedule', 'contract.create');
   const canReverse = hasPermission('payment.reverse');
   const canCancel = hasPermission('contract.cancel');
   const canWriteOff = hasPermission('contract.writeoff');
@@ -506,43 +551,50 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           <CardContent>
             {contract.hubtelPreapproval ? (
               <div className="space-y-3">
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(contract.hubtelPreapproval.status)}`}>
                     {contract.hubtelPreapproval.status}
                   </span>
                   <span className="text-sm text-gray-600">{contract.hubtelPreapproval.customerMsisdn} &middot; {contract.hubtelPreapproval.network}</span>
+                  {contract.hubtelPreapproval.status === 'PENDING' && contract.hubtelPreapproval.verificationType && (
+                    <span className="text-xs text-gray-400">
+                      {contract.hubtelPreapproval.verificationType === 'OTP' ? 'Approval by OTP' : 'Approval by USSD prompt'}
+                    </span>
+                  )}
                 </div>
                 {contract.hubtelPreapproval.status === 'PENDING' && (
                   contract.hubtelPreapproval.verificationType === 'OTP' ? (
                     <div className="space-y-2">
                       <p className="text-xs text-amber-600">
-                        This number already has a direct-debit mandate with a different Hubtel merchant, so Hubtel
-                        texted the customer a code instead of sending a USSD prompt. Ask them to read it out and enter
-                        it below.
+                        Hubtel texted the customer a code instead of sending a USSD prompt — it does this when the
+                        number already has a mandate with another business. Ask them to read it out and enter it
+                        below.
                       </p>
-                      <form className="flex items-end gap-3" onSubmit={submitOtp}>
-                        <div>
-                          <Label>OTP code</Label>
-                          <div className="mt-1.5 flex items-center gap-2">
-                            {contract.hubtelPreapproval.otpPrefix && (
-                              <span className="text-sm font-mono text-gray-400">{contract.hubtelPreapproval.otpPrefix}-</span>
-                            )}
-                            <Input
-                              required
-                              className="w-24"
-                              inputMode="numeric"
-                              pattern="\d{4}"
-                              maxLength={4}
-                              placeholder="0000"
-                              value={otpCode}
-                              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                            />
+                      {canVerifyMandate && (
+                        <form className="flex items-end gap-3" onSubmit={submitOtp}>
+                          <div>
+                            <Label>OTP code</Label>
+                            <div className="mt-1.5 flex items-center gap-2">
+                              {contract.hubtelPreapproval.otpPrefix && (
+                                <span className="text-sm font-mono text-gray-400">{contract.hubtelPreapproval.otpPrefix}-</span>
+                              )}
+                              <Input
+                                required
+                                className="w-24"
+                                inputMode="numeric"
+                                pattern="\d{4}"
+                                maxLength={4}
+                                placeholder="0000"
+                                value={otpCode}
+                                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                              />
+                            </div>
                           </div>
-                        </div>
-                        <Button type="submit" disabled={otpSubmitting || otpCode.length !== 4}>
-                          {otpSubmitting ? 'Verifying...' : 'Verify OTP'}
-                        </Button>
-                      </form>
+                          <Button type="submit" disabled={otpSubmitting || otpCode.length !== 4}>
+                            {otpSubmitting ? 'Verifying...' : 'Verify OTP'}
+                          </Button>
+                        </form>
+                      )}
                     </div>
                   ) : (
                     <p className="text-xs text-gray-500">
@@ -551,7 +603,19 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                     </p>
                   )
                 )}
-                {contract.status === 'PENDING_DEPOSIT' && (
+                {contract.hubtelPreapproval.status === 'FAILED' && (
+                  <p className="text-xs text-red-600">
+                    The customer declined this request, or it expired before they approved it. Nothing can be charged
+                    until a new request is approved.
+                  </p>
+                )}
+                {contract.hubtelPreapproval.status === 'CANCELLED' && (
+                  <p className="text-xs text-gray-500">
+                    This mandate was cancelled, so nothing can be charged. Reactivating it asks the customer to approve
+                    again.
+                  </p>
+                )}
+                {contract.status === 'PENDING_DEPOSIT' && ['PENDING', 'APPROVED'].includes(contract.hubtelPreapproval.status) && (
                   <p className="text-xs text-amber-600">
                     Mandate {contract.hubtelPreapproval.status === 'APPROVED' ? 'approved' : 'requested'} — nothing is charged until the deposit
                     clears and the contract activates.
@@ -564,13 +628,40 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                       <Input required type="number" step="0.01" className="mt-1.5 w-40" value={chargeAmount} onChange={(e) => setChargeAmount(e.target.value)} />
                     </div>
                     <Button type="submit" disabled={charging}>{charging ? 'Charging...' : 'Charge now'}</Button>
-                    <Button type="button" variant="outline" onClick={disableDirectDebit}>Disable</Button>
                   </form>
                 )}
-                {canPay && !(contract.hubtelPreapproval.status === 'APPROVED' && contract.status === 'ACTIVE') && (
-                  <Button type="button" variant="outline" size="sm" onClick={disableDirectDebit}>Disable</Button>
-                )}
-                {contract.status === 'ACTIVE' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {canVerifyMandate && contract.hubtelPreapproval.status === 'PENDING' && (
+                    <Button type="button" variant="outline" size="sm" disabled={mandateBusy !== null} onClick={() => mandateAction('status')}>
+                      {mandateBusy === 'status' ? 'Checking...' : 'Check status'}
+                    </Button>
+                  )}
+                  {canManageMandate && contract.hubtelPreapproval.status === 'FAILED' && (
+                    <Button
+                      type="button" size="sm" disabled={ddSaving}
+                      onClick={() => requestMandate(
+                        contract.hubtelPreapproval!.customerMsisdn, contract.hubtelPreapproval!.network,
+                        contract.paymentMethod === 'BOTH' ? 'BOTH' : 'DIRECT_DEBIT',
+                      )}
+                    >
+                      {ddSaving ? 'Requesting...' : 'Request again'}
+                    </Button>
+                  )}
+                  {canManageMandate && contract.hubtelPreapproval.status === 'CANCELLED' && (
+                    <Button type="button" size="sm" disabled={mandateBusy !== null} onClick={() => mandateAction('reactivate')}>
+                      {mandateBusy === 'reactivate' ? 'Reactivating...' : 'Reactivate'}
+                    </Button>
+                  )}
+                  {canManageMandate && (
+                    <Button type="button" variant="outline" size="sm" onClick={disableDirectDebit}>Disable</Button>
+                  )}
+                  {canManageMandate && ['PENDING', 'APPROVED'].includes(contract.hubtelPreapproval.status) && (
+                    <Button type="button" variant="outline" size="sm" disabled={mandateBusy !== null} onClick={() => setRevokeOpen(true)}>
+                      {mandateBusy === 'cancel' ? 'Revoking...' : 'Revoke mandate'}
+                    </Button>
+                  )}
+                </div>
+                {contract.status === 'ACTIVE' && contract.hubtelPreapproval.status === 'APPROVED' && (
                   <p className="text-xs text-gray-400">
                     {contract.paymentMethod === 'BOTH'
                       ? 'Customer can pay cash/USSD themselves — direct debit only charges once an instalment goes overdue (they defaulted on paying it).'
@@ -579,37 +670,46 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   </p>
                 )}
               </div>
-            ) : contract.status === 'ACTIVE' ? (
-              <form className="flex items-end gap-3" onSubmit={setupDirectDebit}>
-                <div>
-                  <Label>Mobile money number</Label>
-                  <Input required className="mt-1.5 w-44" value={ddMsisdn} onChange={(e) => setDdMsisdn(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Network</Label>
-                  <select
-                    className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
-                    value={ddNetwork}
-                    onChange={(e) => setDdNetwork(e.target.value)}
-                  >
-                    {DIRECT_DEBIT_NETWORKS.map((n) => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <Label>Mode</Label>
-                  <select
-                    className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
-                    value={ddMode}
-                    onChange={(e) => setDdMode(e.target.value as 'DIRECT_DEBIT' | 'BOTH')}
-                  >
-                    <option value="DIRECT_DEBIT">Direct debit only</option>
-                    <option value="BOTH">Both — on default</option>
-                  </select>
-                </div>
-                <Button type="submit" disabled={ddSaving}>{ddSaving ? 'Setting up...' : 'Set up direct debit'}</Button>
-              </form>
+            ) : !canManageMandate ? (
+              <p className="text-sm text-gray-500">No direct debit on this contract. A manager can set it up.</p>
+            ) : contract.status === 'ACTIVE' || contract.status === 'PENDING_DEPOSIT' ? (
+              <div className="space-y-2">
+                <form className="flex flex-wrap items-end gap-3" onSubmit={setupDirectDebit}>
+                  <div>
+                    <Label>Mobile money number</Label>
+                    <Input required className="mt-1.5 w-44" value={ddMsisdn} onChange={(e) => setDdMsisdn(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>Network</Label>
+                    <select
+                      className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                      value={ddNetwork}
+                      onChange={(e) => setDdNetwork(e.target.value)}
+                    >
+                      {DIRECT_DEBIT_NETWORKS.map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Mode</Label>
+                    <select
+                      className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                      value={ddMode}
+                      onChange={(e) => setDdMode(e.target.value as 'DIRECT_DEBIT' | 'BOTH')}
+                    >
+                      <option value="DIRECT_DEBIT">Direct debit only</option>
+                      <option value="BOTH">Both — on default</option>
+                    </select>
+                  </div>
+                  <Button type="submit" disabled={ddSaving}>{ddSaving ? 'Requesting...' : 'Set up direct debit'}</Button>
+                </form>
+                <p className="text-xs text-gray-400">
+                  Hubtel asks the customer to approve once — by a USSD prompt on their phone, or by an OTP you enter
+                  here if their number already has a mandate with another business.
+                  {contract.status === 'PENDING_DEPOSIT' && ' Nothing is charged until the deposit clears.'}
+                </p>
+              </div>
             ) : (
-              <p className="text-sm text-gray-500">Direct debit becomes available once the contract is ACTIVE.</p>
+              <p className="text-sm text-gray-500">Direct debit can only be set up while the contract is active.</p>
             )}
           </CardContent>
         </Card>
@@ -786,6 +886,23 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setActionReason('')}>Back</AlertDialogCancel>
             <AlertDialogAction onClick={runConfirmedAction}>Confirm</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke this direct debit mandate?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Hubtel will stop this business debiting {contract.hubtelPreapproval?.customerMsisdn} at all — for this
+              contract and any other of the customer&apos;s contracts using the same number. The customer has to
+              approve again before it can be charged. To stop direct debit on this contract only, use Disable.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Back</AlertDialogCancel>
+            <AlertDialogAction onClick={() => mandateAction('cancel')}>Revoke mandate</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

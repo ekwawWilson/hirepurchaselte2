@@ -168,7 +168,19 @@ export async function POST(req: NextRequest) {
         newValues: { principalMinor: contract.principalMinor, customerId: contract.customerId },
       });
     }
-    return NextResponse.json({ contract }, { status: 201 });
+    // How the mandate request made at creation went, so the wizard can take
+    // staff straight to the next step while the customer is still there: an
+    // OTP to enter, a USSD prompt to wait on, or a request that failed and
+    // needs another try. Null when no mandate was asked for, or none has been
+    // requested yet (a contract awaiting approval requests it on approval).
+    const requestedDirectDebit = !!directDebitNetwork && !requiresApproval;
+    const mandate = requestedDirectDebit && contract.hubtelPreapprovalId
+      ? await prisma.hubtelPreapproval.findUnique({
+          where: { id: contract.hubtelPreapprovalId },
+          select: { status: true, verificationType: true },
+        })
+      : null;
+    return NextResponse.json({ contract, directDebit: requestedDirectDebit ? { mandate } : null }, { status: 201 });
   } catch (e) {
     if (e instanceof ContractError) return NextResponse.json({ error: e.message }, { status: 400 });
     throw e;
