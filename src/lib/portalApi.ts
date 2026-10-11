@@ -23,6 +23,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (!res.ok) {
     if (res.status === 401) useCustomerAuthStore.getState().clearAuth();
+    // Issued a new one-time password while signed in here: back to the change-of-password page (portal layout).
+    if (res.status === 403 && data.code === 'PASSWORD_CHANGE_REQUIRED') {
+      const { customer, setCustomer } = useCustomerAuthStore.getState();
+      if (customer && !customer.mustChangePassword) setCustomer({ ...customer, mustChangePassword: true });
+    }
     throw new ApiError(res.status, data.error || `Request failed with status ${res.status}`);
   }
   return data as T;

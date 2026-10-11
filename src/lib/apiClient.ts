@@ -25,6 +25,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (!res.ok) {
     if (res.status === 401) useAuthStore.getState().clearAuth();
+    // An administrator reset this account's password while it was signed in
+    // here: show the "choose your own password" screen now (AppShell), rather
+    // than a working-looking app whose every request is refused.
+    if (res.status === 403 && data.code === 'PASSWORD_CHANGE_REQUIRED') {
+      const { user, setAuth } = useAuthStore.getState();
+      if (user && token && !user.mustChangePassword) setAuth({ ...user, mustChangePassword: true }, token);
+    }
     throw new ApiError(res.status, data.error || `Request failed with status ${res.status}`);
   }
   return data as T;
