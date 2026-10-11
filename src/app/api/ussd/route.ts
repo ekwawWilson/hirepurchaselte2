@@ -1,49 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { handleUssdInput } from '@/lib/services/ussdService';
-import { recordHubtelSample } from '@/lib/services/hubtelSampleLogService';
+import { validateWebhookRequest } from '@/lib/auth/webhookSecurity';
+import { requireAuth, requirePermission } from '@/lib/auth/rbac';
+import { isHubtelLiveMode } from '@/lib/services/hubtelClient';
+import { answerUssdRequest } from '@/lib/services/ussdGatewayService';
 
 /**
- * USSD gateway webhook. Deliberately unauthenticated (a real USSD gateway
- * calls this directly, identified only by the phone session — there's no
- * user login at this layer) and used by both a real Hubtel integration and
- * the mock simulator page. Request/response field names loosely follow
- * Hubtel's own USSD contract (SessionId/Mobile/Message/Type) for realism.
+ * The USSD menu, for the staff simulator page and for a gateway that sends
+ * the shared secret as a header or `?token=`. (Hubtel's own gateway is given
+ * /api/ussd/{token} instead — see that route.)
+ *
+ * Never open: a USSD session greets a phone number's owner by name, shows
+ * what they owe, and — once payments are live — sends a payment prompt to
+ * that phone. Unguarded, anyone could do all three for any customer's number.
+ * A signed-in staff member may use it as a simulator; once payments are live
+ * that is limited to those who manage settings, since confirming a payment
+ * here then sends a real prompt.
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as {
-    SessionId?: string; Mobile?: string; Message?: string; Type?: string; Operator?: string;
-  } | null;
-  if (!body) return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
-  const { SessionId: sessionId, Mobile: mobile, Message: message, Type: type, Operator: operator } = body;
-
-  if (!sessionId || !mobile) {
-    return NextResponse.json({ error: 'SessionId and Mobile are required' }, { status: 400 });
+  if (!validateWebhookRequest(req).valid) {
+    const auth = await requireAuth(req);
+    if ('error' in auth) return auth.error;
+    if (isHubtelLiveMode()) {
+      const perm = requirePermission(auth.user, 'settings.manage');
+      if (!perm.authorized) {
+        return NextResponse.json({ error: 'The simulator sends real payment prompts while Hubtel payments are live — only an administrator can use it' }, { status: 403 });
+      }
+    }
   }
-
-  const result = await handleUssdInput({
-    sessionId,
-    msisdn: mobile,
-    operator,
-    input: message ?? '',
-    isNewSession: type === 'Initiation',
-    isTimeout: type === 'Timeout',
-  });
-
-  // Field names/casing and the Label/DataType/FieldType fields follow Hubtel's
-  // Programmable Services response contract exactly — Label/DataType/FieldType
-  // are Mandatory there, and a missing one (or a wrong-cased Type value) is what
-  // produces Hubtel's own "invalid response, Error: UUE" rejection.
-  const response = {
-    SessionId: sessionId,
-    Type: result.continueSession ? 'response' : 'release',
-    Message: result.message,
-    Label: result.label,
-    DataType: result.continueSession ? 'input' : 'display',
-    FieldType: result.fieldType ?? 'text',
-  };
-  // A genuine dial-in captured for Settings > Hubtel Diagnostics's
-  // sample-payloads panel — recordHubtelSample swallows its own errors, so
-  // this can never fail the actual USSD response the gateway is waiting on.
-  await recordHubtelSample('USSD', body, response);
-  return NextResponse.json(response);
+  return answerUssdRequest(req);
 }

@@ -19,6 +19,30 @@ export class HubtelApiError extends Error {
   }
 }
 
+// Long enough for Hubtel's slowest honest answer, short enough that a
+// customer's screen is not left hanging on a request that will never return —
+// which, per Hubtel, is one of the two things a server whose IP it has not
+// whitelisted gets (the other being 403).
+const HUBTEL_TIMEOUT_MS = 25_000;
+
+async function hubtelFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(HUBTEL_TIMEOUT_MS) });
+  } catch (e) {
+    if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      throw new HubtelApiError('Hubtel did not answer in time — if this server is new to the account, its IP address may not be whitelisted yet');
+    }
+    throw e;
+  }
+}
+
+/** The reason to report for a non-2xx answer: Hubtel's own if it gave one. */
+export function hubtelHttpFailure(what: string, status: number, message?: string | null): string {
+  if (message) return message;
+  if (status === 403) return `Hubtel refused the ${what} request (403 Forbidden) — this server's IP address is not whitelisted for the account`;
+  return `Hubtel ${what} failed with HTTP ${status}`;
+}
+
 /**
  * What to tell the person paying when Hubtel turns a Receive Money request
  * down, by its documented response code. 2001 is the customer's own wallet or
@@ -184,7 +208,7 @@ export async function callHubtelReceiveMoney(params: {
     ClientReference: params.clientReference,
   };
 
-  const res = await fetch(receiveMoneyUrl(creds.salesId), {
+  const res = await hubtelFetch(receiveMoneyUrl(creds.salesId), {
     method: 'POST',
     headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -197,7 +221,7 @@ export async function callHubtelReceiveMoney(params: {
   const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Partial<ReceiveMoneyResponse>;
   if (!res.ok) {
     throw new HubtelApiError(
-      body.Message || `Hubtel receive-money call failed with HTTP ${res.status}`,
+      hubtelHttpFailure('receive money', res.status, body.Message),
       res.status < 500 ? { responseCode: body.ResponseCode ?? null, raw: parsed } : undefined,
     );
   }
@@ -242,7 +266,7 @@ export interface PreapprovalRequestResult {
 function parsePreapprovalRequestResponse(res: Response, parsed: unknown, what: string): PreapprovalRequestResult {
   const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as PreapprovalRequestResponse;
   const message = body.message ?? '';
-  if (!res.ok) throw new HubtelApiError(message || `Hubtel ${what} failed with HTTP ${res.status}`);
+  if (!res.ok) throw new HubtelApiError(hubtelHttpFailure(what, res.status, message));
 
   const data = body.data ?? null;
   const alreadyApproved = String(data?.preapprovalStatus ?? '').toUpperCase() === 'APPROVED' || /already preapproved/i.test(message);
@@ -277,7 +301,7 @@ export async function callHubtelPreapprovalInitiate(params: {
     callbackUrl: params.callbackUrl,
   };
 
-  const res = await fetch(preapprovalInitiateUrl(creds.salesId), {
+  const res = await hubtelFetch(preapprovalInitiateUrl(creds.salesId), {
     method: 'POST',
     headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -299,7 +323,7 @@ export async function callHubtelPreapprovalReactivate(params: { msisdn: string; 
   const creds = requireHubtelCredentials();
   const payload = { callbackUrl: params.callbackUrl, customerMsisdn: formatPhoneForHubtel(params.msisdn) };
 
-  const res = await fetch(preapprovalReactivateUrl(creds.salesId), {
+  const res = await hubtelFetch(preapprovalReactivateUrl(creds.salesId), {
     method: 'POST',
     headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -322,11 +346,11 @@ export async function callHubtelPreapprovalStatus(clientReferenceId: string): Pr
   const creds = requireHubtelCredentials();
   const url = preapprovalStatusUrl(creds.salesId, clientReferenceId);
 
-  const res = await fetch(url, { headers: { Authorization: hubtelAuthHeader(creds) } });
+  const res = await hubtelFetch(url, { headers: { Authorization: hubtelAuthHeader(creds) } });
   const parsed = await parseHubtelResponse(res);
   await recordHubtelSample('PREAPPROVAL_STATUS_CHECK', { url }, parsed);
   const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Record<string, unknown>;
-  if (!res.ok) throw new HubtelApiError((body.message as string) || `Hubtel preapproval status check failed with HTTP ${res.status}`);
+  if (!res.ok) throw new HubtelApiError(hubtelHttpFailure('preapproval status check', res.status, body.message as string));
 
   const data = (body.data ?? body.Data ?? {}) as Record<string, unknown>;
   return {
@@ -341,11 +365,11 @@ export async function callHubtelPreapprovalCancel(msisdn: string): Promise<{ can
   const creds = requireHubtelCredentials();
   const url = preapprovalCancelUrl(creds.salesId, msisdn);
 
-  const res = await fetch(url, { headers: { Authorization: hubtelAuthHeader(creds) } });
+  const res = await hubtelFetch(url, { headers: { Authorization: hubtelAuthHeader(creds) } });
   const parsed = await parseHubtelResponse(res);
   await recordHubtelSample('PREAPPROVAL_CANCEL', { url }, parsed);
   const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as { message?: string; responseCode?: string; data?: unknown };
-  if (!res.ok) throw new HubtelApiError(body.message || `Hubtel preapproval cancel failed with HTTP ${res.status}`);
+  if (!res.ok) throw new HubtelApiError(hubtelHttpFailure('preapproval cancel', res.status, body.message));
 
   return { cancelled: body.responseCode === '2000' && body.data !== false, message: body.message ?? '', raw: parsed };
 }
@@ -378,7 +402,7 @@ export async function callHubtelPreapprovalVerifyOtp(params: {
     otpCode: params.otpCode,
   };
 
-  const res = await fetch(preapprovalVerifyOtpUrl(creds.salesId), {
+  const res = await hubtelFetch(preapprovalVerifyOtpUrl(creds.salesId), {
     method: 'POST',
     headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -386,7 +410,7 @@ export async function callHubtelPreapprovalVerifyOtp(params: {
   const parsed = await parseHubtelResponse(res);
   await recordHubtelSample('PREAPPROVAL_VERIFY_OTP', payload, parsed);
   const body = parsed as PreapprovalVerifyOtpResponse;
-  if (!res.ok) throw new HubtelApiError(body?.message || `Hubtel OTP verification failed with HTTP ${res.status}`);
+  if (!res.ok) throw new HubtelApiError(hubtelHttpFailure('OTP verification', res.status, body?.message));
 
   return {
     accepted: body.responseCode === '2000',
@@ -422,7 +446,7 @@ export async function testPreapprovalInitiateRaw(params: {
   };
   const requestUrl = preapprovalInitiateUrl(creds.salesId);
 
-  const res = await fetch(requestUrl, {
+  const res = await hubtelFetch(requestUrl, {
     method: 'POST',
     headers: { Authorization: hubtelAuthHeader(creds), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

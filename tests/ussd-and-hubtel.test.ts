@@ -208,6 +208,7 @@ describe('USSD + Hubtel payments', () => {
     const sessionId = `sess-${runId}-route`;
 
     const res = await ussdPOST(makeRequest('POST', '/api/ussd', {
+      token: process.env.WEBHOOK_SHARED_TOKEN, // the gateway's shared secret — the route is never open
       body: { SessionId: sessionId, Mobile: phone, Message: '', Type: 'Initiation' },
     }));
     expect(res.status).toBe(200);
@@ -247,11 +248,13 @@ describe('USSD + Hubtel payments', () => {
     const sessionId = `sess-${runId}-timeout`;
 
     await ussdPOST(makeRequest('POST', '/api/ussd', {
+      token: process.env.WEBHOOK_SHARED_TOKEN, // the gateway's shared secret — the route is never open
       body: { SessionId: sessionId, Mobile: phone, Message: '', Type: 'Initiation' },
     }));
     expect(await prisma.ussdSession.findUnique({ where: { sessionId } })).not.toBeNull();
 
     const res = await ussdPOST(makeRequest('POST', '/api/ussd', {
+      token: process.env.WEBHOOK_SHARED_TOKEN, // the gateway's shared secret — the route is never open
       body: { SessionId: sessionId, Mobile: phone, Message: '', Type: 'Timeout' },
     }));
     const body = await res.json();

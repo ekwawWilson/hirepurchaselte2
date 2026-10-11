@@ -10,7 +10,16 @@ import { isOwnPhoneNumber } from './customerPortalService';
 import { networkForPhone } from '../constants/customers';
 import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES } from '../constants/contracts';
 
-export class HubtelError extends Error {}
+/**
+ * `message` is fit to show whoever is paying. `staffDetail`, when set, is
+ * what Hubtel actually said — for staff, who can act on "this server's IP is
+ * not whitelisted" where a customer cannot.
+ */
+export class HubtelError extends Error {
+  constructor(message: string, readonly staffDetail?: string) {
+    super(message);
+  }
+}
 
 /**
  * Why a mobile money prompt may not be sent for this contract, amount and
@@ -121,7 +130,7 @@ export async function initiateHubtelPayment(params: {
       if (!(e instanceof HubtelApiError)) throw e;
       // Not refused, just unanswered (a gateway error, say): Hubtel may have
       // taken the request, so it stays PENDING for the status check to settle.
-      if (!e.rejected) throw new HubtelError(e.message);
+      if (!e.rejected) throw new HubtelError('We could not reach the mobile money service. Please try again in a few minutes.', e.message);
       return refuseHubtelPayment(clientReference, e.rejected.responseCode, e.message, e.rejected.raw);
     }
 
@@ -154,7 +163,7 @@ export async function initiateHubtelPayment(params: {
 async function refuseHubtelPayment(clientReference: string, responseCode: string | null, message: string, raw: unknown): Promise<never> {
   console.error(`[hubtel] receive-money ${clientReference} refused (${responseCode ?? 'no code'}): ${message}`);
   await processHubtelCallback({ clientReference, status: 'FAILED', rawPayload: JSON.stringify({ refused: true, response: raw }) });
-  throw new HubtelError(describeHubtelRejection(responseCode, message));
+  throw new HubtelError(describeHubtelRejection(responseCode, message), message);
 }
 
 /**

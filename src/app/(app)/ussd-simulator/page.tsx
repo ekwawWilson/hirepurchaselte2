@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useAuthStore } from '@/lib/authStore';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -17,16 +18,22 @@ export default function UssdSimulatorPage() {
   const [input, setInput] = useState('');
   const [ended, setEnded] = useState(false);
   const [loading, setLoading] = useState(false);
+  const token = useAuthStore((s) => s.token);
 
   async function callUssd(type: 'Initiation' | 'Response', message: string, sid: string) {
     setLoading(true);
     try {
       const res = await fetch('/api/ussd', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
         body: JSON.stringify({ SessionId: sid, Mobile: phone, Message: message, Type: type }),
       });
       const body = await res.json();
+      if (!res.ok) {
+        setLog((l) => [...l, { from: 'system', text: body.error ?? 'The simulator is not available.' }]);
+        setEnded(true);
+        return;
+      }
       setLog((l) => [...l, { from: 'system', text: body.Message }]);
       setEnded(body.Type === 'release');
     } finally {
@@ -62,8 +69,9 @@ export default function UssdSimulatorPage() {
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Hubtel USSD Simulator</h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Mock mode (<code className="font-mono text-xs">HUBTEL_PAYMENTS_MODE=mock</code>) — no live Hubtel
-          credentials needed. Dial in with a phone number that has a registered customer with an outstanding balance.
+          Walks through the same menu a customer gets on their phone. Dial in with a phone number that has a
+          registered customer with an outstanding balance. In mock mode a confirmed payment is recorded with no
+          money moving; once Hubtel payments are live it sends a real prompt to that phone.
         </p>
       </div>
 

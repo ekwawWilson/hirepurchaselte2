@@ -52,7 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ reference: txn.clientReference, status: txn.status }, { status: 201 });
   } catch (e) {
     if (e instanceof PaymentsClosedError) return NextResponse.json({ error: e.message }, { status: 409 });
-    if (e instanceof HubtelError) return NextResponse.json({ error: e.message }, { status: 400 });
+    if (e instanceof HubtelError) return NextResponse.json({ error: e.staffDetail ?? e.message }, { status: 400 });
     throw e;
   }
 }

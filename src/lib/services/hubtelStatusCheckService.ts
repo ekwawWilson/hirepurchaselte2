@@ -1,4 +1,6 @@
-import { isHubtelLiveMode, requireHubtelCredentials, hubtelAuthHeader, transactionStatusUrl, resolveHubtelStatusCheck, HubtelApiError } from './hubtelClient';
+import {
+  isHubtelLiveMode, requireHubtelCredentials, hubtelAuthHeader, transactionStatusUrl, resolveHubtelStatusCheck, hubtelHttpFailure, HubtelApiError,
+} from './hubtelClient';
 import { recordHubtelSample } from './hubtelSampleLogService';
 
 export interface HubtelStatusCheckResult {
@@ -29,8 +31,8 @@ export async function checkHubtelTransactionStatus(clientReference: string): Pro
 
   const creds = requireHubtelCredentials();
   const url = `${transactionStatusUrl(creds.salesId)}?clientReference=${encodeURIComponent(clientReference)}`;
-  const res = await fetch(url, { headers: { Authorization: hubtelAuthHeader(creds) } });
-  if (!res.ok) throw new HubtelApiError(`Hubtel status check failed with HTTP ${res.status}`);
+  const res = await fetch(url, { headers: { Authorization: hubtelAuthHeader(creds) }, signal: AbortSignal.timeout(25_000) });
+  if (!res.ok) throw new HubtelApiError(hubtelHttpFailure('status check', res.status));
 
   const body = await res.json();
   // A genuine status-check response, captured for Settings > Hubtel

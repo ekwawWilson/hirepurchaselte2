@@ -84,6 +84,8 @@ interface Diagnostics {
     webhookTokenSet: boolean;
     paymentCallbackUrl: string | null;
     preapprovalCallbackUrl: string | null;
+    ussdInteractionUrl: string | null;
+    serviceFulfilmentUrl: string | null;
   };
   ip: string | null;
   ipSource?: string;
@@ -202,24 +204,32 @@ export function HubtelDiagnostics() {
             </div>
 
             <div className="space-y-2">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Register these with Hubtel</p>
-              {(['paymentCallbackUrl', 'preapprovalCallbackUrl'] as const).map((key) => {
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Addresses Hubtel calls</p>
+              {([
+                ['ussdInteractionUrl', 'USSD — Service Interaction URL (enter in Hubtel\'s Programmable Service form)'],
+                ['serviceFulfilmentUrl', 'USSD — Service Fulfilment / callback URL (enter in the same form)'],
+                ['paymentCallbackUrl', 'Payment callback (sent to Hubtel with every payment request — nothing to enter)'],
+                ['preapprovalCallbackUrl', 'Direct debit mandate callback (sent with every mandate request — nothing to enter)'],
+              ] as const).map(([key, label]) => {
                 const url = diagnostics.config[key];
                 return (
-                  <div key={key} className="flex items-center gap-2">
-                    <code className="flex-1 text-xs bg-gray-50 ring-1 ring-gray-200/60 rounded px-2 py-1.5 overflow-x-auto whitespace-nowrap">
-                      {url || '(not configured)'}
-                    </code>
-                    {url && (
-                      <Button type="button" size="sm" variant="outline" onClick={() => copy(url, key)}>
-                        {copied === key ? 'Copied' : 'Copy'}
-                      </Button>
-                    )}
+                  <div key={key}>
+                    <p className="text-xs text-gray-500 mb-1">{label}</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-xs bg-gray-50 ring-1 ring-gray-200/60 rounded px-2 py-1.5 overflow-x-auto whitespace-nowrap">
+                        {url || '(not configured)'}
+                      </code>
+                      {url && (
+                        <Button type="button" size="sm" variant="outline" onClick={() => copy(url, key)}>
+                          {copied === key ? 'Copied' : 'Copy'}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
               <p className="text-xs text-gray-400">
-                Note: these already carry the webhook token if one is configured — paste them into Hubtel exactly as shown, not the bare route path.
+                Each carries this app&apos;s security token — paste it exactly as shown, and treat it like a password.
               </p>
             </div>
 

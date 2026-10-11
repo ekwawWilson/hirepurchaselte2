@@ -10,6 +10,7 @@ import {
   transactionStatusUrl,
 } from '@/lib/services/hubtelClient';
 import { preapprovalCallbackUrl } from '@/lib/services/hubtelPreapprovalService';
+import { appendWebhookToken, programmableServiceUrls } from '@/lib/auth/webhookSecurity';
 import type { HubtelSampleKind } from '@/lib/services/hubtelSampleLogService';
 
 /**
@@ -172,8 +173,10 @@ export async function GET(req: NextRequest) {
     apiKeySet: Boolean(process.env.HUBTEL_API_KEY),
     apiSecretSet: Boolean(process.env.HUBTEL_API_SECRET),
     webhookTokenSet: Boolean(process.env.WEBHOOK_SHARED_TOKEN),
-    paymentCallbackUrl: process.env.HUBTEL_CALLBACK_URL || null,
+    paymentCallbackUrl: appendWebhookToken(process.env.HUBTEL_CALLBACK_URL || '') || null,
     preapprovalCallbackUrl: preapprovalCallbackUrl() || null,
+    ussdInteractionUrl: programmableServiceUrls()?.interactionUrl ?? null,
+    serviceFulfilmentUrl: programmableServiceUrls()?.fulfilmentUrl ?? null,
   };
   const configured = config.salesIdSet && config.apiKeySet && config.apiSecretSet;
 
