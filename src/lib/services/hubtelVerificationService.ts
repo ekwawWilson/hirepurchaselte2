@@ -57,8 +57,12 @@ export async function verifyMobileMoneyNumber(params: {
 
   let result: VerifyResult;
   try {
+    // Hubtel's wallet-name lookup is a separate product this app is not
+    // integrated with, so against a live account there is nothing to ask:
+    // say so plainly (staff confirm the number with the customer instead)
+    // rather than pretend to have checked, as the mock below would.
     if (process.env.HUBTEL_PAYMENTS_MODE === 'live') {
-      throw new Error('HUBTEL_PAYMENTS_MODE=live is not wired to a real Hubtel account in this build — use mock mode.');
+      throw new Error('Name lookup is not available — confirm the number with the customer.');
     }
     // Mock mode: if the number already belongs to a registered customer, "verify"
     // against their own name — a realistic stand-in for what Hubtel's wallet
