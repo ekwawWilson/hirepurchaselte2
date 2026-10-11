@@ -196,7 +196,12 @@ export default function ContractsPage() {
     // unit is no longer necessarily valid.
     setInventoryItemId('');
     if (!selectedCustomer) { setItems([]); return; }
-    api.get<{ items: InventoryItem[] }>(`/inventory?status=AVAILABLE&branchId=${selectedCustomer.branchId}`).then((r) => setItems(r.items));
+    api.get<{ items: InventoryItem[] }>(`/inventory?status=AVAILABLE&branchId=${selectedCustomer.branchId}`)
+      .then((r) => setItems(r.items))
+      .catch((e) => {
+        setItems([]);
+        toast({ title: 'Could not load available units', description: e instanceof ApiError ? e.message : undefined, variant: 'destructive' });
+      });
     if (!directDebitMsisdn) setDirectDebitMsisdn(customerPhone(selectedCustomer) === '—' ? '' : customerPhone(selectedCustomer));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);

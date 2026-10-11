@@ -3,12 +3,20 @@ import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
 import { receiveInventoryItem } from '@/lib/services/inventoryService';
 
+/**
+ * Stock, to whoever may view inventory. Someone who can only create contracts
+ * sees the units available to sell and nothing else: picking one is a step of
+ * creating a Deposit + Instalment contract (POST /api/contracts already lets
+ * them reserve it), which is no reason to show them what is issued, returned
+ * or written off.
+ */
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if ('error' in auth) return auth.error;
-  const perm = requirePermission(auth.user, 'inventory.view');
+  const perm = requirePermission(auth.user, 'inventory.view', 'contract.create');
   if (!perm.authorized) return perm.error;
   const user = auth.user;
+  const sellableOnly = !requirePermission(user, 'inventory.view').authorized;
 
   const { searchParams } = req.nextUrl;
   const productId = searchParams.get('productId') ?? undefined;
@@ -19,6 +27,7 @@ export async function GET(req: NextRequest) {
   if (!user.branchId && branchIdParam) where.branchId = branchIdParam;
   if (productId) where.productId = productId;
   if (status) where.status = status;
+  if (sellableOnly) where.status = 'AVAILABLE';
 
   const items = await prisma.inventoryItem.findMany({
     where, include: { product: { include: { category: true } } }, orderBy: { createdAt: 'desc' }, take: 200,

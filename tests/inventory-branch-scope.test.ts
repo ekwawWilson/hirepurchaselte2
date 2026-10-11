@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { makeRequest, makeParams } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 import { POST as loginPOST } from '@/app/api/auth/login/route';
+import { GET as inventoryGET } from '@/app/api/inventory/route';
 import { POST as adjustPOST } from '@/app/api/inventory/[id]/adjust/route';
 import { POST as transferPOST } from '@/app/api/inventory/[id]/transfer/route';
 
@@ -52,6 +53,27 @@ describe('Inventory item routes are branch-scoped', () => {
     const untouched = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: otherBranchItemId } });
     expect(untouched.status).toBe('AVAILABLE');
     expect(untouched.branchId).not.toBe(managerBranchId);
+  });
+
+  it('someone who can create contracts but not view inventory sees the units available to sell, and only those', async () => {
+    const cashier = await login('cashier@example.test'); // contract.create, no inventory.view
+    const product = await prisma.product.create({ data: { sku: `SELLABLE-${runId}`, name: 'Sellable Phone', cashPriceMinor: 90000 } });
+    const available = await prisma.inventoryItem.create({ data: { productId: product.id, branchId: managerBranchId, serialNumber: `SELL-A-${runId}` } });
+    const issued = await prisma.inventoryItem.create({ data: { productId: product.id, branchId: managerBranchId, serialNumber: `SELL-I-${runId}`, status: 'ISSUED' } });
+
+    const list = async (token: string, query: string) => {
+      const res = await inventoryGET(makeRequest('GET', `/api/inventory?productId=${product.id}${query}`, { token }));
+      return { status: res.status, ids: res.status === 200 ? ((await res.json()).items as { id: string }[]).map((i) => i.id) : [] };
+    };
+
+    // What the contract wizard asks for.
+    expect(await list(cashier, '&status=AVAILABLE')).toEqual({ status: 200, ids: [available.id] });
+    // Asking for more gets no more.
+    expect((await list(cashier, '')).ids).toEqual([available.id]);
+    expect((await list(cashier, '&status=ISSUED')).ids).toEqual([available.id]);
+    // Someone with inventory.view still sees whatever they ask for.
+    expect((await list(manager, '&status=ISSUED')).ids).toEqual([issued.id]);
+    expect((await list(manager, '')).ids.sort()).toEqual([available.id, issued.id].sort());
   });
 
   it('still lets an all-branch admin adjust it, and 404s an unknown item', async () => {
