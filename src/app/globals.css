@@ -159,3 +159,22 @@ h1, h2, h3, h4, h5, h6 {
 .animate-slide-down {
   animation: slide-down 0.2s ease-out;
 }
+
+/*
+ * Printing (receipts, statements, agreements — "Print / Save as PDF"). The
+ * app shell is a fixed-height, scroll-inside layout, which a printer would
+ * cut off at one page: on paper it becomes a plain flowing document, with
+ * the navigation gone and only the page's own content left.
+ */
+@media print {
+  @page { margin: 14mm; }
+  html, body { background: #fff !important; }
+  [data-print-shell], [data-print-flow] {
+    display: block !important; height: auto !important; min-height: 0 !important;
+    overflow: visible !important; background: #fff !important; padding: 0 !important;
+  }
+  [data-print-shell] .page-shell { max-width: none !important; padding: 0 !important; }
+  .no-print { display: none !important; }
+  .print-paper { border: 0 !important; box-shadow: none !important; padding: 0 !important; max-width: none !important; }
+  .print-avoid-break { break-inside: avoid; }
+}

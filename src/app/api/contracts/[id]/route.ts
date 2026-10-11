@@ -19,7 +19,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       inventoryItem: true,
       instalments: { orderBy: { instalmentNo: 'asc' } },
       penalties: true,
-      payments: { orderBy: { createdAt: 'desc' }, include: { allocations: true } },
+      // createdBy and branch are for the printed receipt, statement and agreement.
+      payments: { orderBy: { createdAt: 'desc' }, include: { allocations: true, createdBy: { select: { firstName: true, lastName: true } } } },
+      branch: { select: { name: true, address: true, phone: true } },
       hubtelPreapproval: true,
       // A reversal or write-off someone has asked for and nobody has yet approved.
       approvalRequests: {

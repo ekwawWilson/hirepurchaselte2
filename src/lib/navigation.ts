@@ -15,6 +15,8 @@ import {
   Settings,
   ClipboardCheck,
   ShieldAlert,
+  PhoneCall,
+  Undo2,
   Wallet,
   type LucideIcon,
 } from 'lucide-react';
@@ -65,6 +67,10 @@ export const navGroups: NavGroup[] = [
       // Reversals, write-offs and paid-up cancellations waiting on a second person.
       { name: 'Second Approvals', href: '/approvals', icon: ShieldAlert, perms: ['payment.reverse', 'contract.writeoff', 'contract.cancel'] },
       { name: 'Mobile Money', href: '/mobile-money', icon: Smartphone, perms: ['payment.view'] },
+      // Who is behind, what was last said to them, and promises to pay.
+      { name: 'Collections', href: '/collections', icon: PhoneCall, perms: ['contract.view'] },
+      // Money owed back on cancelled contracts until someone records it as handed over.
+      { name: 'Refunds', href: '/refunds', icon: Undo2, perms: ['payment.view'] },
     ],
   },
   {

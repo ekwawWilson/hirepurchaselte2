@@ -1,9 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import { FileText, FileSignature } from 'lucide-react';
 import { useEffect, useState, use } from 'react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
+import { RescheduleDialog } from '@/components/RescheduleDialog';
+import { RecordRefundDialog } from '@/components/RecordRefundDialog';
+import { ContractFollowUps } from '@/components/ContractFollowUps';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, formatDate, formatDateTime, getStatusColor, contractTypeLabel } from '@/lib/utils';
 import { MOBILE_MONEY_NETWORKS, MOBILE_MONEY_NETWORK_LABELS } from '@/lib/constants/contracts';
@@ -55,6 +59,8 @@ interface ContractDetail {
   createdById: string;
   revisionReason: string | null;
   termWeeks: number | null;
+  // What cancelling left owed back to the customer, and what was recorded as handed over.
+  refundDueMinor: number | null; refundedMinor: number | null; refundedAt: string | null; refundNote: string | null;
   gracePeriodDays: number;
   penaltyRateBps: number;
 }
@@ -112,6 +118,8 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     totalPayable: '', deposit: '', termWeeks: '', paymentFrequency: 'WEEKLY', gracePeriodDays: '', penaltyRateBps: '', loanAmount: '',
   });
   const [resubmitSaving, setResubmitSaving] = useState(false);
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
 
   async function load() {
     try {
@@ -462,6 +470,12 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const canWriteOff = hasPermission('contract.writeoff');
   const canRelease = hasPermission('inventory.issue');
   const canApprove = hasPermission('contract.approve');
+  const canRecordRefund = hasPermission('payment.reverse', 'contract.cancel');
+  const canLogContact = hasPermission('customer.create', 'payment.cash.record');
+  const scheduleOutstandingMinor = contract.instalments.reduce((s, i) => s + Math.max(0, i.amountDueMinor - i.amountPaidMinor), 0);
+  const canReschedule = canManageMandate && contract.contractType === 'DEPOSIT_INSTALMENT'
+    && ['ACTIVE', 'DEFAULTED'].includes(contract.status) && scheduleOutstandingMinor > 0;
+  const inArrears = contract.status === 'DEFAULTED' || contract.instalments.some((i) => i.status === 'OVERDUE');
   const terminal = ['COMPLETED', 'RELEASED', 'CANCELLED', 'WRITTEN_OFF'].includes(contract.status);
   // The Agent module: nothing has been agreed yet on either of these two
   // statuses, so no money can move and no mandate can be requested — see
@@ -484,6 +498,35 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </div>
         <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${getStatusColor(contract.status)}`}>{contract.status}</span>
       </div>
+
+      {!preApproval && (
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/contracts/${contract.id}/statement`} className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50">
+            <FileText className="h-3.5 w-3.5" /> Statement
+          </Link>
+          <Link href={`/contracts/${contract.id}/agreement`} className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50">
+            <FileSignature className="h-3.5 w-3.5" /> Agreement
+          </Link>
+        </div>
+      )}
+
+      {contract.status === 'CANCELLED' && !!contract.refundDueMinor && (
+        <Card className={contract.refundedAt ? undefined : 'border-red-200 bg-red-50/60'}>
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <p className={`flex-1 text-sm ${contract.refundedAt ? 'text-gray-600' : 'text-red-800'}`}>
+              {contract.refundedAt ? (
+                <>
+                  <strong>{formatCurrency(contract.refundedMinor ?? 0)}</strong> of the {formatCurrency(contract.refundDueMinor)} paid in was handed back on {formatDate(contract.refundedAt)}.
+                  {contract.refundNote && <> {contract.refundNote}</>}
+                </>
+              ) : (
+                <>The customer had paid <strong>{formatCurrency(contract.refundDueMinor)}</strong> when this contract was cancelled. Nothing has been recorded as handed back yet.</>
+              )}
+            </p>
+            {!contract.refundedAt && canRecordRefund && <Button size="sm" className="shrink-0" onClick={() => setRefundOpen(true)}>Record refund</Button>}
+          </CardContent>
+        </Card>
+      )}
 
       {contract.approvalRequests.length > 0 && (
         <Card className="border-amber-200 bg-amber-50/60">
@@ -936,6 +979,13 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       </Card>
       )}
 
+      {contract.contractType !== 'SAVE_TO_OWN' && !preApproval && (
+        <ContractFollowUps
+          contractId={contract.id} contractNumber={contract.contractNumber} inArrears={inArrears} canLog={canLogContact}
+          customerName={`${contract.customer.firstName} ${contract.customer.lastName}`}
+        />
+      )}
+
       <Card>
         <CardHeader><CardTitle>Payments</CardTitle></CardHeader>
         <CardContent className="p-0">
@@ -955,7 +1005,11 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                     {p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? '-' : ''}{formatCurrency(p.amountMinor)}
                   </TableCell>
                   <TableCell className="text-gray-500 max-w-[14rem] truncate" title={p.notes ?? undefined}>{p.notes ?? '—'}</TableCell>
-                  <TableCell className="font-mono text-xs">{p.receiptNumber ?? '—'}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {p.status === 'SUCCESS' && !p.reversesPaymentId
+                      ? <Link href={`/contracts/${contract.id}/receipt/${p.id}`} className="text-blue-700 hover:underline">{p.receiptNumber ?? 'Receipt'}</Link>
+                      : p.receiptNumber ?? '—'}
+                  </TableCell>
                   <TableCell>
                     {contract.approvalRequests.some((a) => a.kind === 'PAYMENT_REVERSAL' && a.targetId === p.id)
                       ? <span className="text-xs text-amber-700">Reversal awaiting approval</span>
@@ -974,10 +1028,13 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </CardContent>
       </Card>
 
-      {(canCancel || canWriteOff || canRelease) && !terminal && (
+      {(canCancel || canWriteOff || canRelease || canReschedule) && !terminal && (
         <Card>
           <CardHeader><CardTitle>Actions</CardTitle></CardHeader>
-          <CardContent className="flex gap-3">
+          <CardContent className="flex flex-wrap gap-3">
+            {canReschedule && (
+              <Button variant="outline" onClick={() => setRescheduleOpen(true)}>Reschedule</Button>
+            )}
             {canRelease && contract.contractType === 'SAVE_TO_OWN' && contract.status === 'COMPLETED' && (
               <Button onClick={() => setConfirmAction('release')}>Release device</Button>
             )}
@@ -990,6 +1047,15 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           </CardContent>
         </Card>
       )}
+
+      <RescheduleDialog
+        open={rescheduleOpen} contractId={contract.id} outstandingMinor={scheduleOutstandingMinor}
+        onClose={() => setRescheduleOpen(false)} onSaved={() => { setRescheduleOpen(false); void load(); }}
+      />
+      <RecordRefundDialog
+        target={refundOpen ? { id: contract.id, contractNumber: contract.contractNumber, refundDueMinor: contract.refundDueMinor ?? 0 } : null}
+        onClose={() => setRefundOpen(false)} onSaved={() => { setRefundOpen(false); void load(); }}
+      />
 
       {/* Reverse payment dialog */}
       <Dialog open={!!reverseTarget} onOpenChange={(open) => !open && setReverseTarget(null)}>

@@ -63,23 +63,25 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f4f6f9]">
-      <AppSidebar />
+    <div data-print-shell className="flex h-screen overflow-hidden bg-[#f4f6f9]">
+      <div className="contents print:hidden"><AppSidebar /></div>
 
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <AppTopBar />
+      <div data-print-flow className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        <div className="contents print:hidden"><AppTopBar /></div>
 
         {/* pb-16 clears the fixed mobile tab bar; lg:pb-0 since desktop has no bottom bar */}
-        <main className="flex-1 overflow-y-auto surface-grid pb-16 lg:pb-0">
+        <main data-print-flow className="flex-1 overflow-y-auto surface-grid pb-16 lg:pb-0">
           <div className="page-shell mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-            <TodaysPaymentsBanner />
+            <div className="print:hidden"><TodaysPaymentsBanner /></div>
             {children}
           </div>
         </main>
       </div>
 
-      <MobileTabBar moreOpen={moreOpen} onMoreToggle={() => setMoreOpen((o) => !o)} />
-      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} />
+      <div className="contents print:hidden">
+        <MobileTabBar moreOpen={moreOpen} onMoreToggle={() => setMoreOpen((o) => !o)} />
+        <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} />
+      </div>
     </div>
   );
 }

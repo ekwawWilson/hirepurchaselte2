@@ -199,6 +199,16 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<Advanc
   return { queuedSmsIds };
 }
 
+/**
+ * Re-derives a contract's totals, instalment states and status from the
+ * ledger after something other than a payment changed its schedule
+ * (rescheduleService.ts) — the same two steps every posted payment runs.
+ */
+export async function resettleContract(tx: Tx, contractId: string) {
+  await recomputeContract(tx, contractId);
+  return advanceContractStatus(tx, contractId);
+}
+
 export interface PostPaymentParams {
   contractId: string;
   amountMinor: number;
