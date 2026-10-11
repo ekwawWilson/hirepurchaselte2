@@ -81,11 +81,18 @@ model User {
   roleId       String
   branchId     String?
   isActive     Boolean  @default(true)
+  // Set when an administrator issues or resets the password: the holder must
+  // choose their own before doing anything else (authService.ts).
+  mustChangePassword Boolean @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   role   Role    @relation(fields: [roleId], references: [id])
   branch Branch? @relation(fields: [branchId], references: [id])
+
+  collectionNotes    CollectionNote[]
+  approvalsRequested ApprovalRequest[] @relation("ApprovalRequestedBy")
+  approvalsDecided   ApprovalRequest[] @relation("ApprovalDecidedBy")
 
   customersCreated          Customer[]          @relation("CustomerCreatedBy")
   customersUpdated          Customer[]          @relation("CustomerUpdatedBy")
@@ -362,6 +369,13 @@ model Contract {
   completedAt    DateTime?
   releasedAt     DateTime?
   cancelledAt    DateTime?
+  // What cancelling this contract left owed back to the customer, and when
+  // it was actually handed over — cancelContract only computes the figure;
+  // without these it existed for the length of one on-screen message.
+  refundDueMinor Int?
+  refundedAt     DateTime?
+  refundedById   String?
+  refundNote     String?
   defaultedAt    DateTime?
   writtenOffAt   DateTime?
   cancelReason   String?
@@ -410,6 +424,9 @@ model Contract {
   @@index([branchId, status])
   @@index([inventoryItemId])
   @@index([hubtelPreapprovalId])
+  collectionNotes  CollectionNote[]
+  approvalRequests ApprovalRequest[]
+
   @@map("contracts")
 }
 
@@ -544,6 +561,15 @@ model HubtelTransaction {
   nextRetryAt        DateTime?
   rawCallbackPayload String?
   paymentId          String?   @unique
+  // A direct-debit attempt may ask for less than the instalment (a partial
+  // attempt after the full one bounced); this is the full amount the chain
+  // of attempts is collecting. Null for an ordinary full-amount attempt.
+  baseAmountMinor    Int?
+  // How staff closed a NEEDS_REVIEW transaction that could not be applied to
+  // the contract (refunded, posted by hand elsewhere).
+  resolvedAt         DateTime?
+  resolvedById       String?
+  resolutionNote     String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
@@ -883,4 +909,98 @@ model AgentRemittance {
   @@index([ledgerId, status])
   @@index([agentId, status])
   @@map("agent_remittances")
+}
+
+// Failed sign-ins per account ("staff:<email>" / "portal:<phone>"), so a
+// password cannot be guessed without limit. In the database rather than in
+// memory so a restart or deploy does not hand an attacker a fresh allowance.
+model LoginThrottle {
+  key            String    @id
+  failures       Int       @default(0)
+  firstFailureAt DateTime  @default(now())
+  lockedUntil    DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@map("login_throttles")
+}
+
+// One contact with (or attempt to reach) a customer in arrears.
+// outcome: NO_ANSWER | SPOKE | PROMISED | VISITED | OTHER
+model CollectionNote {
+  id                  String    @id @default(uuid())
+  contractId          String
+  createdById         String
+  outcome             String
+  note                String
+  promisedAmountMinor Int?
+  promisedDate        DateTime?
+  followUpAt          DateTime?
+  createdAt           DateTime  @default(now())
+
+  contract  Contract @relation(fields: [contractId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@index([contractId, createdAt])
+  @@index([followUpAt])
+  @@map("collection_notes")
+}
+
+// A payment reversal or contract write-off one person asked for, waiting on
+// a different person to approve (ControlSettings.requireSecondApproval).
+// kind: PAYMENT_REVERSAL | CONTRACT_WRITEOFF. status: PENDING | APPROVED | REJECTED
+model ApprovalRequest {
+  id            String    @id @default(uuid())
+  kind          String
+  targetId      String
+  contractId    String
+  branchId      String
+  reason        String
+  status        String    @default("PENDING")
+  requestedById String
+  decidedById   String?
+  decisionNote  String?
+  createdAt     DateTime  @default(now())
+  decidedAt     DateTime?
+
+  contract    Contract @relation(fields: [contractId], references: [id])
+  requestedBy User     @relation("ApprovalRequestedBy", fields: [requestedById], references: [id])
+  decidedBy   User?    @relation("ApprovalDecidedBy", fields: [decidedById], references: [id])
+
+  @@index([status, branchId])
+  @@map("approval_requests")
+}
+
+// Something that went wrong and needs a person: a payment collected but not
+// applied, a scheduled job that failed, Hubtel refusing this account.
+// dedupeKey keeps a recurring fault to one open alert rather than one a minute.
+model SystemAlert {
+  id             String    @id @default(uuid())
+  kind           String
+  message        String
+  dedupeKey      String    @unique
+  occurrences    Int       @default(1)
+  lastSeenAt     DateTime  @default(now())
+  acknowledgedAt DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([acknowledgedAt])
+  @@map("system_alerts")
+}
+
+// Controls and notifications an owner switches on or off (Settings > Controls).
+model ControlSettings {
+  id                        String   @id @default("singleton")
+  // A reversal or write-off needs a second, different person to approve it.
+  requireSecondApproval     Boolean  @default(true)
+  // Where the daily summary and system alerts are texted.
+  ownerPhone                String?
+  dailySummaryEnabled       Boolean  @default(true)
+  // Text the customer the day before a direct debit is due.
+  directDebitNoticeEnabled  Boolean  @default(true)
+  // When a full direct debit bounces, try half before waiting for the next retry day.
+  partialDirectDebitEnabled Boolean  @default(true)
+  updatedAt                 DateTime @updatedAt
+  updatedById               String?
+
+  @@map("control_settings")
 }

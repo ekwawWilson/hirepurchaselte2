@@ -37,4 +37,11 @@ export const SMS_TEMPLATES = [
       'Hi {{customerName}}, {{currency}} {{amountOverdue}} on contract {{contractNumber}} is overdue by {{daysOverdue}} day(s). ' +
       'Please pay as soon as possible. Outstanding balance: {{currency}} {{outstandingBalance}}. {{companyName}}',
   },
+  {
+    key: 'directdebit.notice',
+    name: 'Direct debit notice (day before)',
+    bodyTemplate:
+      'Hi {{customerName}}, {{currency}} {{amountDue}} will be deducted from your mobile money wallet tomorrow for contract {{contractNumber}}. ' +
+      'Please keep enough funds in your wallet. {{companyName}}',
+  },
 ] as const;

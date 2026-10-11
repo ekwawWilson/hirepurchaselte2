@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
 import { receiveInventoryItem } from '@/lib/services/inventoryService';
+import { inventorySearchWhere } from '@/lib/utils/search';
 
 /**
  * Stock, to whoever may view inventory. Someone who can only create contracts
@@ -28,6 +29,8 @@ export async function GET(req: NextRequest) {
   if (productId) where.productId = productId;
   if (status) where.status = status;
   if (sellableOnly) where.status = 'AVAILABLE';
+  const q = searchParams.get('q');
+  if (q) where.AND = inventorySearchWhere(q);
 
   const items = await prisma.inventoryItem.findMany({
     where, include: { product: { include: { category: true } } }, orderBy: { createdAt: 'desc' }, take: 200,

@@ -242,6 +242,12 @@ export async function recordSuccessfulHubtelCharge(txnId: string, rawPayload: st
     if (!(e instanceof PaymentError || e instanceof HubtelError)) throw e;
     console.error(`[hubtel] charge ${txn.clientReference} was collected but could not be recorded: ${e.message}`);
     await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { status: 'NEEDS_REVIEW' } });
+    const { raiseAlert } = await import('./alertService');
+    await raiseAlert({
+      kind: 'PAYMENT_NEEDS_REVIEW',
+      message: `A mobile money payment was collected but could not be applied to its contract (${e.message}). See Mobile Money > Needs review.`,
+      dedupeKey: `payment-needs-review:${txn.id}`,
+    });
     await logAudit({
       userId: null,
       action: 'HUBTEL_PAYMENT_UNRECORDED',

@@ -103,8 +103,14 @@ export default function ContractsPage() {
   // are global settings (Settings → Loan payment terms), snapshotted server-side.
   const [loanAmount, setLoanAmount] = useState('');
 
-  const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
-  const selectedItem = items.find((i) => i.id === inventoryItemId) ?? null;
+  // The lists below are search results from the server, so the chosen
+  // customer and unit are held in their own right — they stay chosen when a
+  // later search no longer includes them.
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  const [listSearch, setListSearch] = useState('');
+  const [listTotal, setListTotal] = useState(0);
+  const [listPage, setListPage] = useState(1);
   const isSaveToOwn = contractType === 'SAVE_TO_OWN';
   const isDeviceLoan = contractType === 'DEVICE_LOAN';
   const isDepositInstalment = contractType === 'DEPOSIT_INSTALMENT';
@@ -143,6 +149,7 @@ export default function ContractsPage() {
   function resetWizard() {
     setStep(1);
     setCustomerId(''); setInventoryItemId('');
+    setSelectedCustomer(null); setSelectedItem(null); setCustomerSearch(''); setItemSearch('');
     setContractType('DEPOSIT_INSTALMENT');
     setPaymentFrequency('WEEKLY');
     setStartDate(new Date().toISOString().slice(0, 10));
@@ -157,11 +164,15 @@ export default function ContractsPage() {
     return generateStraightLineSchedule(financeAmountMinor, 1, new Date(startDate), paymentFrequency, instalmentCount, workingDays);
   }
 
-  async function loadContracts() {
+  /** `page` 1 replaces the list (a new search); a later page is appended ("Load more"). */
+  async function loadContracts(search = listSearch, page = 1) {
     setIsLoading(true);
     try {
-      const { contracts } = await api.get<{ contracts: Contract[] }>('/contracts');
-      setContracts(contracts);
+      const params = new URLSearchParams({ page: String(page), ...(search && { q: search }) });
+      const res = await api.get<{ contracts: Contract[]; total: number }>(`/contracts?${params}`);
+      setContracts((prev) => (page === 1 ? res.contracts : [...prev, ...res.contracts]));
+      setListTotal(res.total);
+      setListPage(page);
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load contracts', variant: 'destructive' });
     } finally {
@@ -185,23 +196,26 @@ export default function ContractsPage() {
     api.get<{ settings: { worksSaturday: boolean; worksSunday: boolean } }>('/settings/operating')
       .then((r) => setWorkingDays({ saturday: r.settings.worksSaturday, sunday: r.settings.worksSunday }))
       .catch(() => undefined); // preview falls back to Mon-Fri; not worth blocking the wizard over
-    api.get<{ customers: Customer[] }>('/customers')
-      .then((r) => setCustomers(r.customers))
-      .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load customers', variant: 'destructive' }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showForm]);
+
+  // The customer list is a server search (every customer, not just the most
+  // recent), run a moment after typing stops.
+  useEffect(() => {
+    if (!showForm) return;
+    const timer = setTimeout(() => {
+      api.get<{ customers: Customer[] }>(`/customers${customerSearch.trim() ? `?q=${encodeURIComponent(customerSearch.trim())}` : ''}`)
+        .then((r) => setCustomers(r.customers))
+        .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load customers', variant: 'destructive' }));
+    }, 250);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showForm, customerSearch]);
 
   useEffect(() => {
     // A different customer may belong to a different branch — the previously-picked
     // unit is no longer necessarily valid.
-    setInventoryItemId('');
-    if (!selectedCustomer) { setItems([]); return; }
-    api.get<{ items: InventoryItem[] }>(`/inventory?status=AVAILABLE&branchId=${selectedCustomer.branchId}`)
-      .then((r) => setItems(r.items))
-      .catch((e) => {
-        setItems([]);
-        toast({ title: 'Could not load available units', description: e instanceof ApiError ? e.message : undefined, variant: 'destructive' });
-      });
+    setInventoryItemId(''); setSelectedItem(null);
+    if (!selectedCustomer) return;
     if (!directDebitMsisdn) setDirectDebitMsisdn(customerPhone(selectedCustomer) === '—' ? '' : customerPhone(selectedCustomer));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
@@ -312,25 +326,23 @@ export default function ContractsPage() {
     }
   }
 
-  const filteredCustomers = customers.filter((c) => {
-    if (!customerSearch.trim()) return true;
-    const q = customerSearch.toLowerCase();
-    return (
-      `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) ||
-      [c.phone, c.phone2, c.phone3].some((p) => p?.toLowerCase().includes(q)) ||
-      c.membershipId.toLowerCase().includes(q)
-    );
-  });
+  useEffect(() => {
+    if (!selectedCustomer) { setItems([]); return; }
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ status: 'AVAILABLE', branchId: selectedCustomer.branchId, ...(itemSearch.trim() && { q: itemSearch.trim() }) });
+      api.get<{ items: InventoryItem[] }>(`/inventory?${params}`)
+        .then((r) => setItems(r.items))
+        .catch((e) => {
+          setItems([]);
+          toast({ title: 'Could not load available units', description: e instanceof ApiError ? e.message : undefined, variant: 'destructive' });
+        });
+    }, 250);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCustomer?.id, itemSearch]);
 
-  const filteredItems = items.filter((i) => {
-    if (!itemSearch.trim()) return true;
-    const q = itemSearch.toLowerCase();
-    return (
-      i.product.name.toLowerCase().includes(q) ||
-      i.serialNumber.toLowerCase().includes(q) ||
-      (i.product.category?.name ?? '').toLowerCase().includes(q)
-    );
-  });
+  const filteredCustomers = customers;
+  const filteredItems = items;
 
   if (!canView) {
     return (
@@ -380,7 +392,7 @@ export default function ContractsPage() {
                     <div
                       key={c.id}
                       className={`p-3 border cursor-pointer transition-colors flex gap-3 items-center ${customerId === c.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
-                      onClick={() => setCustomerId(c.id)}
+                      onClick={() => { setCustomerId(c.id); setSelectedCustomer(c); }}
                     >
                       {c.photoUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -458,7 +470,7 @@ export default function ContractsPage() {
                     <div
                       key={i.id}
                       className={`p-3 border cursor-pointer transition-colors ${inventoryItemId === i.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
-                      onClick={() => setInventoryItemId(i.id)}
+                      onClick={() => { setInventoryItemId(i.id); setSelectedItem(i); }}
                     >
                       <div className="flex justify-between items-start gap-3">
                         <div className="min-w-0">
@@ -700,13 +712,26 @@ export default function ContractsPage() {
 
       <Card>
         <CardContent className="p-0">
-          {isLoading ? (
+          <form
+            className="flex gap-2 p-4 border-b border-gray-100"
+            onSubmit={(e) => { e.preventDefault(); void loadContracts(listSearch.trim(), 1); }}
+          >
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+              <Input
+                className="pl-9" placeholder="Search contract number, customer name, phone or membership ID..."
+                value={listSearch} onChange={(e) => setListSearch(e.target.value)}
+              />
+            </div>
+            <Button type="submit" variant="outline">Search</Button>
+          </form>
+          {isLoading && contracts.length === 0 ? (
             <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
           ) : contracts.length === 0 ? (
             <div className="text-center py-12 px-4">
               <FileTextIcon className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-              <p className="text-gray-500 mb-4">No contracts yet</p>
-              {canCreate && <Button onClick={() => { resetWizard(); setShowForm(true); }}><Plus className="mr-2 h-4 w-4" />Create First Contract</Button>}
+              <p className="text-gray-500 mb-4">{listSearch.trim() ? 'No contracts match that search' : 'No contracts yet'}</p>
+              {canCreate && !listSearch.trim() && <Button onClick={() => { resetWizard(); setShowForm(true); }}><Plus className="mr-2 h-4 w-4" />Create First Contract</Button>}
             </div>
           ) : (
             <Table>
@@ -745,6 +770,14 @@ export default function ContractsPage() {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {contracts.length > 0 && contracts.length < listTotal && (
+            <div className="flex items-center justify-between gap-3 border-t border-gray-100 p-4 text-sm text-gray-500">
+              <span>Showing the newest {contracts.length} of {listTotal}. Search to find an older one.</span>
+              <Button size="sm" variant="outline" disabled={isLoading} onClick={() => loadContracts(listSearch.trim(), listPage + 1)}>
+                {isLoading ? 'Loading...' : 'Load more'}
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

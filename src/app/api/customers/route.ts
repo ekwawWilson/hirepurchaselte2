@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { customerSearchWhere } from '@/lib/utils/search';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere, ownRecordsWhere } from '@/lib/auth/rbac';
 import { generateMembershipId } from '@/lib/utils/idGenerators';
@@ -22,19 +23,15 @@ export async function GET(req: NextRequest) {
   const where: Record<string, unknown> = { ...branchScopeWhere(user), ...ownRecordsWhere(user) };
   if (!user.branchId && branchIdParam) where.branchId = branchIdParam;
 
-  if (q) {
-    where.OR = [
-      { firstName: { contains: q } },
-      { lastName: { contains: q } },
-      { phone: { contains: q } },
-      { phone2: { contains: q } },
-      { phone3: { contains: q } },
-      { membershipId: { contains: q } },
-    ];
-  }
+  // The newest 100 that match. Not a cap on who can be found: searching
+  // reaches every customer, however long ago they registered.
+  if (q) where.AND = customerSearchWhere(q);
 
-  const customers = await prisma.customer.findMany({ where, select: CUSTOMER_SUMMARY_SELECT, orderBy: { createdAt: 'desc' }, take: 100 });
-  return NextResponse.json({ customers });
+  const [customers, total] = await Promise.all([
+    prisma.customer.findMany({ where, select: CUSTOMER_SUMMARY_SELECT, orderBy: { createdAt: 'desc' }, take: 100 }),
+    prisma.customer.count({ where }),
+  ]);
+  return NextResponse.json({ customers, total });
 }
 
 /**

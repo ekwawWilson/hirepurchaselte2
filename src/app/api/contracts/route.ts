@@ -1,3 +1,4 @@
+import { contractSearchWhere } from '@/lib/utils/search';
 import { NextRequest, NextResponse } from 'next/server';
 import { CUSTOMER_SUMMARY_SELECT } from '@/lib/services/customerService';
 import { prisma } from '@/lib/db/prisma';
@@ -8,6 +9,8 @@ import {
 } from '@/lib/constants/contracts';
 import { createContract, ContractError } from '@/lib/services/contractService';
 import { logAudit } from '@/lib/services/auditService';
+
+const CONTRACTS_PAGE_SIZE = 200;
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -21,6 +24,8 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status') ?? undefined;
   const contractType = searchParams.get('contractType') ?? undefined;
   const branchIdParam = searchParams.get('branchId') ?? undefined;
+  const q = searchParams.get('q') ?? undefined;
+  const page = Math.max(1, Number(searchParams.get('page')) || 1);
 
   // ownRecordsWhere: an AGENT sees only contracts they themselves created —
   // every other branch-scoped role sees the whole branch (rbac.ts).
@@ -29,7 +34,11 @@ export async function GET(req: NextRequest) {
   if (customerId) where.customerId = customerId;
   if (status) where.status = status;
   if (contractType) where.contractType = contractType;
+  if (q) where.AND = contractSearchWhere(q);
 
+  // 200 a page, newest first. `q` and `page` are what make an older contract
+  // reachable; `total` lets a screen say how many it is not showing.
+  const total = await prisma.contract.count({ where });
   const contracts = await prisma.contract.findMany({
     where,
     include: {
@@ -39,9 +48,10 @@ export async function GET(req: NextRequest) {
       createdBy: { select: { firstName: true, lastName: true } },
     },
     orderBy: { createdAt: 'desc' },
-    take: 200,
+    skip: (page - 1) * CONTRACTS_PAGE_SIZE,
+    take: CONTRACTS_PAGE_SIZE,
   });
-  return NextResponse.json({ contracts });
+  return NextResponse.json({ contracts, total, pageSize: CONTRACTS_PAGE_SIZE });
 }
 
 export async function POST(req: NextRequest) {
