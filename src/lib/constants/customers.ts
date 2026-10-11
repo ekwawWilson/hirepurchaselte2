@@ -23,6 +23,20 @@ const NETWORK_PREFIXES: Record<MobileMoneyNetwork, string[]> = {
   AIRTELTIGO: ['026', '027', '056', '057'],
 };
 
+/**
+ * The network Hubtel's USSD gateway says a dialling line is on (its request's
+ * `Operator`: mtn, vodafone, tigo, airtel…), or null if absent or not one
+ * that carries mobile money here. Better than the prefix when present — a
+ * ported number keeps its old prefix on its new network.
+ */
+export function networkForOperator(operator: string | null | undefined): MobileMoneyNetwork | null {
+  const name = (operator ?? '').trim().toLowerCase();
+  if (name.startsWith('mtn')) return 'MTN';
+  if (name.startsWith('vodafone') || name.startsWith('telecel')) return 'TELECEL';
+  if (name.startsWith('tigo') || name.startsWith('airtel') || name === 'at') return 'AIRTELTIGO';
+  return null;
+}
+
 /** The network a Ghana mobile number belongs to, or null if the prefix is unknown. */
 export function networkForPhone(phone: string): MobileMoneyNetwork | null {
   const digits = phone.replace(/[\s-]/g, '').replace(/^\+/, '');

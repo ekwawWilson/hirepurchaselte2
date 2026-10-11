@@ -85,8 +85,9 @@ export async function register() {
     }
   });
 
-  // Every 15 minutes — catches any Hubtel callback that never arrived, and sweeps expired USSD sessions.
-  cron.schedule('*/15 * * * *', async () => {
+  // Every 5 minutes — Hubtel requires a status check on any transaction that
+  // has gone five minutes without its callback. Also sweeps expired USSD sessions.
+  cron.schedule('*/5 * * * *', async () => {
     try {
       const result = await reconcilePendingHubtelTransactions();
       if (result.checked > 0) console.log(`[cron] Hubtel reconciliation: checked ${result.checked}, failed ${result.failed}`);

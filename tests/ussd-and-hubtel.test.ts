@@ -458,7 +458,8 @@ describe('USSD + Hubtel payments', () => {
       // goes through (hubtelClient.ts) — real data, not a fabricated example.
       const sample = await prisma.hubtelSampleLog.findUnique({ where: { kind: 'RECEIVE_MONEY_INITIATE' } });
       expect(sample).not.toBeNull();
-      expect(JSON.parse(sample!.requestPayload as string)).toMatchObject({ Channel: 'mtn-gh', Amount: 10 });
+      // uniquePhone() is an 026 number — AirtelTigo — so it goes out on that network's channel.
+      expect(JSON.parse(sample!.requestPayload as string)).toMatchObject({ Channel: 'tigo-gh', Amount: 10 });
       expect(JSON.parse(sample!.responsePayload as string)).toMatchObject({ ResponseCode: '0001' });
     } finally {
       globalThis.fetch = guardedFetch;

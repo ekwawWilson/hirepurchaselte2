@@ -51,3 +51,50 @@ export function registrationFields() {
     photoUrl: TEST_PHOTO_DATA_URL,
   };
 }
+
+export type HubtelCall = { url: string; method: string; body: Record<string, unknown> | null };
+
+/** For `withLiveHubtel`'s `respond`: answer with this HTTP status instead of 200. */
+export function hubtelHttp(status: number, body: unknown) {
+  return { __httpStatus: status, body };
+}
+
+/**
+ * Runs `fn` in live mode with Hubtel replaced by `respond`, which answers each
+ * outbound call from its URL and body (JSON, 200 unless wrapped in
+ * `hubtelHttp`). Returns every call made, in order. Swaps `globalThis.fetch`
+ * directly and restores whatever was there, so tests/setup.ts's real-network
+ * guard is back in place afterwards.
+ */
+export async function withLiveHubtel(respond: (call: HubtelCall) => unknown, fn: () => Promise<void>): Promise<HubtelCall[]> {
+  const saved = {
+    mode: process.env.HUBTEL_PAYMENTS_MODE, salesId: process.env.HUBTEL_POS_SALES_ID,
+    key: process.env.HUBTEL_API_KEY, secret: process.env.HUBTEL_API_SECRET,
+  };
+  process.env.HUBTEL_PAYMENTS_MODE = 'live';
+  process.env.HUBTEL_POS_SALES_ID = '11684';
+  process.env.HUBTEL_API_KEY = 'test-key';
+  process.env.HUBTEL_API_SECRET = 'test-secret';
+
+  const calls: HubtelCall[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const call = { url: String(url), method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body as string) : null };
+    calls.push(call);
+    const answer = respond(call) as { __httpStatus?: number; body?: unknown } | null;
+    return answer && typeof answer === 'object' && '__httpStatus' in answer
+      ? new Response(JSON.stringify(answer.body), { status: answer.__httpStatus })
+      : new Response(JSON.stringify(answer), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = realFetch;
+    process.env.HUBTEL_PAYMENTS_MODE = saved.mode;
+    process.env.HUBTEL_POS_SALES_ID = saved.salesId;
+    process.env.HUBTEL_API_KEY = saved.key;
+    process.env.HUBTEL_API_SECRET = saved.secret;
+  }
+  return calls;
+}

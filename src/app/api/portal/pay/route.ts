@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireCustomer } from '@/lib/auth/customerAuth';
-import { getDeviceLoanState } from '@/lib/services/paymentService';
-import { initiateHubtelPayment, HubtelError } from '@/lib/services/hubtelPaymentService';
+import { initiateHubtelPayment, mobileMoneyRequestProblem, HubtelError } from '@/lib/services/hubtelPaymentService';
 import { assertPaymentsAcceptedToday, PaymentsClosedError } from '@/lib/services/operatingSettingsService';
-import { TERMINAL_CONTRACT_STATUSES, MOBILE_MONEY_NETWORKS } from '@/lib/constants/contracts';
+import { MOBILE_MONEY_NETWORKS } from '@/lib/constants/contracts';
 import { logAudit } from '@/lib/services/auditService';
 
 /**
  * A customer paying their own contract by mobile money. Everything the
  * request asks for is re-checked here against the contract itself: the
- * portal never decides what may be paid.
+ * portal never decides what may be paid, nor to which phone the prompt goes —
+ * only a number already registered to the customer (mobileMoneyRequestProblem).
+ * The network is optional; left out, it is read from the number.
  *
  * The charge goes through the same initiateHubtelPayment the USSD flow uses,
  * so the callback posts it to the ledger exactly as a USSD payment — one
@@ -27,31 +28,20 @@ export async function POST(req: NextRequest) {
   if (!contractId || typeof amountMinor !== 'number' || !Number.isInteger(amountMinor) || amountMinor <= 0) {
     return NextResponse.json({ error: 'A contract and a positive amount are required' }, { status: 400 });
   }
-  if (!network || !(MOBILE_MONEY_NETWORKS as readonly string[]).includes(network)) {
+  if (network && !(MOBILE_MONEY_NETWORKS as readonly string[]).includes(network)) {
     return NextResponse.json({ error: `Choose a network: ${MOBILE_MONEY_NETWORKS.join(', ')}` }, { status: 400 });
   }
   if (!msisdn || !msisdn.trim()) {
     return NextResponse.json({ error: 'A mobile money number is required' }, { status: 400 });
   }
 
-  const contract = await prisma.contract.findFirst({ where: { id: contractId, customerId: auth.customer.id } });
+  const contract = await prisma.contract.findFirst({
+    where: { id: contractId, customerId: auth.customer.id },
+    include: { customer: { select: { phone: true, phone2: true, phone3: true } } },
+  });
   if (!contract) return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
-  if (TERMINAL_CONTRACT_STATUSES.includes(contract.status)) {
-    return NextResponse.json({ error: `This contract is ${contract.status.toLowerCase()} and takes no further payments` }, { status: 409 });
-  }
-
-  // A device loan is only ever paid as one of two exact amounts — the same
-  // two the USSD menu offers (paymentService.postDeviceLoanPayment).
-  if (contract.contractType === 'DEVICE_LOAN') {
-    const state = await getDeviceLoanState(contract.id);
-    const isInterest = state.accruedInterestMinor > 0 && amountMinor === state.accruedInterestMinor;
-    const isPrincipal = state.principalOutstanding && amountMinor === state.principalMinor;
-    if (!isInterest && !isPrincipal) {
-      return NextResponse.json({
-        error: 'Pay either the interest owed or the full loan amount — a device loan takes no other amount',
-      }, { status: 400 });
-    }
-  }
+  const problem = await mobileMoneyRequestProblem({ contract, customer: contract.customer, amountMinor, msisdn });
+  if (problem) return NextResponse.json({ error: problem.error }, { status: problem.status });
 
   try {
     await assertPaymentsAcceptedToday();

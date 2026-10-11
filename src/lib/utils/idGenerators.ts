@@ -73,9 +73,14 @@ export async function generateProductSku(): Promise<string> {
   throw new Error('Could not generate a unique SKU, please retry');
 }
 
-/** Idempotency key for payments — random, not sequential, so it never leaks volume information. */
+/**
+ * Idempotency key for payments — random, not sequential, so it never leaks
+ * volume information. Also what goes to Hubtel as ClientReference /
+ * clientReferenceId, which Hubtel caps at 36 characters and asks to be
+ * alphanumeric: 35 characters, no separators.
+ */
 export function generateTransactionRef(): string {
-  return `TXN-${crypto.randomUUID()}`;
+  return `TXN${crypto.randomUUID().replace(/-/g, '')}`;
 }
 
 export function generateReceiptNumber(): string {

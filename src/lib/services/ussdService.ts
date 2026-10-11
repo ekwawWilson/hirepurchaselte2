@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma';
 import { formatMoney } from '../utils/money';
-import { initiateHubtelPayment } from './hubtelPaymentService';
+import { initiateHubtelPayment, HubtelError } from './hubtelPaymentService';
+import { networkForOperator } from '../constants/customers';
 import { getOrgSettings } from './orgSettingsService';
 import { getDeviceLoanState } from './paymentService';
 import { assertPaymentsAcceptedToday, PaymentsClosedError } from './operatingSettingsService';
@@ -230,6 +231,8 @@ async function endSession(sessionId: string) {
 export async function handleUssdInput(params: {
   sessionId: string;
   msisdn: string;
+  /** The dialling line's network as Hubtel's gateway reports it, when it does. */
+  operator?: string;
   input: string;
   isNewSession: boolean;
   isTimeout?: boolean;
@@ -366,7 +369,25 @@ export async function handleUssdInput(params: {
         }
         throw e;
       }
-      const txn = await initiateHubtelPayment({ contractId, msisdn: params.msisdn, amountMinor });
+      let txn;
+      try {
+        txn = await initiateHubtelPayment({
+          contractId, msisdn: params.msisdn, amountMinor, network: networkForOperator(params.operator) ?? undefined,
+        });
+      } catch (e) {
+        if (!(e instanceof HubtelError)) throw e;
+        // Hubtel refused it (or the network could not be told): nothing was
+        // charged. Its reason is cut to what a USSD screen holds.
+        return { message: e.message.slice(0, 160), continueSession: false, label: 'Payment failed' };
+      }
+      if (txn.status === 'PENDING') {
+        // Live mode: Hubtel has accepted the request and is prompting the
+        // customer's handset for their PIN; the callback records the payment.
+        return {
+          message: 'Payment request sent. Approve the prompt on your phone with your mobile money PIN to complete it.',
+          continueSession: false, label: 'Approve on your phone',
+        };
+      }
       if (txn.status === 'SUCCESS') {
         return { message: 'Payment successful! You will receive an SMS confirmation shortly.', continueSession: false, label: 'Payment successful' };
       }

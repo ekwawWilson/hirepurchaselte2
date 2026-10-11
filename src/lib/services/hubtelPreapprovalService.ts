@@ -1,7 +1,7 @@
 import { prisma } from '../db/prisma';
 import { generateTransactionRef } from '../utils/idGenerators';
 import { DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName } from '../constants/contracts';
-import { recordSuccessfulHubtelCharge } from './hubtelPaymentService';
+import { recordSuccessfulHubtelCharge, claimableStatuses } from './hubtelPaymentService';
 import { appendWebhookToken } from '../auth/webhookSecurity';
 import {
   isHubtelLiveMode, callHubtelReceiveMoney, callHubtelPreapprovalInitiate, callHubtelPreapprovalVerifyOtp,
@@ -439,7 +439,15 @@ async function chargeDirectDebitLive(params: {
       callbackUrl: appendWebhookToken(process.env.HUBTEL_CALLBACK_URL || ''),
     });
   } catch (e) {
-    throw e instanceof HubtelApiError ? new PreapprovalError(e.message) : e;
+    if (!(e instanceof HubtelApiError)) throw e;
+    // Refused outright: no callback will come, so it fails (and schedules
+    // its retry) now. Merely unanswered stays PENDING for the status check.
+    if (e.rejected) {
+      await processDirectDebitCallback({
+        clientReference: params.clientReference, status: 'FAILED', rawPayload: JSON.stringify({ refused: true, response: e.rejected.raw }),
+      });
+    }
+    throw new PreapprovalError(e.message);
   }
 
   if (result.status === 'FAILED') {
@@ -461,8 +469,9 @@ export async function processDirectDebitCallback(params: { clientReference: stri
   const txn = await prisma.hubtelTransaction.findUniqueOrThrow({ where: { clientReference: params.clientReference } });
 
   const claim = await prisma.hubtelTransaction.updateMany({
-    where: { id: txn.id, status: 'PENDING' },
-    data: { status: params.status, rawCallbackPayload: params.rawPayload },
+    where: { id: txn.id, status: { in: claimableStatuses(params.status) } },
+    // A late success on a charge already written off also calls off its retry.
+    data: { status: params.status, rawCallbackPayload: params.rawPayload, ...(params.status === 'SUCCESS' && { nextRetryAt: null }) },
   });
   if (claim.count === 0) return prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: txn.id } });
 
@@ -492,7 +501,9 @@ export async function retryFailedDirectDebits() {
 
   let retried = 0;
   for (const txn of due) {
-    const clientReference = `${txn.clientReference}-retry${txn.retryCount}`;
+    // A reference of its own: Hubtel never accepts one twice, and a suffix on
+    // the original would take it past the 36 characters Hubtel allows.
+    const clientReference = generateTransactionRef();
     await prisma.hubtelTransaction.create({
       data: {
         clientReference, contractId: txn.contractId, msisdn: txn.msisdn, amountMinor: txn.amountMinor,

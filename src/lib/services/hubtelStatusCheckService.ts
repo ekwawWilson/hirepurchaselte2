@@ -1,7 +1,8 @@
-import { isHubtelLiveMode, requireHubtelCredentials, hubtelAuthHeader, transactionStatusUrl, resolveHubtelStatus, HubtelApiError } from './hubtelClient';
+import { isHubtelLiveMode, requireHubtelCredentials, hubtelAuthHeader, transactionStatusUrl, resolveHubtelStatusCheck, HubtelApiError } from './hubtelClient';
 import { recordHubtelSample } from './hubtelSampleLogService';
 
 export interface HubtelStatusCheckResult {
+  /** SUCCESS: Hubtel says Paid. FAILED: Refunded. PENDING: Unpaid, or no answer Hubtel recognises. */
   status: 'SUCCESS' | 'FAILED' | 'PENDING';
 }
 
@@ -36,5 +37,5 @@ export async function checkHubtelTransactionStatus(clientReference: string): Pro
   // Diagnostics's sample-payloads panel — this API has nowhere else its raw
   // body is persisted (unlike the payment callback's HubtelTransaction row).
   await recordHubtelSample('STATUS_CHECK', { url }, body);
-  return { status: resolveHubtelStatus(body) };
+  return { status: resolveHubtelStatusCheck(body) };
 }

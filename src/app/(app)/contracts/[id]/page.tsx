@@ -5,6 +5,8 @@ import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, formatDate, formatDateTime, getStatusColor, contractTypeLabel } from '@/lib/utils';
+import { MOBILE_MONEY_NETWORKS, MOBILE_MONEY_NETWORK_LABELS } from '@/lib/constants/contracts';
+import { networkForPhone } from '@/lib/constants/customers';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -88,6 +90,11 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [charging, setCharging] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [otpSubmitting, setOtpSubmitting] = useState(false);
+  // Mobile money prompt (Hubtel Receive Money) sent from the counter.
+  const [momoMsisdn, setMomoMsisdn] = useState('');
+  const [momoNetwork, setMomoNetwork] = useState('');
+  const [momoAmount, setMomoAmount] = useState('');
+  const [momoWaiting, setMomoWaiting] = useState(false);
   const [mandateBusy, setMandateBusy] = useState<'status' | 'cancel' | 'reactivate' | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
 
@@ -116,6 +123,9 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       if (contract.status === 'PENDING_DEPOSIT') setEntryType('DEPOSIT');
       setDdMsisdn((prev) => prev || contract.pendingDirectDebitMsisdn || contract.customer.phone || contract.customer.phone2 || contract.customer.phone3 || '');
       if (contract.pendingDirectDebitNetwork) setDdNetwork(contract.pendingDirectDebitNetwork);
+      const firstNumber = contract.customer.phone || contract.customer.phone2 || contract.customer.phone3 || '';
+      setMomoMsisdn((prev) => prev || firstNumber);
+      setMomoNetwork((prev) => prev || networkForPhone(firstNumber) || '');
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load contract', variant: 'destructive' });
     }
@@ -361,6 +371,44 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     }
   }
 
+  /**
+   * Sends the customer a mobile money prompt and waits for them to approve it
+   * on their phone. Mock mode settles at once; a live charge is only final
+   * when Hubtel calls back, so this polls until it is.
+   */
+  async function sendMomoPrompt(e: React.FormEvent) {
+    e.preventDefault();
+    const amountMinor = Math.round(parseFloat(momoAmount) * 100);
+    setMomoWaiting(true);
+    try {
+      const { reference } = await api.post<{ reference: string; status: string }>(
+        `/contracts/${id}/mobile-money`, { amountMinor, msisdn: momoMsisdn, ...(momoNetwork && { network: momoNetwork }) },
+      );
+      for (let attempt = 0; attempt < 40; attempt++) { // ~2 minutes, about as long as a customer takes at the counter
+        const status = await api.get<{ status: string; recorded: boolean }>(`/contracts/${id}/mobile-money/${reference}`);
+        if (status.status === 'SUCCESS' || status.status === 'NEEDS_REVIEW') {
+          toast({
+            title: 'Payment received',
+            description: status.recorded ? formatCurrency(amountMinor) : `${formatCurrency(amountMinor)} was collected but could not be applied automatically — it needs review.`,
+          });
+          setMomoAmount('');
+          await load();
+          return;
+        }
+        if (status.status === 'FAILED') {
+          toast({ title: 'Payment not completed', description: 'The customer did not approve the prompt, or their wallet declined it.', variant: 'destructive' });
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+      toast({ title: 'Still waiting on the customer', description: 'No confirmation yet. If they approve later, the payment is recorded automatically.' });
+    } catch (e) {
+      toast({ title: 'Prompt not sent', description: e instanceof ApiError ? e.message : 'Could not reach the server', variant: 'destructive' });
+    } finally {
+      setMomoWaiting(false);
+    }
+  }
+
   async function chargeNow(e: React.FormEvent) {
     e.preventDefault();
     setCharging(true);
@@ -544,6 +592,78 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           </CardContent>
         </Card>
       )}
+
+      {canPay && !terminal && !preApproval && (() => {
+        const numbers = [contract.customer.phone, contract.customer.phone2, contract.customer.phone3].filter((p): p is string => !!p);
+        const loan = contract.contractType === 'DEVICE_LOAN' ? contract.deviceLoanState : null;
+        return (
+          <Card>
+            <CardHeader><CardTitle>Mobile money prompt</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              {numbers.length === 0 ? (
+                <p className="text-sm text-gray-500">This customer has no phone number on file to send a prompt to.</p>
+              ) : (
+                <form className="flex flex-wrap items-end gap-3" onSubmit={sendMomoPrompt}>
+                  <div>
+                    <Label>Customer&apos;s number</Label>
+                    <select
+                      className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                      value={momoMsisdn}
+                      onChange={(e) => { setMomoMsisdn(e.target.value); setMomoNetwork(networkForPhone(e.target.value) || ''); }}
+                      disabled={momoWaiting}
+                    >
+                      {numbers.map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Network</Label>
+                    <select
+                      required
+                      className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                      value={momoNetwork}
+                      onChange={(e) => setMomoNetwork(e.target.value)}
+                      disabled={momoWaiting}
+                    >
+                      {!momoNetwork && <option value="">Choose…</option>}
+                      {MOBILE_MONEY_NETWORKS.map((n) => <option key={n} value={n}>{MOBILE_MONEY_NETWORK_LABELS[n]}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Amount (GHS)</Label>
+                    <Input
+                      required type="number" step="0.01" min="0.01" className="mt-1.5 w-36"
+                      value={momoAmount} onChange={(e) => setMomoAmount(e.target.value)} disabled={momoWaiting}
+                    />
+                  </div>
+                  <Button type="submit" disabled={momoWaiting}>{momoWaiting ? 'Waiting for approval...' : 'Send prompt'}</Button>
+                </form>
+              )}
+              {loan && (
+                <p className="text-xs text-gray-500">
+                  A device loan takes one of two amounts:{' '}
+                  {loan.accruedInterestMinor > 0 && (
+                    <button type="button" className="text-primary hover:underline" onClick={() => setMomoAmount((loan.accruedInterestMinor / 100).toFixed(2))}>
+                      interest owed ({formatCurrency(loan.accruedInterestMinor)})
+                    </button>
+                  )}
+                  {loan.accruedInterestMinor > 0 && loan.principalOutstanding && ' or '}
+                  {loan.principalOutstanding && (
+                    <button type="button" className="text-primary hover:underline" onClick={() => setMomoAmount((loan.principalMinor / 100).toFixed(2))}>
+                      the full loan ({formatCurrency(loan.principalMinor)})
+                    </button>
+                  )}
+                  .
+                </p>
+              )}
+              <p className="text-xs text-gray-400">
+                {momoWaiting
+                  ? 'Ask the customer to approve the prompt on their phone with their mobile money PIN. The payment is recorded as soon as they do.'
+                  : 'Sends a payment request to the customer\'s phone; they approve it with their mobile money PIN. Only numbers registered to this customer can be prompted.'}
+              </p>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {DIRECT_DEBIT_ELIGIBLE_TYPES.includes(contract.contractType) && !terminal && !preApproval && (
         <Card>

@@ -48,7 +48,7 @@ export async function authenticateCustomer(phone: string, password: string) {
 }
 
 /** Whether `candidate` is one of this customer's own numbers, in any format. */
-function isOwnPhoneNumber(customer: { phone: string | null; phone2: string | null; phone3: string | null }, candidate: string): boolean {
+export function isOwnPhoneNumber(customer: { phone: string | null; phone2: string | null; phone3: string | null }, candidate: string): boolean {
   const own = new Set([customer.phone, customer.phone2, customer.phone3]
     .filter((p): p is string => !!p)
     .flatMap((p) => phoneVariants(p)));

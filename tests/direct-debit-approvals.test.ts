@@ -7,8 +7,8 @@
  *  - Cancel and Reactivate;
  *  - who may see an approval through at the counter.
  */
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { makeRequest, makeParams } from './helpers';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { makeRequest, makeParams, withLiveHubtel, type HubtelCall } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -30,42 +30,6 @@ const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000)
 async function login(email: string): Promise<string> {
   const res = await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email, password: PASSWORD } }));
   return (await res.json()).token as string;
-}
-
-type HubtelCall = { url: string; method: string; body: Record<string, unknown> | null };
-
-/**
- * Runs `fn` in live mode with Hubtel replaced by `respond`, which answers each
- * outbound call from its URL. Returns every call made, in order.
- */
-async function withLiveHubtel(respond: (call: HubtelCall) => unknown, fn: () => Promise<void>): Promise<HubtelCall[]> {
-  const saved = {
-    mode: process.env.HUBTEL_PAYMENTS_MODE, salesId: process.env.HUBTEL_POS_SALES_ID,
-    key: process.env.HUBTEL_API_KEY, secret: process.env.HUBTEL_API_SECRET,
-  };
-  process.env.HUBTEL_PAYMENTS_MODE = 'live';
-  process.env.HUBTEL_POS_SALES_ID = '11684';
-  process.env.HUBTEL_API_KEY = 'test-key';
-  process.env.HUBTEL_API_SECRET = 'test-secret';
-
-  const calls: HubtelCall[] = [];
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    const call = { url: String(url), method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body as string) : null };
-    calls.push(call);
-    return new Response(JSON.stringify(respond(call)), { status: 200 });
-  }) as unknown as typeof fetch;
-
-  try {
-    await fn();
-  } finally {
-    globalThis.fetch = realFetch;
-    process.env.HUBTEL_PAYMENTS_MODE = saved.mode;
-    process.env.HUBTEL_POS_SALES_ID = saved.salesId;
-    process.env.HUBTEL_API_KEY = saved.key;
-    process.env.HUBTEL_API_SECRET = saved.secret;
-  }
-  return calls;
 }
 
 /** Hubtel's documented answer to an initiate or a reactivate. */

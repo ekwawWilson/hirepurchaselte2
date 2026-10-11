@@ -2,10 +2,56 @@ import { prisma } from '../db/prisma';
 import { generateTransactionRef } from '../utils/idGenerators';
 import { postPayment, postDeviceLoanPayment, getDeviceLoanState, PaymentError } from './paymentService';
 import { appendWebhookToken } from '../auth/webhookSecurity';
-import { isHubtelLiveMode, callHubtelReceiveMoney, resolveHubtelStatus, HubtelApiError, phoneVariants } from './hubtelClient';
+import {
+  isHubtelLiveMode, callHubtelReceiveMoney, getHubtelChannel, resolveHubtelStatus, describeHubtelRejection, HubtelApiError, phoneVariants,
+} from './hubtelClient';
 import { logAudit } from './auditService';
+import { isOwnPhoneNumber } from './customerPortalService';
+import { networkForPhone } from '../constants/customers';
+import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES } from '../constants/contracts';
 
 export class HubtelError extends Error {}
+
+/**
+ * Why a mobile money prompt may not be sent for this contract, amount and
+ * number — or null if it may. One set of rules for every place a prompt is
+ * asked for by hand (the customer portal, staff at the counter), so neither
+ * decides for itself what may be charged or to whom.
+ */
+export async function mobileMoneyRequestProblem(params: {
+  contract: { id: string; status: string; contractType: string };
+  customer: { phone: string | null; phone2: string | null; phone3: string | null };
+  amountMinor: number;
+  msisdn: string;
+}): Promise<{ status: 400 | 409; error: string } | null> {
+  const { contract } = params;
+  if (TERMINAL_CONTRACT_STATUSES.includes(contract.status)) {
+    return { status: 409, error: `This contract is ${contract.status.toLowerCase()} and takes no further payments` };
+  }
+  if (PRE_APPROVAL_STATUSES.includes(contract.status)) {
+    return { status: 409, error: 'This contract has not been approved yet and takes no payments' };
+  }
+
+  // Hubtel requires this of every Receive Money integration: a prompt may
+  // only go to a number the business already holds for that customer, never
+  // to one typed in at payment time — otherwise anyone could be sent
+  // unsolicited payment prompts through this merchant account.
+  if (!isOwnPhoneNumber(params.customer, params.msisdn)) {
+    return { status: 400, error: 'Payments can only be requested on a mobile money number registered to this customer' };
+  }
+
+  // A device loan is only ever paid as one of two exact amounts — the same
+  // two the USSD menu offers (paymentService.postDeviceLoanPayment).
+  if (contract.contractType === 'DEVICE_LOAN') {
+    const state = await getDeviceLoanState(contract.id);
+    const isInterest = state.accruedInterestMinor > 0 && params.amountMinor === state.accruedInterestMinor;
+    const isPrincipal = state.principalOutstanding && params.amountMinor === state.principalMinor;
+    if (!isInterest && !isPrincipal) {
+      return { status: 400, error: 'Pay either the interest owed or the full loan amount — a device loan takes no other amount' };
+    }
+  }
+  return null;
+}
 
 /**
  * Kicks off a USSD/mobile-money payment. In mock mode (HUBTEL_PAYMENTS_MODE
@@ -15,7 +61,13 @@ export class HubtelError extends Error {}
  * hirepurchase app uses) and leaves the transaction PENDING for
  * /api/payments/hubtel/callback to resolve, unless Hubtel rejects the request
  * outright (bad channel, malformed payload) — that's settled immediately
- * since no callback will ever arrive for it.
+ * since no callback will ever arrive for it, and thrown as a HubtelError
+ * whose message is fit to show the person paying.
+ *
+ * `network` is the wallet's own, and Hubtel fails a number sent down another
+ * network's channel. A caller that knows it (the USSD gateway names the
+ * dialling line's operator; a customer may pick it) passes it; otherwise it
+ * is read from the number's prefix. There is no default.
  */
 export async function initiateHubtelPayment(params: {
   contractId: string;
@@ -23,6 +75,16 @@ export async function initiateHubtelPayment(params: {
   amountMinor: number;
   network?: string;
 }) {
+  const network = params.network ?? networkForPhone(params.msisdn);
+  if (isHubtelLiveMode()) {
+    if (!network) throw new HubtelError('We could not tell which network this number is on. Choose the network and try again.');
+    try {
+      getHubtelChannel(network);
+    } catch (e) {
+      throw e instanceof HubtelApiError ? new HubtelError(e.message) : e;
+    }
+  }
+
   const clientReference = generateTransactionRef();
 
   await prisma.hubtelTransaction.create({
@@ -40,7 +102,6 @@ export async function initiateHubtelPayment(params: {
       where: { id: params.contractId },
       include: { customer: true },
     });
-    const network = params.network ?? 'MTN';
     const callbackUrl = appendWebhookToken(process.env.HUBTEL_CALLBACK_URL || '');
 
     let result;
@@ -50,19 +111,22 @@ export async function initiateHubtelPayment(params: {
         msisdn: params.msisdn,
         customerEmail: contract.customer.email,
         amountMinor: params.amountMinor,
-        network,
+        network: network!,
         isDirectDebit: false,
         description: `Payment for ${contract.contractNumber}`,
         clientReference,
         callbackUrl,
       });
     } catch (e) {
-      throw e instanceof HubtelApiError ? new HubtelError(e.message) : e;
+      if (!(e instanceof HubtelApiError)) throw e;
+      // Not refused, just unanswered (a gateway error, say): Hubtel may have
+      // taken the request, so it stays PENDING for the status check to settle.
+      if (!e.rejected) throw new HubtelError(e.message);
+      return refuseHubtelPayment(clientReference, e.rejected.responseCode, e.message, e.rejected.raw);
     }
 
-    if (result.status === 'FAILED') {
-      return processHubtelCallback({ clientReference, status: 'FAILED', rawPayload: JSON.stringify(result.raw) });
-    }
+    // Anything but "0001 — accepted, expect a callback" is a refusal too.
+    if (result.status === 'FAILED') return refuseHubtelPayment(clientReference, result.responseCode, result.message, result.raw);
     // PENDING — stash the initial response for traceability; the transaction
     // itself stays PENDING until the callback (or the reconcile sweep's
     // status check) settles it.
@@ -76,8 +140,21 @@ export async function initiateHubtelPayment(params: {
   return processHubtelCallback({
     clientReference,
     status: 'SUCCESS',
-    rawPayload: JSON.stringify({ mock: true, network: params.network ?? 'MTN', simulatedAt: new Date().toISOString() }),
+    rawPayload: JSON.stringify({ mock: true, network: network ?? 'MTN', simulatedAt: new Date().toISOString() }),
   });
+}
+
+/**
+ * Hubtel turned the request down: nothing was charged and no callback will
+ * come, so the transaction is settled FAILED on the spot rather than left for
+ * the sweep, and the caller gets a reason it can show (Hubtel's own text is
+ * kept in the transaction and the server log, since much of it is about this
+ * merchant account rather than the customer).
+ */
+async function refuseHubtelPayment(clientReference: string, responseCode: string | null, message: string, raw: unknown): Promise<never> {
+  console.error(`[hubtel] receive-money ${clientReference} refused (${responseCode ?? 'no code'}): ${message}`);
+  await processHubtelCallback({ clientReference, status: 'FAILED', rawPayload: JSON.stringify({ refused: true, response: raw }) });
+  throw new HubtelError(describeHubtelRejection(responseCode, message));
 }
 
 /**
@@ -95,8 +172,15 @@ export async function processHubtelCallback(params: {
   const txn = await prisma.hubtelTransaction.findUnique({ where: { clientReference: params.clientReference } });
   if (!txn) throw new HubtelError(`Unknown Hubtel transaction reference: ${params.clientReference}`);
 
+  // A direct-debit charge rides the same Receive Money endpoint and so the
+  // same callback URL, but a failed one also has a retry to schedule.
+  if (txn.channel === 'DIRECT_DEBIT') {
+    const { processDirectDebitCallback } = await import('./hubtelPreapprovalService');
+    return processDirectDebitCallback(params);
+  }
+
   const claim = await prisma.hubtelTransaction.updateMany({
-    where: { id: txn.id, status: 'PENDING' },
+    where: { id: txn.id, status: { in: claimableStatuses(params.status) } },
     data: { status: params.status, rawCallbackPayload: params.rawPayload },
   });
 
@@ -108,6 +192,17 @@ export async function processHubtelCallback(params: {
   if (params.status === 'SUCCESS') await recordSuccessfulHubtelCharge(txn.id, params.rawPayload);
 
   return prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: txn.id } });
+}
+
+/**
+ * Which transactions a reported outcome may still land on. A failure only
+ * ever settles one that is PENDING. A success also overrides FAILED: the
+ * sweep gives up on a transaction Hubtel still calls Unpaid after a while,
+ * and a customer who approves the prompt after that has still paid — the
+ * money must not go unrecorded because this app stopped waiting.
+ */
+export function claimableStatuses(incoming: 'SUCCESS' | 'FAILED'): string[] {
+  return incoming === 'SUCCESS' ? ['PENDING', 'FAILED'] : ['PENDING'];
 }
 
 /**
@@ -238,8 +333,13 @@ export function normalizeHubtelPaymentCallback(body: unknown): { clientReference
  * docs precisely because a lost callback for a payment that really succeeded
  * must never be silently written off as FAILED (money would leave the
  * customer's wallet with nothing posted to their contract balance).
+ *
+ * Hubtel's rule is to check once five minutes have passed with no callback.
+ * Paid or Refunded settles the transaction then. Unpaid does not: the prompt
+ * may still be sitting on the customer's phone, so it is checked again each
+ * sweep and only written off once `giveUpAfterMinutes` old.
  */
-export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 15) {
+export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 5, giveUpAfterMinutes = 15) {
   // Imported lazily to avoid a module-load cycle (hubtelPreapprovalService doesn't
   // import this file, but both sit in the same service layer — keeping this one
   // import deferred is simplest and costs nothing at this call frequency).
@@ -247,6 +347,7 @@ export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 15)
   const { checkHubtelTransactionStatus } = await import('./hubtelStatusCheckService');
 
   const cutoff = new Date(Date.now() - staleAfterMinutes * 60_000);
+  const giveUpCutoff = new Date(Date.now() - Math.max(staleAfterMinutes, giveUpAfterMinutes) * 60_000);
   const stale = await prisma.hubtelTransaction.findMany({ where: { status: 'PENDING', createdAt: { lt: cutoff } } });
 
   let succeeded = 0;
@@ -263,9 +364,14 @@ export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 15)
       stillPending += 1;
       continue;
     }
+    if (checkedStatus === 'PENDING' && txn.createdAt > giveUpCutoff) {
+      stillPending += 1;
+      continue;
+    }
 
-    // 'PENDING' (mock mode, or Hubtel genuinely hasn't resolved it yet) falls
-    // through to the stale-pending fallback, preserving today's mock behavior.
+    // 'PENDING' this long after (mock mode, or Hubtel still reporting it
+    // Unpaid) is written off; a success that turns up later still lands
+    // (claimableStatuses).
     const rawPayload = JSON.stringify({
       reconciliation: true,
       reason: checkedStatus === 'PENDING' ? 'stale-pending-unresolved' : 'status-check',

@@ -7,6 +7,7 @@ import { portalApi, ApiError } from '@/lib/portalApi';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, contractTypeLabel, formatDate, cn } from '@/lib/utils';
 import { MOBILE_MONEY_NETWORKS, MOBILE_MONEY_NETWORK_LABELS } from '@/lib/constants/contracts';
+import { networkForPhone } from '@/lib/constants/customers';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -37,18 +38,26 @@ function PaymentsContent() {
 
   const [contractId, setContractId] = useState(searchParams.get('contract') ?? '');
   const [amount, setAmount] = useState('');
-  const [network, setNetwork] = useState<string>('MTN');
+  // The prompt can only go to a number registered on the account — never one
+  // typed in here — so the customer chooses among their own.
+  const [numbers, setNumbers] = useState<string[]>([]);
+  const [network, setNetwork] = useState<string>('');
   const [msisdn, setMsisdn] = useState('');
   const [stage, setStage] = useState<'idle' | 'waiting' | 'done'>('idle');
 
   const load = useCallback(async () => {
     try {
-      const [c, p] = await Promise.all([
+      const [c, p, me] = await Promise.all([
         portalApi.get<{ contracts: PortalContract[] }>('/contracts'),
         portalApi.get<{ payments: PortalPayment[] }>('/payments'),
+        portalApi.get<{ customer: { phone: string | null; phone2: string | null; phone3: string | null } }>('/me'),
       ]);
       setContracts(c.contracts);
       setPayments(p.payments);
+      const own = [me.customer.phone, me.customer.phone2, me.customer.phone3].filter((n): n is string => !!n);
+      setNumbers(own);
+      setMsisdn((prev) => prev || own[0] || '');
+      setNetwork((prev) => prev || networkForPhone(own[0] ?? '') || '');
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Could not load your payments', variant: 'destructive' });
     } finally {
@@ -75,14 +84,14 @@ function PaymentsContent() {
     : [];
 
   const amountMinor = Math.round(parseFloat(amount || '0') * 100);
-  const canPay = !!selected && Number.isFinite(amountMinor) && amountMinor > 0 && !!msisdn.trim() && stage !== 'waiting';
+  const canPay = !!selected && Number.isFinite(amountMinor) && amountMinor > 0 && !!msisdn && !!network && stage !== 'waiting';
 
   async function pay() {
     if (!selected) return;
     setStage('waiting');
     try {
       const { reference } = await portalApi.post<{ reference: string; status: string }>('/pay', {
-        contractId: selected.id, amountMinor, network, msisdn: msisdn.trim(),
+        contractId: selected.id, amountMinor, network, msisdn,
       });
 
       // Mock mode settles at once; a live charge waits on the customer
@@ -192,9 +201,22 @@ function PaymentsContent() {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
+                  <Label>Mobile money number</Label>
+                  {numbers.length > 1 ? (
+                    <Select value={msisdn} onValueChange={(n) => { setMsisdn(n); setNetwork(networkForPhone(n) || ''); }}>
+                      <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {numbers.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <p className="mt-1.5 flex h-10 items-center border border-input bg-gray-50 px-3 text-sm text-gray-700">{msisdn || '—'}</p>
+                  )}
+                </div>
+                <div>
                   <Label>Mobile money network</Label>
                   <Select value={network} onValueChange={setNetwork}>
-                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="Choose your network" /></SelectTrigger>
                     <SelectContent>
                       {MOBILE_MONEY_NETWORKS.map((n) => (
                         <SelectItem key={n} value={n}>{MOBILE_MONEY_NETWORK_LABELS[n]}</SelectItem>
@@ -202,12 +224,10 @@ function PaymentsContent() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <Label htmlFor="msisdn">Mobile money number</Label>
-                  <Input id="msisdn" type="tel" inputMode="tel" className="mt-1.5"
-                    value={msisdn} onChange={(e) => setMsisdn(e.target.value)} placeholder="024 000 0000" />
-                </div>
               </div>
+              <p className="text-xs text-gray-400 -mt-2">
+                The payment prompt is sent to a number registered on your account. To pay from a different number, ask your branch to add it.
+              </p>
 
               <button
                 type="button" onClick={pay} disabled={!canPay}

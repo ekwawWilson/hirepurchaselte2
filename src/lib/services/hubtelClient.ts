@@ -7,7 +7,30 @@
  */
 import { recordHubtelSample } from './hubtelSampleLogService';
 
-export class HubtelApiError extends Error {}
+/**
+ * `rejected` is set when Hubtel itself answered and refused the request (a
+ * 4xx): nothing was charged and nothing will call back. Without it the
+ * outcome is unknown — a dropped connection or a gateway error can hide a
+ * request Hubtel did accept — and only a status check can settle it.
+ */
+export class HubtelApiError extends Error {
+  constructor(message: string, readonly rejected?: { responseCode: string | null; raw: unknown }) {
+    super(message);
+  }
+}
+
+/**
+ * What to tell the person paying when Hubtel turns a Receive Money request
+ * down, by its documented response code. 2001 is the customer's own wallet or
+ * handset (wrong PIN, no funds, a number that isn't on that network) and
+ * Hubtel's wording for it is written for them. The 4xxx codes are this
+ * merchant account's setup — API scopes, fees, channel permissions — which a
+ * customer can do nothing about and should not be shown.
+ */
+export function describeHubtelRejection(responseCode: string | null, message: string): string {
+  if (responseCode === '2001') return message || 'The payment was not approved. Check the number and network, and that the wallet has enough funds.';
+  return 'Mobile money payments are not available right now. Please pay at the office, or try again later.';
+}
 
 /** Falls back to the raw text (an HTML error page from a gateway/proxy in
  *  front of Hubtel, for instance) instead of throwing on a non-JSON body, so
@@ -125,6 +148,11 @@ interface ReceiveMoneyResponse {
   Data: { TransactionId: string; ClientReference: string; Amount: number; Charges: number; AmountCharged: number };
 }
 
+/** Hubtel fails a request whose Description carries "strange characters (&*!%@)". */
+function plainDescription(text: string): string {
+  return text.replace(/[^A-Za-z0-9 .,/#-]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 /**
  * The Receive-Money call — used for both a regular USSD/mobile-money charge
  * and a direct-debit charge against an approved mandate (Hubtel uses the same
@@ -143,7 +171,7 @@ export async function callHubtelReceiveMoney(params: {
   description: string;
   clientReference: string;
   callbackUrl: string;
-}): Promise<{ transactionId: string; status: 'PENDING' | 'FAILED'; message: string; raw: unknown }> {
+}): Promise<{ transactionId: string | undefined; status: 'PENDING' | 'FAILED'; responseCode: string | null; message: string; raw: unknown }> {
   const creds = requireHubtelCredentials();
   const payload = {
     CustomerName: params.customerName,
@@ -152,7 +180,7 @@ export async function callHubtelReceiveMoney(params: {
     Channel: getHubtelChannel(params.network, params.isDirectDebit),
     Amount: Number((params.amountMinor / 100).toFixed(2)),
     PrimaryCallbackUrl: params.callbackUrl,
-    Description: params.description,
+    Description: plainDescription(params.description),
     ClientReference: params.clientReference,
   };
 
@@ -166,13 +194,19 @@ export async function callHubtelReceiveMoney(params: {
   // sample-payloads panel — both the request this app actually sent and
   // Hubtel's actual response, success or failure alike.
   await recordHubtelSample(params.isDirectDebit ? 'DIRECT_DEBIT_CHARGE' : 'RECEIVE_MONEY_INITIATE', payload, parsed);
-  const body = parsed as ReceiveMoneyResponse;
-  if (!res.ok) throw new HubtelApiError(body?.Message || `Hubtel receive-money call failed with HTTP ${res.status}`);
+  const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Partial<ReceiveMoneyResponse>;
+  if (!res.ok) {
+    throw new HubtelApiError(
+      body.Message || `Hubtel receive-money call failed with HTTP ${res.status}`,
+      res.status < 500 ? { responseCode: body.ResponseCode ?? null, raw: parsed } : undefined,
+    );
+  }
 
   return {
     transactionId: body.Data?.TransactionId,
     status: body.ResponseCode === '0001' ? 'PENDING' : 'FAILED',
-    message: body.Message,
+    responseCode: body.ResponseCode ?? null,
+    message: body.Message ?? '',
     raw: body,
   };
 }
@@ -399,10 +433,27 @@ export async function testPreapprovalInitiateRaw(params: {
 }
 
 /**
- * Tolerant status/response-code parsing — Hubtel's own field casing/shape has
- * been observed to vary (data.status vs Data.Status, ResponseCode vs
- * responseCode) across its callback and status-check payloads for this same
- * product; this mirrors the parsing the legacy hirepurchase app's callers use.
+ * Reads the Transaction Status Check's answer. Unlike a callback, its
+ * responseCode says only that the lookup worked — "0000" comes back for an
+ * Unpaid transaction as much as a Paid one — so the outcome is `data.status`
+ * alone: Paid, Unpaid or Refunded. Anything else, an Unpaid included, is not
+ * a payment and not yet a failure either.
+ */
+export function resolveHubtelStatusCheck(body: unknown): 'SUCCESS' | 'FAILED' | 'PENDING' {
+  const b = body as Record<string, unknown> | null | undefined;
+  const data = (b?.data ?? b?.Data ?? {}) as Record<string, unknown>;
+  const status = String(data.status ?? data.Status ?? '').toUpperCase();
+  if (status === 'PAID') return 'SUCCESS';
+  if (status === 'REFUNDED') return 'FAILED';
+  return 'PENDING';
+}
+
+/**
+ * Reads a Receive Money *callback*, where the response code is the outcome:
+ * 0000 paid, 2001 failed. Tolerant of Hubtel's varying field casing
+ * (data.status vs Data.Status, ResponseCode vs responseCode), mirroring the
+ * legacy hirepurchase app's callers. Not for the status check — see
+ * resolveHubtelStatusCheck.
  */
 export function resolveHubtelStatus(body: unknown): 'SUCCESS' | 'FAILED' | 'PENDING' {
   const b = body as Record<string, unknown> | null | undefined;
