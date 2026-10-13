@@ -328,3 +328,22 @@ Added after a review of the running system. Each item names the service that own
 **Direct debit.** One attempt at a time per contract: the daily run skips a contract whose last attempt is unanswered or has a retry scheduled. A retry collects what is still due, not what was asked for days earlier, and with `partialDirectDebitEnabled` asks for half of the attempt before it (`retryAmountMinor`). Customers on `DIRECT_DEBIT` are texted at 16:00 the day before a debit (`dailyNoticesService.sendDirectDebitNotices`).
 
 **Telling the owner.** `alertService.raiseAlert` records a fault once (deduplicated, counting repeats) and texts the owner's number the first time it opens: a scheduled job failing (`instrumentation.ts`'s `job` wrapper), Hubtel refusing this server (401/403), SMS failing to send. The dashboard's Needs attention panel (`attentionService`) lists open alerts and everything else waiting on a person, each only to someone who can act on it. A summary of the day goes to the owner at 19:00 (`sendOwnerDailySummary`). All of it is switched from Settings > Controls and notifications.
+
+---
+
+## 24. USSD payments go through Hubtel's checkout (AddToCart)
+
+Hubtel's Programmable Services API (the USSD product) has its own way of taking money, and it is the one this app now uses for a live dial-in (`ussdCheckoutService.ts`):
+
+1. The menu's last step answers `Type: "AddToCart"` with an `Item` (`ItemName`, `Qty: 1`, `Price` in cedis). A `HubtelTransaction` is recorded there and then, `PENDING`, with Hubtel's `SessionId` as its `clientReference`. This server asks nothing of Hubtel's payment APIs.
+2. Hubtel prompts the customer and takes the payment, then posts to the Service Fulfilment URL (`/api/payments/hubtel/service-fulfilment?token=…`) with the `SessionId`, an `OrderId` and the order's details.
+3. The payment is posted through the same pipeline as every other mobile money payment (`processHubtelCallback` → `recordSuccessfulHubtelCharge`), credited at the price the customer confirmed in the menu — not what they paid including Hubtel's fee.
+4. Hubtel is told the outcome at `https://gs-callback.hubtel.com:9055/callback` (`ServiceStatus: success | failed`), which it requires within one hour. That endpoint only answers a whitelisted IP, so an answer it does not accept is sent again on the five-minute sweep (`retryFulfilmentCallbacks`), and raised as an alert if the hour passes.
+
+What Hubtel is told: **success** when the payment was posted, and also when it was collected but could not be applied (contract closed meanwhile, or Hubtel's item total disagrees with what the customer confirmed) — the money is then in the review queue for staff, so it must not also be treated as unfulfilled. **failed** when the order was not actually paid, or matches no session here (which also raises an alert).
+
+If no fulfilment arrives, the existing five-minute reconciliation asks Hubtel's Transaction Status Check by that same `SessionId`, as Hubtel's documentation directs, and posts the payment if it says Paid.
+
+Why: the earlier design had the menu send a Direct Receive Money prompt itself. That needs the `mobilemoney-receive-direct` scope on the merchant account, which is separate from having a USSD code. `HUBTEL_USSD_PAYMENT=receive-money` switches back to it. Mock mode is unchanged (the simulator settles a payment at once). Staff-sent prompts, portal payments and direct debit still use Receive Money and Preapproval.
+
+Every `Message`, `Label` and `ItemName` sent to Hubtel passes through `ussdSafeText`: Hubtel rejects a response containing a special character, and customer and company names are typed by people.

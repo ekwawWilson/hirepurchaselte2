@@ -314,34 +314,13 @@ describe('USSD + Hubtel payments', () => {
     expect(txn.status).toBe('SUCCESS');
   });
 
-  it('the Service Fulfilment route rejects an unauthenticated call — this integration never expects to receive one, but must still fail closed', async () => {
+  // What the Service Fulfilment URL does with a report from Hubtel's checkout
+  // is tested in tests/ussd-checkout.test.ts; this is only its front door.
+  it('the Service Fulfilment route rejects a call that does not carry the shared secret', async () => {
     const res = await serviceFulfilmentPOST(makeRequest('POST', '/api/payments/hubtel/service-fulfilment', {
       body: { SessionId: 'sess-x', OrderId: 'order-x' },
     }));
     expect(res.status).toBe(401);
-  });
-
-  it('the Service Fulfilment route acknowledges an authenticated call and sends the required Service Fulfillment Callback', async () => {
-    const guardedFetch = globalThis.fetch;
-    const fetchSpy = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe('https://gs-callback.hubtel.com:9055/callback');
-      const sent = JSON.parse(init?.body as string);
-      expect(sent).toEqual({ SessionId: 'sess-unexpected', OrderId: 'order-unexpected', ServiceStatus: 'success', MetaData: null });
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
-    });
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
-
-    try {
-      const res = await serviceFulfilmentPOST(makeRequest('POST', '/api/payments/hubtel/service-fulfilment', {
-        token: process.env.WEBHOOK_SHARED_TOKEN,
-        body: { SessionId: 'sess-unexpected', OrderId: 'order-unexpected', OrderInfo: { Status: 'Paid' } },
-      }));
-      expect(res.status).toBe(200);
-      expect((await res.json()).received).toBe(true);
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      globalThis.fetch = guardedFetch;
-    }
   });
 
   it('reconciliation marks stale PENDING transactions FAILED', async () => {

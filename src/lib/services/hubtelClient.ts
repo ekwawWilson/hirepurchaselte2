@@ -502,3 +502,26 @@ export function resolveHubtelStatus(body: unknown): 'SUCCESS' | 'FAILED' | 'PEND
   if (responseCode === '2001' || ['FAILED', 'FAIL', 'REJECTED', 'DECLINED', 'CANCELLED'].includes(rawStatus)) return 'FAILED';
   return 'PENDING';
 }
+
+/** Where Hubtel is told whether a paid-for Programmable Services order was rendered. */
+export const SERVICE_FULFILMENT_CALLBACK_URL = 'https://gs-callback.hubtel.com:9055/callback';
+
+/**
+ * The Service Fulfilment Callback: after Hubtel's checkout has taken a
+ * payment and reported it to the Service Fulfilment URL, it must be told
+ * within the hour whether the service was rendered. The endpoint takes no
+ * credentials — it only answers a whitelisted IP address — so a server
+ * Hubtel has not whitelisted gets a 403 or no answer at all, and the caller
+ * keeps trying (ussdCheckoutService.retryFulfilmentCallbacks).
+ */
+export async function sendServiceFulfilmentCallback(params: { sessionId: string; orderId: string; serviceStatus: 'success' | 'failed' }): Promise<void> {
+  const payload = { SessionId: params.sessionId, OrderId: params.orderId, ServiceStatus: params.serviceStatus, MetaData: null };
+  const res = await hubtelFetch(SERVICE_FULFILMENT_CALLBACK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const parsed = await parseHubtelResponse(res);
+  await recordHubtelSample('SERVICE_FULFILMENT_CALLBACK', payload, { httpStatus: res.status, body: parsed });
+  if (!res.ok) throw new HubtelApiError(hubtelHttpFailure('service fulfilment callback', res.status));
+}

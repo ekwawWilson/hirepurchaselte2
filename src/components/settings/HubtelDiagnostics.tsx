@@ -37,6 +37,8 @@ const SAMPLE_SECTIONS: { key: keyof DiagnosticsSamples; title: string; emptyHint
   { key: 'paymentCallback', title: 'Payment callback — inbound', emptyHint: 'Take (or simulate) a payment to capture one.' },
   { key: 'preapprovalCallback', title: 'Preapproval callback — inbound', emptyHint: 'Only fires in live mode, once a customer completes a real direct-debit mandate prompt.' },
   { key: 'ussd', title: 'USSD — Service Flow Interaction', emptyHint: 'Dial into the USSD simulator below, or wait for a real dial-in, to capture one.' },
+  { key: 'serviceFulfilment', title: 'USSD — Service Fulfilment (Hubtel reports a payment) — inbound', emptyHint: 'Only fires in live mode, once a customer has paid through Hubtel’s checkout after dialling in.' },
+  { key: 'serviceFulfilmentCallback', title: 'USSD — Service Fulfilment Callback — outbound', emptyHint: 'Only fires in live mode, when this server tells Hubtel a paid USSD order was applied.' },
 ];
 
 function formatSamplesForCopy(samples: DiagnosticsSamples): string {
@@ -63,6 +65,8 @@ interface Probe {
 
 interface DiagnosticsSamples {
   ussd: SamplePayload | null;
+  serviceFulfilment: SamplePayload | null;
+  serviceFulfilmentCallback: SamplePayload | null;
   paymentCallback: SamplePayload | null;
   preapprovalCallback: SamplePayload | null;
   statusCheck: SamplePayload | null;

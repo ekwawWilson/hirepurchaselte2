@@ -576,6 +576,18 @@ model HubtelTransaction {
   resolvedAt         DateTime?
   resolvedById       String?
   resolutionNote     String?
+  // A payment taken by Hubtel's own checkout after the USSD menu answered
+  // AddToCart (ussdCheckoutService.ts): clientReference is then Hubtel's
+  // SessionId. Hubtel reports the payment to the Service Fulfilment URL with
+  // an OrderId, and must be told within the hour whether the service was
+  // rendered. fulfilmentStatus is what it is told (success | failed);
+  // fulfilmentCallbackState is PENDING until Hubtel has accepted that,
+  // then SENT — or UNDELIVERED once the hour has passed.
+  hubtelOrderId              String?
+  fulfilmentReceivedAt       DateTime?
+  fulfilmentStatus           String?
+  fulfilmentCallbackState    String?
+  fulfilmentCallbackAttempts Int       @default(0)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
@@ -584,6 +596,7 @@ model HubtelTransaction {
   preapproval HubtelPreapproval? @relation(fields: [preapprovalId], references: [id])
 
   @@index([status, nextRetryAt])
+  @@index([fulfilmentCallbackState])
   @@map("hubtel_transactions")
 }
 

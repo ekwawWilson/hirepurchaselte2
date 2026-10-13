@@ -35,7 +35,12 @@ export default function UssdSimulatorPage() {
         return;
       }
       setLog((l) => [...l, { from: 'system', text: body.Message }]);
-      setEnded(body.Type === 'release');
+      // AddToCart ends the session by handing the customer to Hubtel's own
+      // checkout — which no simulator can stand in for.
+      if (body.Type === 'AddToCart') {
+        setLog((l) => [...l, { from: 'system', text: `[Hubtel's checkout would now prompt this number for GHS ${Number(body.Item?.Price ?? 0).toFixed(2)} — "${body.Item?.ItemName}". Nothing has been charged.]` }]);
+      }
+      setEnded(body.Type !== 'response');
     } finally {
       setLoading(false);
     }

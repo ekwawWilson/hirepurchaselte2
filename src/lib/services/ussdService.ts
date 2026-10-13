@@ -7,6 +7,7 @@ import { getDeviceLoanState } from './paymentService';
 import { assertPaymentsAcceptedToday, PaymentsClosedError } from './operatingSettingsService';
 import { contractTypeLabel, formatDate } from '../utils';
 import { phoneVariants } from './hubtelClient';
+import { beginUssdCheckout, ussdUsesHubtelCheckout } from './ussdCheckoutService';
 
 const SESSION_TTL_MINUTES = 5;
 
@@ -28,6 +29,12 @@ export interface UssdResult {
   continueSession: boolean;
   label: string;
   fieldType?: 'text' | 'number' | 'decimal' | 'phone';
+  /**
+   * Set when the session ends by handing the customer to Hubtel's checkout
+   * (the gateway answers `AddToCart` with this as its Item) rather than by
+   * simply releasing them.
+   */
+  checkout?: { itemName: string; amountMinor: number };
 }
 
 const ALT_PHONE_PROMPT = 'Enter a registered phone number to continue, or 0 to cancel:';
@@ -369,6 +376,22 @@ export async function handleUssdInput(params: {
         }
         throw e;
       }
+      if (ussdUsesHubtelCheckout()) {
+        // Hubtel's own checkout takes the money from here (ussdCheckoutService.ts):
+        // nothing is charged by this server, and the payment is posted when
+        // Hubtel reports it to the Service Fulfilment URL.
+        try {
+          const checkout = await beginUssdCheckout({ sessionId: params.sessionId, contractId, msisdn: params.msisdn, amountMinor });
+          return {
+            message: 'Your request has been submitted. Please wait for the payment prompt and approve it with your mobile money PIN.',
+            continueSession: false, label: 'Approve the payment prompt', checkout,
+          };
+        } catch (e) {
+          if (!(e instanceof HubtelError)) throw e;
+          return { message: e.message.slice(0, 160), continueSession: false, label: 'Payment failed' };
+        }
+      }
+
       let txn;
       try {
         txn = await initiateHubtelPayment({

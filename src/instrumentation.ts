@@ -25,6 +25,7 @@ export async function register() {
   const { sendDueTodayReminders, sendOverdueReminders } = await import('@/lib/services/reminderService');
   const { sendDirectDebitNotices, sendOwnerDailySummary } = await import('@/lib/services/dailyNoticesService');
   const { pruneLoginThrottles } = await import('@/lib/auth/loginThrottle');
+  const { retryFulfilmentCallbacks } = await import('@/lib/services/ussdCheckoutService');
   const { raiseAlert } = await import('@/lib/services/alertService');
 
   /**
@@ -85,6 +86,8 @@ export async function register() {
     });
     await job('reconcilePendingPreapprovals', 'check unanswered direct debit approvals', reconcilePendingPreapprovals,
       (result) => (result.checked > 0 ? `Hubtel mandate reconciliation: checked ${result.checked}, resolved ${result.resolved}` : null));
+    await job('retryFulfilmentCallbacks', 'tell Hubtel the outcome of USSD payments', retryFulfilmentCallbacks,
+      (result) => (result.sent + result.gaveUp > 0 ? `USSD fulfilment callbacks: sent ${result.sent}, gave up on ${result.gaveUp}` : null));
     await job('pruneExpiredUssdSessions', 'clear expired USSD sessions', pruneExpiredUssdSessions);
   });
 

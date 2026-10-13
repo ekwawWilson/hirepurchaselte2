@@ -7,7 +7,7 @@ import {
   hubtelAuthHeader,
   receiveMoneyUrl,
   preapprovalInitiateUrl,
-  transactionStatusUrl,
+  transactionStatusUrl, SERVICE_FULFILMENT_CALLBACK_URL,
 } from '@/lib/services/hubtelClient';
 import { preapprovalCallbackUrl } from '@/lib/services/hubtelPreapprovalService';
 import { appendWebhookToken, programmableServiceUrls } from '@/lib/auth/webhookSecurity';
@@ -62,11 +62,11 @@ async function outboundIp(): Promise<{ ip: string | null; source?: string }> {
 type ProbeVerdict = 'reachable' | 'blocked' | 'timeout' | 'error';
 interface Probe { service: string; host: string; verdict: ProbeVerdict; detail: string; httpStatus?: number }
 
-async function probe(service: string, url: string, auth: string): Promise<Probe> {
+async function probe(service: string, url: string, auth?: string): Promise<Probe> {
   const host = new URL(url).hostname;
   try {
     const res = await withTimeout(
-      (signal) => fetch(url, { headers: { Authorization: auth, Accept: 'application/json' }, signal, cache: 'no-store' }),
+      (signal) => fetch(url, { headers: { ...(auth && { Authorization: auth }), Accept: 'application/json' }, signal, cache: 'no-store' }),
       PROBE_TIMEOUT_MS,
     );
     if (res.status === 403) {
@@ -111,7 +111,7 @@ function safeJsonParse(text: string | null): unknown {
  */
 async function loadSamplePayloads(): Promise<Record<string, SamplePayload | null>> {
   const kinds: HubtelSampleKind[] = [
-    'USSD', 'PREAPPROVAL_CALLBACK', 'STATUS_CHECK',
+    'USSD', 'PREAPPROVAL_CALLBACK', 'STATUS_CHECK', 'SERVICE_FULFILMENT', 'SERVICE_FULFILMENT_CALLBACK',
     'RECEIVE_MONEY_INITIATE', 'DIRECT_DEBIT_CHARGE', 'PREAPPROVAL_INITIATE', 'PREAPPROVAL_VERIFY_OTP',
     'PREAPPROVAL_STATUS_CHECK', 'PREAPPROVAL_CANCEL', 'PREAPPROVAL_REACTIVATE',
   ];
@@ -148,6 +148,8 @@ async function loadSamplePayloads(): Promise<Record<string, SamplePayload | null
 
   return {
     ussd: fromLog('USSD', 'The most recent dial-in this server actually handled — from Hubtel’s gateway or the built-in USSD simulator (both hit this same endpoint).'),
+    serviceFulfilment: fromLog('SERVICE_FULFILMENT', 'What Hubtel’s checkout last reported to the Service Fulfilment URL after a USSD payment, and what this server decided to tell it back.'),
+    serviceFulfilmentCallback: fromLog('SERVICE_FULFILMENT_CALLBACK', 'The most recent Service Fulfilment Callback this server sent Hubtel, with Hubtel’s answer.'),
     paymentCallback,
     preapprovalCallback: fromLog('PREAPPROVAL_CALLBACK', 'A real mandate-status callback Hubtel sent this server (this path never runs in mock mode).'),
     statusCheck: fromLog('STATUS_CHECK', 'A real response from Hubtel’s Transaction Status Check API (this path never runs in mock mode).'),
@@ -190,6 +192,9 @@ export async function GET(req: NextRequest) {
       probe('Receive money (payments + direct debit)', receiveMoneyUrl(creds.salesId), auth2),
       probe('Preapproval (mandates)', preapprovalInitiateUrl(creds.salesId), auth2),
       probe('Transaction status check', `${transactionStatusUrl(creds.salesId)}?clientReference=DIAGNOSTIC-PROBE`, auth2),
+      // A plain GET: it reports nothing to Hubtel about any order, and the
+      // endpoint takes no credentials — it answers a whitelisted IP or not at all.
+      probe('USSD service fulfilment callback', SERVICE_FULFILMENT_CALLBACK_URL),
     ]);
   }
 

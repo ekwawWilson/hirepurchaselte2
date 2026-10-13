@@ -4,6 +4,10 @@ export type HubtelSampleKind =
   | 'USSD'
   | 'PREAPPROVAL_CALLBACK'
   | 'STATUS_CHECK'
+  // What Hubtel's checkout reported after a USSD AddToCart payment, and what
+  // this server told it back (ussdCheckoutService.ts).
+  | 'SERVICE_FULFILMENT'
+  | 'SERVICE_FULFILMENT_CALLBACK'
   // Outbound — this server calling Hubtel — captured in hubtelClient.ts, the
   // single choke point every one of these calls goes through regardless of
   // which service initiated it.

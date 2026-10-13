@@ -39,6 +39,22 @@ const accepted = (call: { body: Record<string, unknown> | null }) => ({
 
 beforeAll(enableOptionalContractTypes);
 
+/**
+ * The USSD menu normally hands a live payment to Hubtel's own checkout
+ * (tests/ussd-checkout.test.ts). These tests are of the alternative it can
+ * be switched back to: the menu sending a Receive Money prompt itself.
+ */
+async function withReceiveMoneyUssd<T>(fn: () => Promise<T>): Promise<T> {
+  const saved = process.env.HUBTEL_USSD_PAYMENT;
+  process.env.HUBTEL_USSD_PAYMENT = 'receive-money';
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) delete process.env.HUBTEL_USSD_PAYMENT;
+    else process.env.HUBTEL_USSD_PAYMENT = saved;
+  }
+}
+
 describe('Hubtel Direct Receive Money', () => {
   let branchId: string;
   let adminUserId: string;
@@ -102,11 +118,11 @@ describe('Hubtel Direct Receive Money', () => {
     const sessionId = `rm-ussd-${runId}`;
     let last = { message: '', continueSession: true };
 
-    const calls = await withLiveHubtel(accepted, async () => {
+    const calls = await withReceiveMoneyUssd(() => withLiveHubtel(accepted, async () => {
       await handleUssdInput({ sessionId, msisdn: phone, operator: 'vodafone', input: '', isNewSession: true });
       await handleUssdInput({ sessionId, msisdn: phone, operator: 'vodafone', input: '50', isNewSession: false });
       last = await handleUssdInput({ sessionId, msisdn: phone, operator: 'vodafone', input: '1', isNewSession: false });
-    });
+    }));
 
     expect(calls[0].body!.Channel).toBe('vodafone-gh');
     expect(last.continueSession).toBe(false);
@@ -117,11 +133,11 @@ describe('Hubtel Direct Receive Money', () => {
   it('USSD: with no operator given, a Telecel line is still charged on the Telecel channel, not MTN', async () => {
     const { phone } = await makeSaver('050');
     const sessionId = `rm-ussd-tel-${runId}`;
-    const calls = await withLiveHubtel(accepted, async () => {
+    const calls = await withReceiveMoneyUssd(() => withLiveHubtel(accepted, async () => {
       await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
       await handleUssdInput({ sessionId, msisdn: phone, input: '20', isNewSession: false });
       await handleUssdInput({ sessionId, msisdn: phone, input: '1', isNewSession: false });
-    });
+    }));
     expect(calls[0].body!.Channel).toBe('vodafone-gh');
   });
 
