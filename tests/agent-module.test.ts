@@ -63,14 +63,14 @@ describe('Agent module', () => {
     return (await res.json()).customer as { id: string; branchId: string; createdById: string };
   }
 
-  async function makeDepositInstalmentUnit() {
-    const product = await prisma.product.create({ data: { sku: `AGENT-SKU-${unique()}`, name: 'Agent Test Phone', cashPriceMinor: 100000 } });
+  async function makeDepositInstalmentUnit(categoryId?: string) {
+    const product = await prisma.product.create({ data: { sku: `AGENT-SKU-${unique()}`, name: 'Agent Test Phone', cashPriceMinor: 100000, categoryId } });
     const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId: agentBranchId, serialNumber: `AGENT-SN-${unique()}` } });
     return item.id;
   }
 
-  async function submitDepositInstalmentAsAgent(customerId: string, token: string = agentToken) {
-    const inventoryItemId = await makeDepositInstalmentUnit();
+  async function submitDepositInstalmentAsAgent(customerId: string, token: string = agentToken, categoryId?: string) {
+    const inventoryItemId = await makeDepositInstalmentUnit(categoryId);
     const res = await contractsPOST(makeRequest('POST', '/api/contracts', {
       token,
       body: {
@@ -285,8 +285,8 @@ describe('Agent module', () => {
   });
 
   describe('agent deposit ledger', () => {
-    async function approveAndDeposit(customerId: string, depositAmountMinor = 12000) {
-      const contract = await submitDepositInstalmentAsAgent(customerId);
+    async function approveAndDeposit(customerId: string, depositAmountMinor = 12000, categoryId?: string) {
+      const contract = await submitDepositInstalmentAsAgent(customerId, agentToken, categoryId);
       await approvePOST(makeRequest('POST', `/api/contracts/${contract.id}/approve`, { token: managerToken }), makeParams({ id: contract.id }));
       const res = await cashPaymentPOST(makeRequest('POST', '/api/payments/cash', {
         token: adminToken, body: { contractId: contract.id, amountMinor: depositAmountMinor, entryType: 'DEPOSIT' },
@@ -317,6 +317,49 @@ describe('Agent module', () => {
       expect(smallEntry.amountOwedMinor).toBe(0);
       expect(smallEntry.status).toBe('SETTLED');
       await commissionPATCH(makeRequest('PATCH', '/api/settings/commission', { token: adminToken, body: { fixedCommissionMinor: 500 } }));
+    });
+
+    it('takes the commission from the product\'s category, and the default where the category has none', async () => {
+      const phones = await prisma.productCategory.create({ data: { name: `Phones ${unique()}` } });
+      const fridges = await prisma.productCategory.create({ data: { name: `Fridges ${unique()}` } });
+      const tvs = await prisma.productCategory.create({ data: { name: `TVs ${unique()}` } });
+      const save = (body: Record<string, unknown>) => commissionPATCH(makeRequest('PATCH', '/api/settings/commission', { token: adminToken, body }));
+
+      // Checked before anything is saved.
+      expect((await save({ fixedCommissionMinor: 500, categoryRates: [{ categoryId: phones.id, commissionMinor: -1 }] })).status).toBe(400);
+      expect((await save({ fixedCommissionMinor: 500, categoryRates: [{ categoryId: 'no-such-category', commissionMinor: 100 }] })).status).toBe(400);
+      expect((await save({ fixedCommissionMinor: 500, categoryRates: [{ categoryId: phones.id, commissionMinor: 1 }, { categoryId: phones.id, commissionMinor: 2 }] })).status).toBe(400);
+
+      const saved = await save({
+        fixedCommissionMinor: 500,
+        categoryRates: [{ categoryId: phones.id, commissionMinor: 1000 }, { categoryId: fridges.id, commissionMinor: 3500 }, { categoryId: tvs.id, commissionMinor: null }],
+      });
+      expect(saved.status).toBe(200);
+      const view = (await saved.json()).settings;
+      expect(view.fixedCommissionMinor).toBe(500);
+      expect(view.categories).toEqual(expect.arrayContaining([
+        { categoryId: phones.id, name: phones.name, commissionMinor: 1000 },
+        { categoryId: fridges.id, name: fridges.name, commissionMinor: 3500 },
+        { categoryId: tvs.id, name: tvs.name, commissionMinor: null },
+      ]));
+
+      const entryFor = async (categoryId?: string) => {
+        const contractId = await approveAndDeposit((await registerCustomer(agentToken)).id, 12000, categoryId);
+        return prisma.agentDepositLedger.findUniqueOrThrow({ where: { contractId } });
+      };
+      expect(await entryFor(phones.id)).toMatchObject({ commissionAmountMinor: 1000, amountOwedMinor: 11000, commissionCategoryName: phones.name });
+      expect(await entryFor(fridges.id)).toMatchObject({ commissionAmountMinor: 3500, amountOwedMinor: 8500, commissionCategoryName: fridges.name });
+      expect(await entryFor(tvs.id)).toMatchObject({ commissionAmountMinor: 500, commissionCategoryName: null });  // no amount of its own
+      expect(await entryFor()).toMatchObject({ commissionAmountMinor: 500, commissionCategoryName: null });       // no category at all
+
+      // Changing a rate later leaves a deposit already recorded as it was.
+      const before = await entryFor(phones.id);
+      await save({ fixedCommissionMinor: 500, categoryRates: [{ categoryId: phones.id, commissionMinor: 2000 }] });
+      expect((await prisma.agentDepositLedger.findUniqueOrThrow({ where: { id: before.id } })).commissionAmountMinor).toBe(1000);
+      expect(await entryFor(phones.id)).toMatchObject({ commissionAmountMinor: 2000 });
+      // Saving without categoryRates touches no category.
+      await save({ fixedCommissionMinor: 500 });
+      expect((await prisma.productCategory.findUniqueOrThrow({ where: { id: phones.id } })).agentCommissionMinor).toBe(2000);
     });
 
     it('creates no ledger entry for a deposit collected by a non-agent, or paid by any channel other than cash', async () => {

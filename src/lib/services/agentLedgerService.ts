@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
-import { getCommissionSettings } from './commissionSettingsService';
+import { commissionForContract } from './commissionSettingsService';
 
 export class AgentLedgerError extends Error {}
 
@@ -25,8 +25,9 @@ export async function recordAgentDepositIfApplicable(
   const agent = await tx.user.findUnique({ where: { id: params.agentId }, include: { role: true } });
   if (agent?.role.name !== 'AGENT') return;
 
-  const { fixedCommissionMinor } = await getCommissionSettings(tx);
-  const commissionAmountMinor = Math.min(fixedCommissionMinor, params.depositAmountMinor);
+  // By the kind of product sold (commissionSettingsService.commissionForContract).
+  const { commissionMinor, categoryName } = await commissionForContract(tx, params.contractId);
+  const commissionAmountMinor = Math.min(commissionMinor, params.depositAmountMinor);
   const amountOwedMinor = Math.max(0, params.depositAmountMinor - commissionAmountMinor);
 
   await tx.agentDepositLedger.create({
@@ -35,6 +36,7 @@ export async function recordAgentDepositIfApplicable(
       agentId: params.agentId,
       depositAmountMinor: params.depositAmountMinor,
       commissionAmountMinor,
+      commissionCategoryName: categoryName,
       amountOwedMinor,
       status: amountOwedMinor === 0 ? 'SETTLED' : 'OWED',
     },

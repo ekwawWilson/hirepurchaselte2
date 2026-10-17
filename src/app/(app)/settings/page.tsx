@@ -16,6 +16,7 @@ import { HubtelDiagnostics } from '@/components/settings/HubtelDiagnostics';
 import { CompanyLogo } from '@/components/CompanyLogo';
 import { AppIconCard } from '@/components/settings/AppIconCard';
 import { ControlsCard } from '@/components/settings/ControlsCard';
+import { AgentCommissionCard } from '@/components/settings/AgentCommissionCard';
 
 export default function SettingsPage() {
   const canManage = useAuthStore((s) => s.hasPermission('settings.manage'));
@@ -35,16 +36,9 @@ export default function SettingsPage() {
   const [contractTypes, setContractTypes] = useState({ saveToOwnEnabled: false, deviceLoanEnabled: false });
   const [contractTypesSaving, setContractTypesSaving] = useState(false);
 
-  // The Agent module: the fixed amount an agent keeps out of every cash
-  // deposit they collect (commissionSettingsService.ts).
-  const [commissionForm, setCommissionForm] = useState({ fixedCommission: '0' });
-  const [commissionSaving, setCommissionSaving] = useState(false);
 
   useEffect(() => {
     if (!canManage) return;
-    api.get<{ settings: { fixedCommissionMinor: number } }>('/settings/commission')
-      .then((r) => setCommissionForm({ fixedCommission: (r.settings.fixedCommissionMinor / 100).toString() }))
-      .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load commission settings', variant: 'destructive' }));
     api.get<{ settings: { saveToOwnEnabled: boolean; deviceLoanEnabled: boolean } }>('/settings/contract-types')
       .then((r) => setContractTypes({ saveToOwnEnabled: r.settings.saveToOwnEnabled, deviceLoanEnabled: r.settings.deviceLoanEnabled }))
       .catch((e) => toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load contract types', variant: 'destructive' }));
@@ -153,22 +147,7 @@ export default function SettingsPage() {
     }
   }
 
-  async function onSaveCommission(e: React.FormEvent) {
-    e.preventDefault();
-    setCommissionSaving(true);
-    try {
-      const fixedCommissionMinor = Math.round(parseFloat(commissionForm.fixedCommission) * 100);
-      await api.patch('/settings/commission', { fixedCommissionMinor });
-      toast({
-        title: 'Commission saved',
-        description: 'Applies to deposits agents collect from now on — already-recorded deposits keep the commission they were given at the time.',
-      });
-    } catch (e) {
-      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to save commission', variant: 'destructive' });
-    } finally {
-      setCommissionSaving(false);
-    }
-  }
+
 
   if (!canManage) {
     return (
@@ -386,28 +365,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle>Agent commission</CardTitle></CardHeader>
-        <CardContent>
-          <form className="grid grid-cols-2 gap-4" onSubmit={onSaveCommission}>
-            <div className="col-span-2">
-              <Label>Fixed commission per deposit (GHS)</Label>
-              <Input
-                required type="number" step="0.01" min="0" className="mt-1.5"
-                value={commissionForm.fixedCommission}
-                onChange={(e) => setCommissionForm({ fixedCommission: e.target.value })}
-              />
-              <p className="text-xs text-gray-400 mt-1">
-                What an agent keeps out of every cash deposit they collect from a customer — the rest is what they owe
-                the office. See Agent Ledger for who owes what.
-              </p>
-            </div>
-            <div className="col-span-2">
-              <Button type="submit" disabled={commissionSaving}>{commissionSaving ? 'Saving...' : 'Save commission'}</Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+      <AgentCommissionCard />
 
       <ControlsCard />
 

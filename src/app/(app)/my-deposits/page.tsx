@@ -29,6 +29,8 @@ interface LedgerEntry {
   id: string;
   depositAmountMinor: number;
   commissionAmountMinor: number;
+  /** The product category whose rate applied; null when the default did. */
+  commissionCategoryName: string | null;
   amountOwedMinor: number;
   amountRemittedMinor: number;
   status: string;
@@ -158,7 +160,7 @@ export default function MyDepositsPage() {
                       <Link href={`/contracts/${e.contract.id}`} className="font-mono text-xs text-blue-700 hover:underline">{e.contract.contractNumber}</Link>
                       <p className="text-sm font-medium text-gray-900 mt-0.5">{e.contract.customer.firstName} {e.contract.customer.lastName}</p>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        Collected {formatCurrency(e.depositAmountMinor)} &middot; Commission {formatCurrency(e.commissionAmountMinor)} &middot; Owed {formatCurrency(e.amountOwedMinor)}
+                        Collected {formatCurrency(e.depositAmountMinor)} &middot; Commission {formatCurrency(e.commissionAmountMinor)}{e.commissionCategoryName ? ` (${e.commissionCategoryName})` : ''} &middot; Owed {formatCurrency(e.amountOwedMinor)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">

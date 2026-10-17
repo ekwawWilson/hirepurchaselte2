@@ -183,6 +183,10 @@ model Customer {
 model ProductCategory {
   id   String @id @default(uuid())
   name String @unique
+  // What an AGENT keeps out of a cash deposit they collect on a product of
+  // this category (Settings > Agent commission). Null: the default amount in
+  // CommissionSettings applies. Snapshotted onto AgentDepositLedger.
+  agentCommissionMinor Int?
 
   products Product[]
 
@@ -850,8 +854,9 @@ model ContractTypeSettings {
 // Agent module (docs/01-plan.md's Agent role)
 // ---------------------------------------------------------------------------
 
-// The fixed amount an AGENT keeps out of every cash deposit they collect —
-// snapshotted onto AgentDepositLedger.commissionAmountMinor at the moment the
+// The default amount an AGENT keeps out of a cash deposit they collect, for a
+// product whose category has no amount of its own (ProductCategory.
+// agentCommissionMinor) — snapshotted onto AgentDepositLedger.commissionAmountMinor at the moment the
 // deposit is recorded, so a later change here never re-prices a deal already
 // settled (the same "snapshot, don't re-read" convention every other pricing
 // field on Contract follows). Singleton, edited from Settings > Commission.
@@ -882,6 +887,9 @@ model AgentDepositLedger {
   agentId              String
   depositAmountMinor   Int
   commissionAmountMinor Int
+  // The product category whose rate set commissionAmountMinor, as named at
+  // the time; null when the default amount applied.
+  commissionCategoryName String?
   // = depositAmountMinor - commissionAmountMinor, floored at 0. Stored (not
   // just derived) because it's the number every ledger/dashboard reads most
   // often; amountRemittedMinor below is what actually moves it toward SETTLED.
