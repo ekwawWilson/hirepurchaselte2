@@ -235,7 +235,7 @@ describe('USSD payments through Hubtel\'s checkout', () => {
     const { phone, sessionId } = await makeSaver({ firstName: 'Kɔfi', lastName: 'Ésí-Ɔbɛŋ' });
     let first: Record<string, string> = {};
     await withLiveHubtel(() => ({}), async () => { first = await dial(sessionId, phone, 'Initiation', '*713#'); });
-    expect(first.Message).toContain('Hi Kofi Esi-Oben');
+    expect(first.Message).toContain('Hi Kofi'); // the first name; the screen also stays plain text
     // Nothing outside plain ASCII and line breaks.
     expect(first.Message).toMatch(/^[\x20-\x7E\n]+$/);
   });

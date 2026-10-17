@@ -215,7 +215,7 @@ describe('Hubtel Direct Debit', () => {
     const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, label);
     const contract = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
-      totalPayableMinor: 120000, depositAmountMinor: 0, termWeeks: 6, paymentFrequency: 'WEEKLY',
+      totalPayableMinor: 120000, depositAmountMinor: 1, termWeeks: 6, paymentFrequency: 'WEEKLY',
       branchId, createdById: adminUserId,
       ...overrides,
     });
@@ -227,7 +227,7 @@ describe('Hubtel Direct Debit', () => {
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'NODD');
     await expect(createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId, branchId, createdById: adminUserId, paymentMethod: 'BOTH',
-      totalPayableMinor: 120000, depositAmountMinor: 0, termWeeks: 6,
+      totalPayableMinor: 120000, depositAmountMinor: 1, termWeeks: 6,
     })).rejects.toThrow(ContractError);
   });
 
@@ -466,7 +466,7 @@ describe('Hubtel Direct Debit', () => {
 
   it('a failed charge schedules a retry, which asks for half of it and never for more than is still due', async () => {
     // Six weekly instalments of GHS 100, the first of them due yesterday.
-    const { contract, customerId, msisdn } = await makeDepositInstalment('RETRY', { totalPayableMinor: 60000, depositAmountMinor: 0, termWeeks: 6 });
+    const { contract, customerId, msisdn } = await makeDepositInstalment('RETRY', { totalPayableMinor: 60000, depositAmountMinor: 1, termWeeks: 6 });
     // 0% deposit clears the gate immediately with any positive payment.
     await postPayment({ contractId: contract.id, amountMinor: 1, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
     await prisma.instalment.updateMany({ where: { contractId: contract.id, instalmentNo: 1 }, data: { dueDate: new Date(Date.now() - 24 * 60 * 60_000) } });
@@ -551,7 +551,7 @@ describe('Hubtel Direct Debit', () => {
     const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'BOTHDUE');
     const contract = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
-      totalPayableMinor: 120000, depositAmountMinor: 0, termWeeks: 6, paymentFrequency: 'WEEKLY',
+      totalPayableMinor: 120000, depositAmountMinor: 1, termWeeks: 6, paymentFrequency: 'WEEKLY',
       branchId, createdById: adminUserId,
       paymentMethod: 'BOTH', directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
     });
@@ -581,7 +581,7 @@ describe('Hubtel Direct Debit', () => {
     const { customerId, inventoryItemId, msisdn } = await makeCustomerAndItem(productId, 'BOTHOD');
     const contract = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
-      totalPayableMinor: 120000, depositAmountMinor: 0, termWeeks: 6, paymentFrequency: 'WEEKLY',
+      totalPayableMinor: 120000, depositAmountMinor: 1, termWeeks: 6, paymentFrequency: 'WEEKLY',
       branchId, createdById: adminUserId,
       paymentMethod: 'BOTH', directDebitNetwork: 'MTN', directDebitMsisdn: msisdn,
     });
@@ -683,7 +683,7 @@ describe('Hubtel Direct Debit', () => {
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'GRACEDEFAULT');
     const defaults = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
-      totalPayableMinor: 60000, depositAmountMinor: 0, termWeeks: 6, paymentFrequency: 'WEEKLY',
+      totalPayableMinor: 60000, depositAmountMinor: 1, termWeeks: 6, paymentFrequency: 'WEEKLY',
       branchId, createdById: adminUserId,
     });
     expect(defaults.gracePeriodDays).toBe(7);
@@ -693,7 +693,7 @@ describe('Hubtel Direct Debit', () => {
     const { customerId: customerId2, inventoryItemId: inventoryItemId2 } = await makeCustomerAndItem(productId2, 'GRACECUSTOM');
     const custom = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId: customerId2, inventoryItemId: inventoryItemId2,
-      totalPayableMinor: 60000, depositAmountMinor: 0, termWeeks: 6, paymentFrequency: 'WEEKLY',
+      totalPayableMinor: 60000, depositAmountMinor: 1, termWeeks: 6, paymentFrequency: 'WEEKLY',
       branchId, createdById: adminUserId,
       gracePeriodDays: 3, penaltyRateBps: 500, // 5%
     });
@@ -706,7 +706,7 @@ describe('Hubtel Direct Debit', () => {
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'PENALTY');
     const contract = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
-      totalPayableMinor: 60000, depositAmountMinor: 0, termWeeks: 6, paymentFrequency: 'WEEKLY',
+      totalPayableMinor: 60000, depositAmountMinor: 1, termWeeks: 6, paymentFrequency: 'WEEKLY',
       branchId, createdById: adminUserId,
       gracePeriodDays: 2, penaltyRateBps: 1000, // 10%
     });
@@ -736,7 +736,7 @@ describe('Hubtel Direct Debit', () => {
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'NOPENALTY');
     const contract = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId, inventoryItemId,
-      totalPayableMinor: 60000, depositAmountMinor: 0, termWeeks: 6, paymentFrequency: 'WEEKLY',
+      totalPayableMinor: 60000, depositAmountMinor: 1, termWeeks: 6, paymentFrequency: 'WEEKLY',
       branchId, createdById: adminUserId,
     });
     await postPayment({ contractId: contract.id, amountMinor: 1, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });

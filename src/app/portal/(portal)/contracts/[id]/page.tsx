@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { ArrowLeft, CreditCard } from 'lucide-react';
+import { ArrowLeft, CreditCard, FileText } from 'lucide-react';
 import { portalApi, ApiError } from '@/lib/portalApi';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, contractTypeLabel, formatDate, getStatusColor, cn } from '@/lib/utils';
@@ -13,6 +13,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import type { PortalContractDetail } from '@/lib/portalTypes';
 import { amountOwed, progressPercent, paymentLabel } from '@/lib/portalTypes';
 import { unitTitle } from '@/lib/unitLabel';
+import { isMoneyOut } from '@/lib/constants/contracts';
 
 export default function PortalContractDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -65,8 +66,21 @@ export default function PortalContractDetailPage() {
           {contract.inventoryItem?.description && <p className="text-sm text-gray-600 mt-0.5">{contract.inventoryItem.description}</p>}
           <p className="text-sm text-gray-500 mt-0.5 font-mono">{contract.contractNumber}</p>
         </div>
-        <Badge className={getStatusColor(contract.status)}>{contract.status.replace(/_/g, ' ')}</Badge>
+        <div className="flex items-center gap-2">
+          <Link href={`/portal/contracts/${contract.id}/statement`} className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50">
+            <FileText className="h-3.5 w-3.5" /> Statement
+          </Link>
+          <Badge className={getStatusColor(contract.status)}>{contract.status.replace(/_/g, ' ')}</Badge>
+        </div>
       </div>
+
+      {!isSavings && contract.totalPayableMinor !== null && contract.totalPaidMinor > contract.totalPayableMinor && (
+        <Card className="border-emerald-200 bg-emerald-50/60">
+          <CardContent className="p-4 text-sm text-emerald-800">
+            You have paid {formatCurrency(contract.totalPaidMinor - contract.totalPayableMinor)} more than this contract costs. Visit us to have it refunded.
+          </CardContent>
+        </Card>
+      )}
 
       {/* Headline figures, worded for the contract type in hand */}
       <Card>
@@ -158,9 +172,13 @@ export default function PortalContractDetailPage() {
                   <TableRow key={p.id}>
                     <TableCell>{p.receivedAt ? formatDate(p.receivedAt) : '—'}</TableCell>
                     <TableCell>{paymentLabel(p)}</TableCell>
-                    <TableCell className="font-mono text-xs text-gray-500">{p.receiptNumber ?? '—'}</TableCell>
-                    <TableCell className={cn('text-right font-medium', p.reversesPaymentId || p.entryType === 'WITHDRAWAL' ? 'text-red-500' : 'text-gray-900')}>
-                      {p.reversesPaymentId || p.entryType === 'WITHDRAWAL' ? '−' : ''}{formatCurrency(p.amountMinor)}
+                    <TableCell className="font-mono text-xs">
+                      {!p.reversesPaymentId
+                        ? <Link href={`/portal/contracts/${contract.id}/receipt/${p.id}`} className="text-primary hover:underline">{p.receiptNumber ?? 'Receipt'}</Link>
+                        : <span className="text-gray-500">{p.receiptNumber ?? '—'}</span>}
+                    </TableCell>
+                    <TableCell className={cn('text-right font-medium', p.reversesPaymentId || isMoneyOut(p.entryType) ? 'text-red-500' : 'text-gray-900')}>
+                      {p.reversesPaymentId || isMoneyOut(p.entryType) ? '−' : ''}{formatCurrency(p.amountMinor)}
                     </TableCell>
                   </TableRow>
                 ))}

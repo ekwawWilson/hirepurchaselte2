@@ -359,3 +359,14 @@ Supersedes the ledger description in §22. The ledger entry for an agent's contr
 - **A signed balance**: cash collected − commission − confirmed remittances + commission paid out. Positive is `OWED` (the agent pays in); negative is `DUE_TO_AGENT` (the office pays the agent, recorded as an `AgentCommissionPayout`); zero is `SETTLED`.
 - **Controls**: remittances and payouts are limited to approvers in the agent's branch; payouts also need `payment.cash.record`. Deactivating an agent, or moving them off the role, with money outstanding is refused until confirmed. An agent's unapproved Deposit + Instalment contract left untouched for 14 days is cancelled, returning its unit to stock (`expireStaleSubmissions`, daily).
 - **Visibility**: how long each agent has held cash, with an alert after `AGENT_CASH_HOLD_ALERT_DAYS` (3); agent submissions, remittances to confirm, contracts sent back and money owed either way in Needs attention; and the Agent performance report.
+
+---
+
+## 26. How money comes in (October 2026)
+
+- **Deposit first, then instalments.** While a Deposit + Instalment contract awaits its deposit, a payment — by any channel, however labelled — pays the deposit first, and whatever is left over is allocated to the instalments (`postPayment`). A payment that clears the deposit and the whole balance completes the contract at once.
+- **Limits before a payment starts** (`paymentLimitsService`): at least GHS 1, and never more than is owed now — the balance plus unpaid late-payment charges (`amountOwedNow`). Save to Own has no ceiling but one payment may be at most GHS 20,000. Applied at the counter, in USSD, in the portal and to staff prompts — never when recording money already collected, which is always posted, any excess showing as credit.
+- **Credit** (paid beyond what the contract costs, e.g. a late mobile money callback) is shown to staff and in the portal, and refunded with `postCreditRefund` (`CREDIT_REFUND`, money out like a withdrawal — `MONEY_OUT_ENTRY_TYPES`).
+- **Once only**: no second mobile money prompt to a phone while one sent in the last five minutes is unanswered (`waitingPromptProblem`); cash carries a reference per entry so a retry is recognised, and the same amount again within two minutes by the same person is asked about (`POSSIBLE_DUPLICATE`).
+- **USSD**: amounts are read strictly (`parseCedis`); every screen stays within 160 characters — first name only, short dates, contracts named by product and a long list split with 0 for more; a choice not on the list is asked again; 0 on the amount screen shows the last payments and what is owed, ending the session.
+- **Receipts and statements for customers**: every payment gets a receipt number, whatever the channel; the portal links each payment's receipt and the contract's statement, printable or saved as PDF (shared `components/documents`).

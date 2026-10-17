@@ -57,6 +57,7 @@ export interface PortalPayment {
   receiptNumber: string | null;
   receivedAt: string | null;
   reversesPaymentId: string | null;
+  reversedById?: string | null;
   contract?: { id: string; contractNumber: string; contractType: string };
 }
 
@@ -85,6 +86,7 @@ export function paymentLabel(payment: PortalPayment): string {
   switch (payment.entryType) {
     case 'DEPOSIT': return 'Deposit';
     case 'WITHDRAWAL': return 'Withdrawal';
+    case 'CREDIT_REFUND': return 'Refund of overpayment';
     case 'LOAN_INTEREST_PAYMENT': return 'Interest payment';
     case 'LOAN_PRINCIPAL_PAYMENT': return 'Loan repayment';
     default: return 'Payment';

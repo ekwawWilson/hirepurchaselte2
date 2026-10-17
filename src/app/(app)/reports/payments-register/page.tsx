@@ -10,6 +10,7 @@ import { StatTile } from '@/components/StatTile';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { formatCurrency, formatDateTime, getStatusColor } from '@/lib/utils';
+import { isMoneyOut } from '@/lib/constants/contracts';
 
 interface PaymentRow {
   id: string; entryType: string; amountMinor: number; channel: string; status: string;
@@ -45,7 +46,7 @@ export default function PaymentsRegisterReportPage() {
   // A WITHDRAWAL is cash paid back out to the customer, not received — it
   // subtracts from the total the same way it subtracts from a contract's
   // totalPaidMinor (paymentService.recomputeContract).
-  const totalMinor = successful.reduce((s, p) => s + (p.entryType === 'WITHDRAWAL' ? -p.amountMinor : p.amountMinor), 0);
+  const totalMinor = successful.reduce((s, p) => s + (isMoneyOut(p.entryType) ? -p.amountMinor : p.amountMinor), 0);
 
   return (
     <div className="space-y-5">
@@ -80,11 +81,11 @@ export default function PaymentsRegisterReportPage() {
                       <TableCell className="text-gray-500">{formatDateTime(p.createdAt)}</TableCell>
                       <TableCell className="font-mono text-xs">{p.contract.contractNumber}</TableCell>
                       <TableCell>
-                        {p.reversesPaymentId ? 'Reversal' : p.entryType === 'DEPOSIT' ? 'Deposit' : p.entryType === 'WITHDRAWAL' ? 'Withdrawal' : 'Instalment'}
+                        {p.reversesPaymentId ? 'Reversal' : p.entryType === 'DEPOSIT' ? 'Deposit' : p.entryType === 'WITHDRAWAL' ? 'Withdrawal' : p.entryType === 'CREDIT_REFUND' ? 'Refund of overpayment' : 'Instalment'}
                       </TableCell>
                       <TableCell>{p.channel}</TableCell>
-                      <TableCell className={p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? 'text-red-600' : undefined}>
-                        {p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? '-' : ''}{formatCurrency(p.amountMinor)}
+                      <TableCell className={isMoneyOut(p.entryType) && !p.reversesPaymentId ? 'text-red-600' : undefined}>
+                        {isMoneyOut(p.entryType) && !p.reversesPaymentId ? '-' : ''}{formatCurrency(p.amountMinor)}
                       </TableCell>
                       <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(p.status)}`}>{p.status}</span></TableCell>
                       <TableCell className="font-mono text-xs">{p.receiptNumber ?? '—'}</TableCell>

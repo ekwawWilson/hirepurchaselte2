@@ -4,6 +4,7 @@ import { queueSms, deliverQueuedSms } from './smsService';
 import { getControlSettings } from './controlSettingsService';
 import { sendOwnerSms } from './ownerNotificationService';
 import { dailyCashReceivedReport, arrearsAgeingReport } from './reportService';
+import { MONEY_OUT_ENTRY_TYPES } from '../constants/contracts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const startOfDay = (d: Date) => new Date(new Date(d).setHours(0, 0, 0, 0));
@@ -56,7 +57,7 @@ export async function ownerDailySummary(now: Date = new Date()) {
   const [cash, arrears, received, newContracts, needsReview, approvalsWaiting, openAlerts] = await Promise.all([
     dailyCashReceivedReport({}),
     arrearsAgeingReport({}),
-    prisma.payment.count({ where: { status: 'SUCCESS', createdAt: { gte: today }, reversesPaymentId: null, entryType: { not: 'WITHDRAWAL' } } }),
+    prisma.payment.count({ where: { status: 'SUCCESS', createdAt: { gte: today }, reversesPaymentId: null, entryType: { notIn: MONEY_OUT_ENTRY_TYPES } } }),
     prisma.contract.count({ where: { createdAt: { gte: today } } }),
     prisma.hubtelTransaction.count({ where: { status: 'NEEDS_REVIEW', resolvedAt: null } }),
     prisma.approvalRequest.count({ where: { status: 'PENDING' } }),

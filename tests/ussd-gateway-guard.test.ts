@@ -57,7 +57,7 @@ describe('USSD gateway guard', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({ Type: 'response', DataType: 'input' });
-    expect(body.Message).toContain('Hi Private Person');
+    expect(body.Message).toContain('Hi Private');
 
     const guess = await ussdByPathPOST(makeRequest('POST', '/api/ussd/guess', { body: dial() }), makeParams({ token: 'guess' }));
     expect(guess.status).toBe(404);

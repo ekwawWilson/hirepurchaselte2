@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, Loader2, Receipt } from 'lucide-react';
@@ -15,6 +16,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import type { PortalContract, PortalPayment } from '@/lib/portalTypes';
 import { amountOwed, paymentLabel } from '@/lib/portalTypes';
+import { isMoneyOut } from '@/lib/constants/contracts';
 
 // How often to ask whether a charge has been approved on the customer's phone.
 const POLL_INTERVAL_MS = 3000;
@@ -276,9 +278,14 @@ function PaymentsContent() {
                     <TableCell>{p.receivedAt ? formatDate(p.receivedAt) : '—'}</TableCell>
                     <TableCell className="font-mono text-xs">{p.contract?.contractNumber}</TableCell>
                     <TableCell>{paymentLabel(p)}</TableCell>
-                    <TableCell className="text-gray-500">{p.channel === 'CASH' ? 'Cash' : p.channel === 'USSD' ? 'Mobile money' : 'Direct debit'}</TableCell>
-                    <TableCell className={cn('text-right font-medium', p.reversesPaymentId || p.entryType === 'WITHDRAWAL' ? 'text-red-500' : 'text-gray-900')}>
-                      {p.reversesPaymentId || p.entryType === 'WITHDRAWAL' ? '−' : ''}{formatCurrency(p.amountMinor)}
+                    <TableCell className="text-gray-500">
+                      {p.channel === 'CASH' ? 'Cash' : p.channel === 'USSD' ? 'Mobile money' : p.channel === 'DIRECT_DEBIT' ? 'Direct debit' : 'Transfer'}
+                      {p.contract && !p.reversesPaymentId && (
+                        <Link href={`/portal/contracts/${p.contract.id}/receipt/${p.id}`} className="ml-2 text-xs text-primary hover:underline">Receipt</Link>
+                      )}
+                    </TableCell>
+                    <TableCell className={cn('text-right font-medium', p.reversesPaymentId || isMoneyOut(p.entryType) ? 'text-red-500' : 'text-gray-900')}>
+                      {p.reversesPaymentId || isMoneyOut(p.entryType) ? '−' : ''}{formatCurrency(p.amountMinor)}
                     </TableCell>
                   </TableRow>
                 ))}

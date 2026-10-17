@@ -106,10 +106,23 @@ export async function portalContract(customerId: string, contractId: string) {
       product: { select: { name: true } },
       inventoryItem: { select: { serialNumber: true, name: true, description: true } },
       instalments: { orderBy: { instalmentNo: 'asc' } },
+      // Enough for the customer's own printable statement and receipts — the
+      // same documents staff print (components/documents).
+      customer: {
+        select: {
+          firstName: true, lastName: true, membershipId: true, phone: true, phone2: true, phone3: true,
+          address: true, occupation: true, workAddress: true, nationalId: true, guarantorName: true, guarantorPhone: true,
+        },
+      },
+      branch: { select: { name: true, address: true, phone: true } },
       payments: {
         where: { status: 'SUCCESS' },
         orderBy: { receivedAt: 'desc' },
-        select: { id: true, entryType: true, amountMinor: true, channel: true, receiptNumber: true, receivedAt: true, reversesPaymentId: true },
+        select: {
+          id: true, entryType: true, amountMinor: true, channel: true, status: true, receiptNumber: true, transactionRef: true, notes: true,
+          mobileMoneyNetwork: true, receivedAt: true, createdAt: true, reversesPaymentId: true, reversedById: true,
+          createdBy: { select: { firstName: true, lastName: true } },
+        },
       },
     },
   });

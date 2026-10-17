@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { generateTransactionRef, generateReceiptNumber } from '../utils/idGenerators';
-import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES, defaultCutoffDate } from '../constants/contracts';
+import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES, defaultCutoffDate, isMoneyOut } from '../constants/contracts';
 import { syncAgentLedger } from './agentLedgerService';
 import { applyStockMovement } from './inventoryService';
 import { queueSms, deliverQueuedSms } from './smsService';
@@ -50,7 +50,7 @@ async function recomputeContract(tx: Tx, contractId: string) {
   // unchanged) simply drops it from effectivePayments, restoring the amount —
   // no separate "undo a withdrawal" logic needed.
   const totalPaidMinor = effectivePayments.reduce(
-    (sum, p) => sum + (p.entryType === 'WITHDRAWAL' ? -p.amountMinor : p.amountMinor),
+    (sum, p) => sum + (isMoneyOut(p.entryType) ? -p.amountMinor : p.amountMinor),
     0,
   );
 
@@ -143,6 +143,13 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<Advanc
       // re-initiate a mandate that's already attached, which would fire a
       // second Hubtel prompt at the customer for one that's already PENDING
       // approval or already APPROVED.
+      // Paid in full in the same payment that cleared the deposit — a customer
+      // paying the whole price at once: complete it now, not on some later
+      // payment that will never come, and ask for no mandate.
+      if (contract.balanceMinor !== null && contract.balanceMinor <= 0) {
+        await tx.contract.update({ where: { id: contractId }, data: { status: 'COMPLETED', completedAt: now } });
+        return { queuedSmsIds };
+      }
       const pendingDirectDebit = (!contract.hubtelPreapprovalId && contract.pendingDirectDebitNetwork && contract.pendingDirectDebitMsisdn)
         ? {
             contractId, customerId: contract.customerId,
@@ -298,17 +305,28 @@ export async function postPayment(params: PostPaymentParams) {
       throw new PaymentError('Deposit has already been satisfied — post further payments as INSTALMENT_PAYMENT');
     }
 
+    // While the deposit is still owed, money goes to it first and only what
+    // is left over goes onto the instalments — however the payment was
+    // labelled. Otherwise a customer who pays more than the deposit is shown
+    // with every instalment unpaid (and is chased as overdue) while their
+    // balance says they are ahead.
+    const awaitingDeposit = contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT';
+    const entryType = awaitingDeposit ? 'DEPOSIT' : params.entryType;
+    const scheduleShareMinor = awaitingDeposit
+      ? Math.max(0, params.amountMinor - Math.max(0, contract.depositAmountMinor - contract.totalPaidMinor))
+      : entryType === 'INSTALMENT_PAYMENT' && contract.contractType !== 'SAVE_TO_OWN' ? params.amountMinor : 0;
+
     const payment = await tx.payment.create({
       data: {
         contractId: contract.id,
-        entryType: params.entryType,
+        entryType,
         amountMinor: params.amountMinor,
         channel: params.channel,
         mobileMoneyNetwork: params.mobileMoneyNetwork,
         transactionRef,
         externalRef: params.externalRef,
         status: 'SUCCESS',
-        receiptNumber: params.channel === 'CASH' ? generateReceiptNumber() : undefined,
+        receiptNumber: generateReceiptNumber(), // every payment gets one, whatever the channel — the customer's receipt quotes it
         notes: params.notes,
         rawGatewayPayload: params.rawGatewayPayload,
         createdById: params.createdById,
@@ -322,8 +340,8 @@ export async function postPayment(params: PostPaymentParams) {
     // any amount, any time, toward totalPayableMinor) — totalPaidMinor/balanceMinor
     // below are computed straight from the payments ledger regardless, so skipping
     // allocation here doesn't affect correctness, just avoids a pointless no-op query.
-    if (params.entryType === 'INSTALMENT_PAYMENT' && contract.contractType !== 'SAVE_TO_OWN') {
-      await allocatePayment(tx, payment.id, contract.id, payment.amountMinor);
+    if (scheduleShareMinor > 0) {
+      await allocatePayment(tx, payment.id, contract.id, scheduleShareMinor);
     }
 
     await recomputeContract(tx, contract.id);
@@ -423,6 +441,52 @@ export async function postWithdrawal(params: PostWithdrawalParams) {
       },
     });
 
+    await recomputeContract(tx, contract.id);
+    return payment;
+  });
+}
+
+/**
+ * The most a payment may be for right now: what is still owed, late-payment
+ * charges included (they are paid first — allocatePayment). Null where there
+ * is no ceiling: Save to Own takes any amount. Asked before a payment is
+ * started, never when a collected one is being recorded — money already
+ * taken from a customer is always posted, with any excess shown as credit.
+ */
+export async function amountOwedNow(contractId: string, db: Db = prisma): Promise<number | null> {
+  const contract = await db.contract.findUniqueOrThrow({ where: { id: contractId } });
+  if (contract.contractType === 'SAVE_TO_OWN') return null;
+  if (contract.contractType === 'DEVICE_LOAN') return (await getDeviceLoanState(contractId, db)).totalOwedMinor;
+  const charges = await db.penalty.aggregate({ where: { contractId, isPaid: false }, _sum: { amountMinor: true } });
+  return Math.max(0, contract.balanceMinor ?? 0) + (charges._sum.amountMinor ?? 0);
+}
+
+/** Money paid beyond what a contract costs — a late callback, or a payment made before limits applied. */
+export function creditOf(contract: { totalPaidMinor: number; totalPayableMinor: number | null; contractType: string }): number {
+  if (contract.contractType === 'SAVE_TO_OWN' || contract.totalPayableMinor === null) return 0;
+  return Math.max(0, contract.totalPaidMinor - contract.totalPayableMinor);
+}
+
+/**
+ * Hands overpaid credit back to the customer — in cash at the counter, or by
+ * a mobile money transfer made outside this app. Recorded as a CREDIT_REFUND
+ * entry that subtracts like a withdrawal, never more than the credit.
+ */
+export async function postCreditRefund(params: { contractId: string; amountMinor: number; method: 'CASH' | 'MOBILE_MONEY'; notes?: string; createdById: string }) {
+  if (!Number.isInteger(params.amountMinor) || params.amountMinor <= 0) throw new PaymentError('amountMinor must be positive');
+  return prisma.$transaction(async (tx) => {
+    const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+    const credit = creditOf(contract);
+    if (credit <= 0) throw new PaymentError('This contract has no credit to refund');
+    if (params.amountMinor > credit) throw new PaymentError(`At most GHS ${(credit / 100).toFixed(2)} can be refunded — the credit on this contract`);
+    const payment = await tx.payment.create({
+      data: {
+        contractId: contract.id, entryType: 'CREDIT_REFUND', amountMinor: params.amountMinor,
+        channel: params.method === 'CASH' ? 'CASH' : 'MOBILE_MONEY_TRANSFER',
+        transactionRef: generateTransactionRef(), status: 'SUCCESS', receiptNumber: generateReceiptNumber(),
+        notes: params.notes?.trim() || null, createdById: params.createdById, receivedAt: new Date(),
+      },
+    });
     await recomputeContract(tx, contract.id);
     return payment;
   });
@@ -569,7 +633,7 @@ export async function postDeviceLoanPayment(params: PostDeviceLoanPaymentParams)
         channel: params.channel,
         transactionRef,
         status: 'SUCCESS',
-        receiptNumber: params.channel === 'CASH' ? generateReceiptNumber() : undefined,
+        receiptNumber: generateReceiptNumber(), // every payment gets one, whatever the channel — the customer's receipt quotes it
         rawGatewayPayload: params.rawGatewayPayload,
         createdById: params.createdById,
         initiatedByCustomerId: params.initiatedByCustomerId,

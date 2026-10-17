@@ -8,11 +8,15 @@ import { assertPaymentsAcceptedToday, PaymentsClosedError } from './operatingSet
 import { contractTypeLabel, formatDate } from '../utils';
 import { phoneVariants } from './hubtelClient';
 import { beginUssdCheckout, ussdUsesHubtelCheckout } from './ussdCheckoutService';
+import { parseCedis, paymentAmountProblem, waitingPromptProblem } from './paymentLimitsService';
+import { MONEY_OUT_ENTRY_TYPES } from '../constants/contracts';
 
 const SESSION_TTL_MINUTES = 5;
 
 interface UssdContext {
   contractIds?: string[];
+  /** Which page of the contract list is showing (a long list is split to fit a screen). */
+  page?: number;
   contractId?: string;
   amountMinor?: number;
 }
@@ -92,17 +96,34 @@ function nextStateFor(contractType: string): 'DEVICE_LOAN_CHOOSE' | 'ENTER_AMOUN
  * case here (overdue, six-figure amounts, an unusually long company/customer
  * name) still lands well under that.
  */
+/**
+ * What fits on one USSD screen. Networks cut a screen at about 160-182
+ * characters; staying within 160 leaves no screen at risk of being cut off
+ * or rejected.
+ */
+export const USSD_SCREEN_LIMIT = 160;
+
+/** The opening lines of every screen: who is asking, kept short whatever the names are. */
+async function greeting(customerName: string): Promise<string> {
+  const { companyName } = await getOrgSettings();
+  const company = companyName.length > 22 ? `${companyName.slice(0, 21).trimEnd()}.` : companyName;
+  const firstName = customerName.trim().split(/\s+/)[0].slice(0, 15);
+  return `${company}\nHi ${firstName}\n`;
+}
+
+/** dd/mm — the year is never in doubt on a screen about what is due now. */
+const shortDate = (d: Date) => formatDate(d).slice(0, 5);
+
 async function contractPrompt(contract: {
   id: string;
   contractType: string;
   balanceMinor: number | null;
   totalPaidMinor: number;
 }, customerName: string): Promise<string> {
-  const { companyName } = await getOrgSettings();
-  const greeting = `${companyName}\nHi ${customerName}\n`;
+  const hello = await greeting(customerName);
 
   if (contract.contractType === 'SAVE_TO_OWN') {
-    return `${greeting}Total paid: GHS${formatMoney(contract.totalPaidMinor)}\nEnter amount to pay:`;
+    return `${hello}Saved GHS${formatMoney(contract.totalPaidMinor)}\n0. Last payments\nEnter amount to pay:`;
   }
 
   if (contract.contractType === 'DEVICE_LOAN') {
@@ -110,7 +131,7 @@ async function contractPrompt(contract: {
     const options: string[] = [];
     if (state.accruedInterestMinor > 0) options.push(`1. Pay interest GHS${formatMoney(state.accruedInterestMinor)}`);
     if (state.principalOutstanding) options.push(`2. Pay full loan GHS${formatMoney(state.principalMinor)}`);
-    return `${greeting}${options.join('\n')}\nReply with option:`;
+    return `${hello}${options.join('\n')}\n0. Last payments\nReply with option:`;
   }
 
   const [due, upcoming] = await prisma.instalment.findMany({
@@ -121,17 +142,75 @@ async function contractPrompt(contract: {
 
   // Never actually null here — DEVICE_LOAN/SAVE_TO_OWN both return above —
   // but the type is shared, so this stays defensive rather than asserted.
-  const paidLine = `Paid GHS${formatMoney(contract.totalPaidMinor)}  Bal GHS${formatMoney(contract.balanceMinor ?? 0)}`;
+  const paidLine = `Paid GHS${formatMoney(contract.totalPaidMinor)} Bal GHS${formatMoney(contract.balanceMinor ?? 0)}`;
   let dueLine = '';
   if (due) {
     const dueAmount = due.amountDueMinor - due.amountPaidMinor;
     dueLine = due.status === 'OVERDUE'
-      ? `OVERDUE GHS${formatMoney(dueAmount)} (due ${formatDate(due.dueDate)})` +
-        (upcoming ? `\nNext GHS${formatMoney(upcoming.amountDueMinor - upcoming.amountPaidMinor)} on ${formatDate(upcoming.dueDate)}` : '')
-      : `Due GHS${formatMoney(dueAmount)} on ${formatDate(due.dueDate)}`;
+      ? `OVERDUE GHS${formatMoney(dueAmount)} since ${shortDate(due.dueDate)}` +
+        (upcoming ? `\nNext GHS${formatMoney(upcoming.amountDueMinor - upcoming.amountPaidMinor)} on ${shortDate(upcoming.dueDate)}` : '')
+      : `Due GHS${formatMoney(dueAmount)} on ${shortDate(due.dueDate)}`;
   }
 
-  return `${greeting}${paidLine}${dueLine ? `\n${dueLine}` : ''}\nEnter amount to pay:`;
+  return `${hello}${paidLine}${dueLine ? `\n${dueLine}` : ''}\n0. Last payments\nEnter amount to pay:`;
+}
+
+type ListedContract = { id: string; contractType: string; totalPaidMinor: number; balanceMinor: number | null; product: { name: string } | null };
+
+/**
+ * The "which contract?" screen. Each line names what the customer knows —
+ * the phone they are paying for, or their savings or loan — not a contract
+ * number. A list too long for one screen is split, with 0 for the next part;
+ * the numbers stay the same on every part, so a choice means one thing.
+ */
+async function contractListScreen(contracts: ListedContract[], customerName: string, page: number, notice = ''): Promise<{ message: string; page: number }> {
+  const lines = await Promise.all(contracts.map(async (c, i) => {
+    const what = (c.product?.name ?? (c.contractType === 'SAVE_TO_OWN' ? 'Savings' : c.contractType === 'DEVICE_LOAN' ? 'Loan' : contractTypeLabel(c.contractType))).slice(0, 16);
+    const amount = c.contractType === 'SAVE_TO_OWN'
+      ? `saved GHS${formatMoney(c.totalPaidMinor)}`
+      : c.contractType === 'DEVICE_LOAN'
+        ? `owe GHS${formatMoney((await getDeviceLoanState(c.id)).totalOwedMinor)}`
+        : `bal GHS${formatMoney(c.balanceMinor ?? 0)}`;
+    return `${i + 1}. ${what} ${amount}`;
+  }));
+  const head = `${notice}${await greeting(customerName)}Choose:`;
+  const more = '0. More';
+  const pages: string[][] = [[]];
+  for (const line of lines) {
+    const current = pages[pages.length - 1];
+    const candidate = [head, ...current, line, more].join('\n');
+    if (current.length > 0 && candidate.length > USSD_SCREEN_LIMIT) pages.push([line]);
+    else current.push(line);
+  }
+  const shown = ((page % pages.length) + pages.length) % pages.length;
+  const body = [head, ...pages[shown], ...(pages.length > 1 ? [more] : [])].join('\n');
+  return { message: body, page: shown };
+}
+
+const listedContractSelect = { id: true, contractType: true, totalPaidMinor: true, balanceMinor: true, product: { select: { name: true } } } as const;
+
+/**
+ * The customer's last few payments and what they owe — the "check my
+ * balance" a customer gets by replying 0, without paying anything. Ends the
+ * session.
+ */
+async function lastPaymentsScreen(contractId: string): Promise<UssdResult> {
+  const contract = await prisma.contract.findUniqueOrThrow({ where: { id: contractId }, select: { contractType: true, totalPaidMinor: true, balanceMinor: true, id: true } });
+  const payments = await prisma.payment.findMany({
+    where: { contractId, status: 'SUCCESS', reversesPaymentId: null, reversedById: null, entryType: { notIn: MONEY_OUT_ENTRY_TYPES } },
+    orderBy: { createdAt: 'desc' }, take: 3, select: { amountMinor: true, receivedAt: true, createdAt: true },
+  });
+  const lines = payments.map((p) => `${shortDate(p.receivedAt ?? p.createdAt)} GHS${formatMoney(p.amountMinor)}`);
+  const standing = contract.contractType === 'SAVE_TO_OWN'
+    ? `Saved GHS${formatMoney(contract.totalPaidMinor)}`
+    : contract.contractType === 'DEVICE_LOAN'
+      ? `Owed GHS${formatMoney((await getDeviceLoanState(contract.id)).totalOwedMinor)}`
+      : `Paid GHS${formatMoney(contract.totalPaidMinor)} Bal GHS${formatMoney(contract.balanceMinor ?? 0)}`;
+  return {
+    message: `${payments.length ? `Last payments:\n${lines.join('\n')}` : 'No payments yet.'}\n${standing}`,
+    continueSession: false,
+    label: 'Last payments',
+  };
 }
 
 /**
@@ -157,6 +236,7 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
       OR: [{ contractType: { in: ['SAVE_TO_OWN', 'DEVICE_LOAN'] } }, { balanceMinor: { gt: 0 } }],
     },
     orderBy: { createdAt: 'asc' },
+    select: listedContractSelect,
   });
   if (contracts.length === 0) {
     await prisma.ussdSession.deleteMany({ where: { sessionId } }); // no-op if no row exists yet (fresh dial-in)
@@ -166,22 +246,14 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
   const expiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60_000);
 
   if (contracts.length > 1) {
-    const context: UssdContext = { contractIds: contracts.map((c) => c.id) };
+    const screen = await contractListScreen(contracts, customerName, 0);
+    const context: UssdContext = { contractIds: contracts.map((c) => c.id), page: screen.page };
     await prisma.ussdSession.upsert({
       where: { sessionId },
       create: { sessionId, msisdn: dialedMsisdn, state: 'SELECT_CONTRACT', context: JSON.stringify(context), expiresAt },
       update: { state: 'SELECT_CONTRACT', contractId: null, context: JSON.stringify(context), expiresAt },
     });
-    const lines = await Promise.all(contracts.map(async (c, i) => {
-      const amountLabel = c.contractType === 'SAVE_TO_OWN'
-        ? `Saved GHS${formatMoney(c.totalPaidMinor)}`
-        : c.contractType === 'DEVICE_LOAN'
-          ? `Owed GHS${formatMoney((await getDeviceLoanState(c.id)).totalOwedMinor)}`
-          : `Bal GHS${formatMoney(c.balanceMinor ?? 0)}`;
-      return `${i + 1}. ${c.contractNumber} (${contractTypeLabel(c.contractType)}) ${amountLabel}`;
-    }));
-    const { companyName } = await getOrgSettings();
-    return { message: `${companyName}\nHi ${customerName}\nSelect a contract:\n${lines.join('\n')}`, continueSession: true, label: 'Select contract', fieldType: 'number' };
+    return { message: screen.message, continueSession: true, label: 'Select contract', fieldType: 'number' };
   }
 
   const contract = contracts[0];
@@ -286,11 +358,18 @@ export async function handleUssdInput(params: {
     }
 
     case 'SELECT_CONTRACT': {
-      const idx = parseInt(params.input, 10) - 1;
       const contractIds = context.contractIds ?? [];
-      if (Number.isNaN(idx) || idx < 0 || idx >= contractIds.length) {
-        await endSession(existing.id);
-        return { message: 'Invalid selection. Session ended.', continueSession: false, label: 'Invalid selection' };
+      const choice = params.input.trim();
+      const idx = /^\d+$/.test(choice) ? parseInt(choice, 10) - 1 : NaN;
+      if (choice === '0' || Number.isNaN(idx) || idx < 0 || idx >= contractIds.length) {
+        // 0 shows the next part of a long list; anything else that is not on
+        // the list is asked again, not the end of the session.
+        const listed = await prisma.contract.findMany({ where: { id: { in: contractIds } }, select: { ...listedContractSelect, customer: { select: { firstName: true, lastName: true } } } });
+        const ordered = contractIds.map((id) => listed.find((c) => c.id === id)!).filter(Boolean);
+        const name = ordered[0] ? `${ordered[0].customer.firstName} ${ordered[0].customer.lastName}` : '';
+        const screen = await contractListScreen(ordered, name, choice === '0' ? (context.page ?? 0) + 1 : context.page ?? 0, choice === '0' ? '' : 'Not on the list.\n');
+        await prisma.ussdSession.update({ where: { id: existing.id }, data: { context: JSON.stringify({ ...context, page: screen.page }) } });
+        return { message: screen.message, continueSession: true, label: 'Select contract', fieldType: 'number' };
       }
       const contract = await prisma.contract.findUniqueOrThrow({ where: { id: contractIds[idx] }, include: { customer: true } });
       const nextState = nextStateFor(contract.contractType);
@@ -311,15 +390,19 @@ export async function handleUssdInput(params: {
       // Recomputed fresh, never trusted from the earlier prompt — a day's
       // interest could have accrued (or the loan could have been paid off
       // some other way) in the time it took the customer to reply.
-      const state = await getDeviceLoanState(contractId);
       const choice = params.input.trim();
+      if (choice === '0') {
+        await endSession(existing.id);
+        return lastPaymentsScreen(contractId);
+      }
+      const state = await getDeviceLoanState(contractId);
       let amountMinor = 0;
       if (choice === '1' && state.accruedInterestMinor > 0) {
         amountMinor = state.accruedInterestMinor;
       } else if (choice === '2' && state.principalOutstanding) {
         amountMinor = state.principalMinor;
       } else {
-        return { message: 'Invalid option. Reply with option:', continueSession: true, label: 'Choose option', fieldType: 'number' };
+        return { message: 'Not an option. Reply 1, 2, or 0 for your last payments:', continueSession: true, label: 'Choose option', fieldType: 'number' };
       }
       await prisma.ussdSession.update({
         where: { id: existing.id },
@@ -334,12 +417,21 @@ export async function handleUssdInput(params: {
     }
 
     case 'ENTER_AMOUNT': {
-      const amountGhs = parseFloat(params.input);
-      if (Number.isNaN(amountGhs) || amountGhs <= 0) {
-        return { message: 'Invalid amount. Enter amount to pay:', continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
-      }
-      const amountMinor = Math.round(amountGhs * 100);
       const contractId = context.contractId as string;
+      if (params.input.trim() === '0') {
+        await endSession(existing.id);
+        return lastPaymentsScreen(contractId);
+      }
+      // Plainly a number in cedis, at least the minimum and no more than is
+      // owed — anything else is explained and asked again (paymentLimitsService).
+      const amountMinor = parseCedis(params.input);
+      if (amountMinor === null) {
+        return { message: 'Enter the amount in cedis, e.g. 50 or 50.50:', continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+      }
+      const problem = await paymentAmountProblem(contractId, amountMinor);
+      if (problem) {
+        return { message: `${problem}.\nEnter amount to pay:`, continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+      }
       await prisma.ussdSession.update({
         where: { id: existing.id },
         data: { state: 'CONFIRM', context: JSON.stringify({ contractId, amountMinor }) },
@@ -376,6 +468,10 @@ export async function handleUssdInput(params: {
         }
         throw e;
       }
+      // A prompt this phone has not answered yet: a second one could be approved too.
+      const waiting = await waitingPromptProblem(contractId, params.msisdn);
+      if (waiting) return { message: 'A payment request is already waiting on your phone. Approve or decline it first, or try again in a few minutes.', continueSession: false, label: 'Request already waiting' };
+
       if (ussdUsesHubtelCheckout()) {
         // Hubtel's own checkout takes the money from here (ussdCheckoutService.ts):
         // nothing is charged by this server, and the payment is posted when

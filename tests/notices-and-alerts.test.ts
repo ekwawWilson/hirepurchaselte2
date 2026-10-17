@@ -72,7 +72,7 @@ describe('Notices, summaries and alerts', () => {
     const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `NTC-SN-${runId}-${counter}` } });
     const contract = await createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId: customer.id, inventoryItemId: item.id,
-      totalPayableMinor: 60000, depositAmountMinor: 0, termWeeks: 6, paymentFrequency: 'WEEKLY', branchId, createdById: adminUserId,
+      totalPayableMinor: 60000, depositAmountMinor: 1, termWeeks: 6, paymentFrequency: 'WEEKLY', branchId, createdById: adminUserId,
     });
     await postPayment({ contractId: contract.id, amountMinor: 1, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminUserId });
     if (paymentMethod === 'DIRECT_DEBIT') {

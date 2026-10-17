@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { contractSearchWhere } from '../utils/search';
+import { MONEY_OUT_ENTRY_TYPES } from '../constants/contracts';
 
 export class FollowUpError extends Error {}
 
@@ -62,7 +63,7 @@ export async function listCollectionsQueue(params: { scope: Scope; filter?: Coll
       penalties: { where: { isPaid: false }, select: { amountMinor: true, appliedDate: true } },
       collectionNotes: { orderBy: { createdAt: 'desc' }, take: 1, include: { createdBy: { select: { firstName: true, lastName: true } } } },
       payments: {
-        where: { status: 'SUCCESS', reversesPaymentId: null, reversedById: null, entryType: { not: 'WITHDRAWAL' } },
+        where: { status: 'SUCCESS', reversesPaymentId: null, reversedById: null, entryType: { notIn: MONEY_OUT_ENTRY_TYPES } },
         orderBy: { createdAt: 'desc' }, take: 20, select: { amountMinor: true, receivedAt: true, createdAt: true },
       },
     },
@@ -125,7 +126,7 @@ export async function listCollectionNotes(contractId: string) {
       include: { createdBy: { select: { firstName: true, lastName: true } } },
     }),
     prisma.payment.findMany({
-      where: { contractId, status: 'SUCCESS', reversesPaymentId: null, reversedById: null, entryType: { not: 'WITHDRAWAL' } },
+      where: { contractId, status: 'SUCCESS', reversesPaymentId: null, reversedById: null, entryType: { notIn: MONEY_OUT_ENTRY_TYPES } },
       select: { amountMinor: true, receivedAt: true, createdAt: true },
     }),
   ]);

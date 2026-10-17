@@ -42,9 +42,9 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen flex bg-[#f5f0eb]">
+    <div data-print-shell className="min-h-screen flex bg-[#f5f0eb]">
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-60 shrink-0 flex-col bg-slate-900">
+      <aside className="hidden lg:flex w-60 shrink-0 flex-col bg-slate-900 print:hidden">
         <div className="h-14 flex items-center gap-2.5 px-4 border-b border-slate-800 shrink-0">
           <CompanyLogo
             logoUrl={logoUrl}
@@ -98,8 +98,8 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Mobile top bar */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="lg:hidden h-14 flex items-center justify-between gap-3 px-4 bg-white border-b border-gray-200">
+      <div data-print-flow className="flex-1 flex flex-col min-w-0">
+        <header className="lg:hidden print:hidden h-14 flex items-center justify-between gap-3 px-4 bg-white border-b border-gray-200">
           <div className="flex items-center gap-2.5 min-w-0">
             <CompanyLogo
               logoUrl={logoUrl}
@@ -122,13 +122,13 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* pb-20 leaves room for the bottom tab bar */}
-        <main className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8 pb-20 lg:pb-8">
+        <main data-print-flow className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8 pb-20 lg:pb-8 print:p-0">
           <div className="mx-auto w-full max-w-5xl">{children}</div>
         </main>
       </div>
 
       {/* Mobile bottom tabs */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200">
+      <nav className="lg:hidden print:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200">
         <div className="flex items-stretch h-16">
           {NAV.map((tab) => {
             const active = isActive(pathname, tab.href);

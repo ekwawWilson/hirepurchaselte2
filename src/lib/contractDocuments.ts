@@ -26,9 +26,9 @@ export interface DocContract {
 
 export const ENTRY_LABELS: Record<string, string> = {
   DEPOSIT: 'Deposit', INSTALMENT_PAYMENT: 'Payment', WITHDRAWAL: 'Withdrawal',
-  LOAN_INTEREST_PAYMENT: 'Loan interest', LOAN_PRINCIPAL_PAYMENT: 'Loan repayment', CREDIT: 'Credit',
+  LOAN_INTEREST_PAYMENT: 'Loan interest', LOAN_PRINCIPAL_PAYMENT: 'Loan repayment', CREDIT: 'Credit', CREDIT_REFUND: 'Refund of overpayment',
 };
-export const CHANNEL_LABELS: Record<string, string> = { CASH: 'Cash', USSD: 'Mobile money', DIRECT_DEBIT: 'Direct debit' };
+export const CHANNEL_LABELS: Record<string, string> = { CASH: 'Cash', USSD: 'Mobile money', DIRECT_DEBIT: 'Direct debit', MOBILE_MONEY_TRANSFER: 'Mobile money transfer' };
 
 export const customerPhone = (c: DocContract['customer']) => c.phone ?? c.phone2 ?? c.phone3;
 

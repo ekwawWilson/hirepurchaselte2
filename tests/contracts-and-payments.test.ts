@@ -12,6 +12,8 @@ import { POST as contractsPOST } from '@/app/api/contracts/route';
 import { GET as contractGET } from '@/app/api/contracts/[id]/route';
 import { POST as contractReleasePOST } from '@/app/api/contracts/[id]/release/route';
 import { POST as paymentsCashPOST } from '@/app/api/payments/cash/route';
+import { postPayment } from '@/lib/services/paymentService';
+import { POST as refundCreditPOST } from '@/app/api/contracts/[id]/refund-credit/route';
 import { POST as deviceLoanPaymentsPOST } from '@/app/api/payments/device-loan/route';
 import { GET as paymentsGET } from '@/app/api/payments/route';
 import { POST as paymentReversePOST } from '@/app/api/payments/[id]/reverse/route';
@@ -263,9 +265,11 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     let detail = await getContract(contract.id, cashier);
     expect(detail.status).toBe('PENDING_DEPOSIT');
 
-    await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 30000, entryType: 'DEPOSIT' },
+    // The same amount again moments later is asked about first — the cashier confirms it is a second part.
+    const second = () => paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
+      token: cashier, body: { contractId: contract.id, amountMinor: 30000, entryType: 'DEPOSIT', confirmDuplicate: true },
     }));
+    expect((await second()).status).toBe(201);
     detail = await getContract(contract.id, cashier);
     expect(detail.status).toBe('ACTIVE');
     expect(detail.totalPaidMinor).toBe(60000);
@@ -465,32 +469,39 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect((await getContract(contract.id, cashier)).status).toBe('COMPLETED');
   });
 
-  it('Overpayment is accepted and flagged as credit, not rejected', async () => {
+  it('a payment at the counter is never for more than is owed; money that arrives beyond it anyway is credit, and can be refunded', async () => {
     const custId = await makeCustomer('Overpay');
     const itemId = await receiveItem('OVP');
-    const created = await makeDepositInstalment(cashier, custId, itemId, { totalPayableMinor: 240000, depositAmountMinor: 0 });
+    const created = await makeDepositInstalment(cashier, custId, itemId, { totalPayableMinor: 240000, depositAmountMinor: 100 });
     const contract = (await created.json()).contract;
-    expect(contract.status).toBe('PENDING_DEPOSIT'); // every DEPOSIT_INSTALMENT starts here, even at 0% deposit
-    expect(contract.totalPayableMinor).toBe(240000);
+    expect(contract.status).toBe('PENDING_DEPOSIT'); // every DEPOSIT_INSTALMENT starts here
 
-    // 0% deposit — any payment at all (even a token amount) clears the gate and
-    // activates the contract; it deliberately doesn't also check for completion
-    // in that same pass (advanceContractStatus), so a second payment does that part.
-    await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 1, entryType: 'DEPOSIT' },
+    const pay = (amountMinor: number) => paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
+      token: cashier, body: { contractId: contract.id, amountMinor, entryType: 'INSTALMENT_PAYMENT' },
     }));
-    const active = await getContract(contract.id, cashier);
-    expect(active.status).toBe('ACTIVE');
+    expect((await pay(50)).status).toBe(400);              // below the GHS 1 minimum
+    const tooMuch = await pay(250000);
+    expect(tooMuch.status).toBe(400);
+    expect((await tooMuch.json()).error).toMatch(/Pay at most GHS 2400\.00/);
+    expect((await pay(240000)).status).toBe(201);           // exactly what is owed
+    const paidOff = await getContract(contract.id, cashier);
+    expect(paidOff).toMatchObject({ status: 'COMPLETED', totalPaidMinor: 240000, creditMinor: 0 });
 
-    const over = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 250000, entryType: 'INSTALMENT_PAYMENT' },
-    }));
-    expect(over.status).toBe(201);
+    // A mobile money payment approved before the counter payment, landing after it.
+    const late = await makeDepositInstalment(cashier, await makeCustomer('LateMoMo'), await receiveItem('LATE'), { totalPayableMinor: 240000, depositAmountMinor: 100 });
+    const lateId = (await late.json()).contract.id;
+    await pay(0).catch(() => undefined);
+    await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', { token: cashier, body: { contractId: lateId, amountMinor: 230000 } }));
+    await postPayment({ contractId: lateId, amountMinor: 20000, entryType: 'INSTALMENT_PAYMENT', channel: 'USSD' });
+    const withCredit = await getContract(lateId, cashier);
+    expect(withCredit).toMatchObject({ status: 'COMPLETED', totalPaidMinor: 250000, creditMinor: 10000 });
 
-    const detail = await getContract(contract.id, cashier);
-    expect(detail.status).toBe('COMPLETED');
-    expect(detail.totalPaidMinor).toBe(250001); // the 1-pesewa deposit plus the overpayment
-    expect(detail.creditMinor).toBe(10001);
+    const refund = (token: string, amountMinor: number) => refundCreditPOST(
+      makeRequest('POST', `/api/contracts/${lateId}/refund-credit`, { token, body: { amountMinor, method: 'MOBILE_MONEY', notes: 'MoMo 0241234567' } }), makeParams({ id: lateId }));
+    expect((await refund(cashier, 10000)).status).toBe(403);  // needs payment.reverse
+    expect((await refund(admin, 10001)).status).toBe(400);    // more than the credit
+    expect((await refund(admin, 10000)).status).toBe(201);
+    expect(await getContract(lateId, cashier)).toMatchObject({ totalPaidMinor: 240000, creditMinor: 0, status: 'COMPLETED' });
   });
 
   it('RBAC: SALES cannot record cash payments (403), CASHIER can', async () => {

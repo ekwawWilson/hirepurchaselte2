@@ -25,6 +25,7 @@ import {
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
 } from '@/components/ui/alert-dialog';
+import { isMoneyOut } from '@/lib/constants/contracts';
 
 interface Instalment { id: string; instalmentNo: number; dueDate: string; amountDueMinor: number; principalPortionMinor: number; interestPortionMinor: number; amountPaidMinor: number; status: string; daysPastDue?: number }
 interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; notes: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
@@ -84,6 +85,12 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [paymentNotes, setPaymentNotes] = useState('');
   // On a contract an agent brought in: did the agent take this cash (theirs to pay in), or was it paid at the counter?
   const [collectedByAgent, setCollectedByAgent] = useState(false);
+  // One reference per cash payment being entered, kept until it is saved: a
+  // retry after a lost connection is then recognised, never recorded twice.
+  const [cashRef, setCashRef] = useState(() => crypto.randomUUID());
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [refundCreditOpen, setRefundCreditOpen] = useState(false);
+  const [creditForm, setCreditForm] = useState({ amount: '', method: 'CASH', notes: '' });
   const [saving, setSaving] = useState(false);
 
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -224,12 +231,15 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     }
   }
 
-  async function recordPayment(e: React.FormEvent) {
-    e.preventDefault();
+  async function recordPayment(e?: React.FormEvent, confirmDuplicate = false) {
+    e?.preventDefault();
     setSaving(true);
     try {
       const amountMinor = Math.round(parseFloat(amount) * 100);
-      await api.post('/payments/cash', { contractId: id, amountMinor, entryType, notes: paymentNotes.trim() || undefined, collectedByAgent });
+      await api.post('/payments/cash', {
+        contractId: id, amountMinor, entryType, notes: paymentNotes.trim() || undefined, collectedByAgent,
+        transactionRef: cashRef, ...(confirmDuplicate && { confirmDuplicate: true }),
+      });
       toast({
         title: 'Payment recorded',
         description: user?.role === 'AGENT'
@@ -239,9 +249,28 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       setAmount('');
       setPaymentNotes('');
       setCollectedByAgent(false);
+      setCashRef(crypto.randomUUID());
+      setDuplicateWarning(null);
       await load();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409) { setDuplicateWarning(e.message); return; }
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to record payment', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function refundCredit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const amountMinor = Math.round(parseFloat(creditForm.amount) * 100);
+      await api.post(`/contracts/${id}/refund-credit`, { amountMinor, method: creditForm.method, notes: creditForm.notes || undefined });
+      toast({ title: 'Credit refunded', description: formatCurrency(amountMinor) });
+      setRefundCreditOpen(false);
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to refund credit', variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -625,7 +654,19 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
             <CardContent className="p-4">
               <p className="text-xs text-gray-500">Balance</p>
               <p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.balanceMinor ?? 0)}</p>
-              {contract.creditMinor > 0 && <p className="text-xs text-green-700 mt-0.5 break-words">Credit: {formatCurrency(contract.creditMinor)}</p>}
+              {contract.creditMinor > 0 && (
+                <p className="text-xs text-green-700 mt-0.5 break-words">
+                  Overpaid by {formatCurrency(contract.creditMinor)}
+                  {hasPermission('payment.reverse') && (
+                    <button
+                      type="button" className="ml-1.5 underline"
+                      onClick={() => { setCreditForm({ amount: (contract.creditMinor / 100).toFixed(2), method: 'CASH', notes: '' }); setRefundCreditOpen(true); }}
+                    >
+                      Refund
+                    </button>
+                  )}
+                </p>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -674,7 +715,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               )}
               <div>
                 <Label>Amount (GHS)</Label>
-                <Input required type="number" step="0.01" className="mt-1.5 w-40" value={amount} onChange={(e) => setAmount(e.target.value)} />
+                <Input required type="number" step="0.01" min="1" className="mt-1.5 w-40" value={amount} onChange={(e) => { setAmount(e.target.value); setDuplicateWarning(null); }} />
               </div>
               <div className="flex-1 min-w-[10rem]">
                 <Label>Description</Label>
@@ -688,6 +729,13 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               <Button type="submit" disabled={saving}>{saving ? 'Recording...' : 'Record payment'}</Button>
             </form>
             {agentCashChoice}
+            {duplicateWarning && (
+              <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <span className="flex-1">{duplicateWarning}</span>
+                <Button size="sm" variant="outline" disabled={saving} onClick={() => recordPayment(undefined, true)}>Record it again</Button>
+                <Button size="sm" variant="ghost" onClick={() => setDuplicateWarning(null)}>Cancel</Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1031,8 +1079,8 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   <TableCell className="text-gray-500">{formatDateTime(p.createdAt)}</TableCell>
                   <TableCell>{p.entryType}{p.reversesPaymentId && ' (reversal)'}</TableCell>
                   <TableCell>{p.channel}</TableCell>
-                  <TableCell className={p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? 'text-red-600' : undefined}>
-                    {p.entryType === 'WITHDRAWAL' && !p.reversesPaymentId ? '-' : ''}{formatCurrency(p.amountMinor)}
+                  <TableCell className={isMoneyOut(p.entryType) && !p.reversesPaymentId ? 'text-red-600' : undefined}>
+                    {isMoneyOut(p.entryType) && !p.reversesPaymentId ? '-' : ''}{formatCurrency(p.amountMinor)}
                   </TableCell>
                   <TableCell className="text-gray-500 max-w-[14rem] truncate" title={p.notes ?? undefined}>{p.notes ?? '—'}</TableCell>
                   <TableCell className="font-mono text-xs">
@@ -1077,6 +1125,31 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={refundCreditOpen} onOpenChange={(open) => { if (!open) setRefundCreditOpen(false); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Refund overpayment</DialogTitle></DialogHeader>
+          <form className="space-y-4" onSubmit={refundCredit}>
+            <p className="text-sm text-gray-600">The customer has paid {formatCurrency(contract.creditMinor)} more than this contract costs. Record what you hand back.</p>
+            <div>
+              <Label htmlFor="credit-amount">Amount (GHS)</Label>
+              <Input id="credit-amount" type="number" min="0.01" step="0.01" max={contract.creditMinor / 100} required className="mt-1.5" value={creditForm.amount} onChange={(e) => setCreditForm({ ...creditForm, amount: e.target.value })} />
+            </div>
+            <div className="flex gap-4 text-sm text-gray-700">
+              <label className="flex items-center gap-2"><input type="radio" checked={creditForm.method === 'CASH'} onChange={() => setCreditForm({ ...creditForm, method: 'CASH' })} /> Cash</label>
+              <label className="flex items-center gap-2"><input type="radio" checked={creditForm.method === 'MOBILE_MONEY'} onChange={() => setCreditForm({ ...creditForm, method: 'MOBILE_MONEY' })} /> Mobile money transfer</label>
+            </div>
+            <div>
+              <Label htmlFor="credit-notes">Note (optional)</Label>
+              <Input id="credit-notes" className="mt-1.5" value={creditForm.notes} onChange={(e) => setCreditForm({ ...creditForm, notes: e.target.value })} placeholder="e.g. MoMo reference" />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRefundCreditOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Record refund'}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <RescheduleDialog
         open={rescheduleOpen} contractId={contract.id} outstandingMinor={scheduleOutstandingMinor}

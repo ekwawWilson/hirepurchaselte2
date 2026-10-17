@@ -2,6 +2,7 @@ import { prisma } from '../db/prisma';
 import { CUSTOMER_SUMMARY_SELECT } from './customerService';
 import { getDeviceLoanState } from './paymentService';
 import { PRE_APPROVAL_STATUSES } from '../constants/contracts';
+import { isMoneyOut, MONEY_OUT_ENTRY_TYPES } from '../constants/contracts';
 
 /** Optional branch scoping (server-applied only, per RBAC — never client-trusted beyond what the caller already resolved). */
 type Scope = { branchId?: string };
@@ -43,7 +44,7 @@ export async function dailyCashReceivedReport(scope: Scope, from?: string, to?: 
     // the day's net cash position the same way a reversal does. Both signs
     // can combine (a reversed withdrawal flips back to positive), matching
     // paymentService.recomputeContract's own sign convention exactly.
-    const magnitude = p.entryType === 'WITHDRAWAL' ? -p.amountMinor : p.amountMinor;
+    const magnitude = isMoneyOut(p.entryType) ? -p.amountMinor : p.amountMinor;
     const signed = p.reversesPaymentId ? -magnitude : magnitude;
     totalMinor += signed;
     byChannel[p.channel] = (byChannel[p.channel] ?? 0) + signed;
@@ -325,7 +326,7 @@ export async function todaysPaymentsFeed(scope: Scope, opts: { includeTotal: boo
     status: 'SUCCESS',
     createdAt: { gte: start, lte: end },
     reversesPaymentId: null,
-    entryType: { not: 'WITHDRAWAL' },
+    entryType: { notIn: MONEY_OUT_ENTRY_TYPES },
     ...(scope.branchId && { contract: { branchId: scope.branchId } }),
   };
 

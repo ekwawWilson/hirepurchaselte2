@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { commissionForContract } from './commissionSettingsService';
 import { AGENT_CASH_HOLD_ALERT_DAYS } from '../constants/agents';
+import { isMoneyOut } from '../constants/contracts';
 
 export class AgentLedgerError extends Error {}
 
@@ -38,7 +39,7 @@ export async function syncAgentLedger(tx: Db, contractId: string): Promise<void>
 
   const payments = await effectivePayments(tx, contractId);
   const cashCollected = payments
-    .filter((p) => p.channel === 'CASH' && p.collectedByAgentId === contract.createdById && p.entryType !== 'WITHDRAWAL')
+    .filter((p) => p.channel === 'CASH' && p.collectedByAgentId === contract.createdById && !isMoneyOut(p.entryType))
     .reduce((sum, p) => sum + p.amountMinor, 0);
   const depositPaid = payments.filter((p) => p.entryType === 'DEPOSIT').reduce((sum, p) => sum + p.amountMinor, 0);
   const earned = contract.contractType === 'DEPOSIT_INSTALMENT' && contract.activatedAt !== null && depositPaid >= contract.depositAmountMinor;
@@ -227,7 +228,7 @@ export { AGENT_CASH_HOLD_ALERT_DAYS };
 export async function cashHeldSince(db: Db, entry: { contractId: string; agentId: string; amountRemittedMinor: number; amountOwedMinor: number; commissionPaidMinor: number }): Promise<Date | null> {
   if (ledgerBalance(entry) <= 0) return null;
   const collections = (await effectivePayments(db, entry.contractId))
-    .filter((p) => p.channel === 'CASH' && p.collectedByAgentId === entry.agentId && p.entryType !== 'WITHDRAWAL')
+    .filter((p) => p.channel === 'CASH' && p.collectedByAgentId === entry.agentId && !isMoneyOut(p.entryType))
     .map((p) => ({ amount: p.amountMinor, at: p.receivedAt ?? p.createdAt }))
     .sort((a, b) => a.at.getTime() - b.at.getTime());
   // What the agent keeps (their commission) and has paid in both cover the oldest cash first.

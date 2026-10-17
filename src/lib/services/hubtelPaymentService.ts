@@ -9,6 +9,7 @@ import { logAudit } from './auditService';
 import { isOwnPhoneNumber } from './customerPortalService';
 import { networkForPhone } from '../constants/customers';
 import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES } from '../constants/contracts';
+import { paymentAmountProblem, waitingPromptProblem } from './paymentLimitsService';
 
 /**
  * `message` is fit to show whoever is paying. `staffDetail`, when set, is
@@ -51,6 +52,12 @@ export async function mobileMoneyRequestProblem(params: {
 
   // A device loan is only ever paid as one of two exact amounts — the same
   // two the USSD menu offers (paymentService.postDeviceLoanPayment).
+  if (contract.contractType !== 'DEVICE_LOAN') {
+    const amountProblem = await paymentAmountProblem(contract.id, params.amountMinor);
+    if (amountProblem) return { status: 400, error: amountProblem };
+  }
+  const waiting = await waitingPromptProblem(contract.id, params.msisdn);
+  if (waiting) return { status: 409, error: waiting };
   if (contract.contractType === 'DEVICE_LOAN') {
     const state = await getDeviceLoanState(contract.id);
     const isInterest = state.accruedInterestMinor > 0 && params.amountMinor === state.accruedInterestMinor;

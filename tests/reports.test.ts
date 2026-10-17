@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { makeRequest, makeParams, enableOptionalContractTypes, registrationFields, freshPhone } from './helpers';
 import { prisma } from '@/lib/db/prisma';
+import { isMoneyOut } from '@/lib/constants/contracts';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { GET as branchesGET } from '@/app/api/branches/route';
@@ -101,7 +102,11 @@ describe('Reports', () => {
     const start = new Date(); start.setHours(0, 0, 0, 0);
     const end = new Date(); end.setHours(23, 59, 59, 999);
     const rawPayments = await prisma.payment.findMany({ where: { status: 'SUCCESS', createdAt: { gte: start, lte: end } } });
-    const expectedTotal = rawPayments.reduce((sum, p) => sum + (p.reversesPaymentId ? -p.amountMinor : p.amountMinor), 0);
+    // Money handed back (a withdrawal, a refund of overpaid credit) counts against the day's takings, and a reversal flips whatever it reverses.
+    const expectedTotal = rawPayments.reduce((sum, p) => {
+      const magnitude = isMoneyOut(p.entryType) ? -p.amountMinor : p.amountMinor;
+      return sum + (p.reversesPaymentId ? -magnitude : magnitude);
+    }, 0);
 
     expect(report.totalMinor).toBe(expectedTotal);
     // Sanity: our two payments (15000 + 22000) minus the reversed one (15000) nets to at least 22000 among today's total.

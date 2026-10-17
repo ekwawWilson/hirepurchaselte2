@@ -128,3 +128,11 @@ export const MOBILE_MONEY_NETWORK_LABELS: Record<MobileMoneyNetwork, string> = {
  */
 export const PAYMENT_METHODS = ['CUSTOMER_INITIATED', 'DIRECT_DEBIT', 'BOTH'] as const;
 export type PaymentMethodName = (typeof PAYMENT_METHODS)[number];
+
+/**
+ * Payment entries that take money back out to the customer — a Save to Own
+ * withdrawal, or a refund of overpaid credit. Stored as positive amounts like
+ * every other payment and subtracted wherever totals are added up.
+ */
+export const MONEY_OUT_ENTRY_TYPES = ['WITHDRAWAL', 'CREDIT_REFUND'];
+export const isMoneyOut = (entryType: string) => MONEY_OUT_ENTRY_TYPES.includes(entryType);
