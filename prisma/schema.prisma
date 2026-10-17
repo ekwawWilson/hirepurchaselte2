@@ -215,11 +215,16 @@ model Product {
 }
 
 // status: AVAILABLE | RESERVED | ISSUED | RETURNED | WRITTEN_OFF
+// One physical unit, in three levels: category (Laptops) > product (HP
+// Laptop) > this unit — its own model name (HP Envy) and specification
+// (15" screen, 200 GB HDD, 6 GB RAM, kept in `description`), told apart by
+// its serial number / IMEI.
 model InventoryItem {
   id           String   @id @default(uuid())
   productId    String
   branchId     String
   serialNumber String   @unique
+  name         String?
   description  String?
   status       String   @default("AVAILABLE")
   createdAt    DateTime @default(now())

@@ -18,7 +18,7 @@ export interface DocContract {
     guarantorName: string | null; guarantorPhone: string | null;
   };
   product: { name: string } | null;
-  inventoryItem: { serialNumber: string } | null;
+  inventoryItem: { serialNumber: string; name: string | null; description: string | null } | null;
   branch: { name: string; address: string | null; phone: string | null } | null;
   instalments: DocInstalment[];
   payments: DocPayment[];

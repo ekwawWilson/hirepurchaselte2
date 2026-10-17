@@ -5,6 +5,7 @@ import { FileText, FileSignature } from 'lucide-react';
 import { useEffect, useState, use } from 'react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
+import { unitTitle } from '@/lib/unitLabel';
 import { RescheduleDialog } from '@/components/RescheduleDialog';
 import { RecordRefundDialog } from '@/components/RecordRefundDialog';
 import { ContractFollowUps } from '@/components/ContractFollowUps';
@@ -43,6 +44,7 @@ interface ContractDetail {
   deviceLoanState: DeviceLoanState | null;
   customer: { firstName: string; lastName: string; phone: string | null; phone2: string | null; phone3: string | null };
   product: { name: string } | null;
+  inventoryItem: { serialNumber: string; name: string | null; description: string | null } | null;
   instalments: Instalment[];
   payments: Payment[];
   // Reversals, write-offs or a cancellation asked for and not yet approved by a second person.
@@ -492,9 +494,15 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           <h1 className="text-2xl font-bold text-gray-900">{contract.contractNumber}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone ?? contract.customer.phone2 ?? contract.customer.phone3}
-            {contract.product && <> &middot; {contract.product.name}</>} &middot; {contractTypeLabel(contract.contractType)}
+            {contract.product && <> &middot; {unitTitle(contract.product.name, contract.inventoryItem?.name)}</>} &middot; {contractTypeLabel(contract.contractType)}
             {contract.contractType !== 'SAVE_TO_OWN' && <> &middot; {contract.paymentFrequency.charAt(0) + contract.paymentFrequency.slice(1).toLowerCase()}</>}
           </p>
+          {contract.inventoryItem && (
+            <p className="text-xs text-gray-500 mt-0.5">
+              {contract.inventoryItem.description && <>{contract.inventoryItem.description} &middot; </>}
+              <span className="font-mono">{contract.inventoryItem.serialNumber}</span>
+            </p>
+          )}
         </div>
         <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${getStatusColor(contract.status)}`}>{contract.status}</span>
       </div>

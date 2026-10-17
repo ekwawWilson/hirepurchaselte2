@@ -23,6 +23,8 @@ interface Product {
   model: string | null;
   cashPriceMinor: number;
   isActive: boolean;
+  categoryId: string | null;
+  category: { name: string } | null;
 }
 interface Category { id: string; name: string }
 
@@ -33,6 +35,7 @@ export default function ProductsPage() {
   const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState('__all__');
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', categoryId: '', cashPrice: '' });
@@ -103,7 +106,7 @@ export default function ProductsPage() {
       <div className="space-y-5 max-w-2xl">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Add New Product</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Add a device model to the catalogue</p>
+          <p className="text-sm text-gray-500 mt-0.5">A product sits in a category (e.g. Laptops &gt; HP Laptop); each unit received into stock then gets its own model and specification (e.g. HP Envy, 15&quot; screen, 6 GB RAM)</p>
         </div>
         <Card>
           <CardHeader><CardTitle>Product details</CardTitle></CardHeader>
@@ -111,11 +114,11 @@ export default function ProductsPage() {
             <form className="space-y-4" onSubmit={onCreate}>
               <div>
                 <Label>Product Name *</Label>
-                <Input required placeholder="e.g., iPhone 15 Pro" className="mt-1.5" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                <Input required placeholder="e.g. HP Laptop" className="mt-1.5" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
               <div>
                 <Label>Description</Label>
-                <Input placeholder="Product details" className="mt-1.5" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                <Input placeholder="General description — each unit's own model and specification are entered when it is received into stock" className="mt-1.5" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -161,7 +164,7 @@ export default function ProductsPage() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Products</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Device models available for hire purchase</p>
+          <p className="text-sm text-gray-500 mt-0.5">Products by category — the models and specifications of each unit are on the Inventory page</p>
         </div>
         {canCreate && (
           <Button onClick={() => setShowForm(true)} size="sm" className="shrink-0">
@@ -171,6 +174,19 @@ export default function ProductsPage() {
           </Button>
         )}
       </div>
+
+      {categories.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {[{ id: '__all__', name: 'All categories' }, ...categories].map((c) => (
+            <button
+              key={c.id} type="button" onClick={() => setCategoryFilter(c.id)}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${categoryFilter === c.id ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -187,6 +203,7 @@ export default function ProductsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>SKU</TableHead>
+                  <TableHead>Category</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Brand/Model</TableHead>
                   <TableHead>Base Price</TableHead>
@@ -194,9 +211,10 @@ export default function ProductsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {products.map((p) => (
+                {products.filter((p) => categoryFilter === '__all__' || p.categoryId === categoryFilter).map((p) => (
                   <TableRow key={p.id}>
                     <TableCell><Link href={`/products/${p.id}`} className="font-mono text-xs text-blue-700 hover:underline">{p.sku}</Link></TableCell>
+                    <TableCell className="text-gray-600">{p.category?.name ?? '—'}</TableCell>
                     <TableCell className="font-medium text-gray-900"><Link href={`/products/${p.id}`} className="hover:underline">{p.name}</Link></TableCell>
                     <TableCell>{[p.brand, p.model].filter(Boolean).join(' ') || '—'}</TableCell>
                     <TableCell>{formatCurrency(p.cashPriceMinor)}</TableCell>

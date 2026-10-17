@@ -4,6 +4,7 @@ import { use, useMemo } from 'react';
 import { formatCurrency, formatDate, contractTypeLabel } from '@/lib/utils';
 import { PrintDocument, Field } from '@/components/PrintDocument';
 import { useContractDocument } from '@/lib/useContractDocument';
+import { unitTitle } from '@/lib/unitLabel';
 import { CHANNEL_LABELS, ENTRY_LABELS, customerPhone, nextInstalment, overdueMinor, type DocContract } from '@/lib/contractDocuments';
 
 /** The short text version of a statement that goes to the customer's WhatsApp. */
@@ -45,7 +46,8 @@ export default function ContractStatementPage({ params }: { params: Promise<{ id
         <Field label="Contract">{c.contractNumber}</Field>
         <Field label="Type">{contractTypeLabel(c.contractType)}</Field>
         <Field label="Status">{c.status.replace(/_/g, ' ')}</Field>
-        {c.product && <Field label="Item">{c.product.name}{c.inventoryItem ? ` (${c.inventoryItem.serialNumber})` : ''}</Field>}
+        {c.product && <Field label="Item">{unitTitle(c.product.name, c.inventoryItem?.name)}{c.inventoryItem ? ` (${c.inventoryItem.serialNumber})` : ''}</Field>}
+        {c.inventoryItem?.description && <Field label="Specification">{c.inventoryItem.description}</Field>}
         <Field label="Started">{formatDate(c.startDate)}</Field>
         {c.branch && <Field label="Branch">{c.branch.name}</Field>}
       </div>

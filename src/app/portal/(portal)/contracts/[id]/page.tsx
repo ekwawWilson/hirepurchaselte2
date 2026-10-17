@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import type { PortalContractDetail } from '@/lib/portalTypes';
 import { amountOwed, progressPercent, paymentLabel } from '@/lib/portalTypes';
+import { unitTitle } from '@/lib/unitLabel';
 
 export default function PortalContractDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -59,8 +60,9 @@ export default function PortalContractDetailPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-            {contract.product?.name ?? contractTypeLabel(contract.contractType)}
+            {contract.product ? unitTitle(contract.product.name, contract.inventoryItem?.name) : contractTypeLabel(contract.contractType)}
           </h1>
+          {contract.inventoryItem?.description && <p className="text-sm text-gray-600 mt-0.5">{contract.inventoryItem.description}</p>}
           <p className="text-sm text-gray-500 mt-0.5 font-mono">{contract.contractNumber}</p>
         </div>
         <Badge className={getStatusColor(contract.status)}>{contract.status.replace(/_/g, ' ')}</Badge>

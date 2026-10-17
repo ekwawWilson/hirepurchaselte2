@@ -5,6 +5,7 @@ import { formatCurrency, formatDate } from '@/lib/utils';
 import { PrintDocument, Field } from '@/components/PrintDocument';
 import { useContractDocument } from '@/lib/useContractDocument';
 import { customerPhone } from '@/lib/contractDocuments';
+import { unitTitle } from '@/lib/unitLabel';
 import { AGREEMENT_TERMS, AGREEMENT_TITLES } from '@/lib/constants/agreementTerms';
 
 /** Basis points as a percentage: 250 -> "2.5%". */
@@ -52,7 +53,8 @@ export default function ContractAgreementPage({ params }: { params: Promise<{ id
 
       <h2 className="mt-6 mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">{isLoan ? 'The loan' : isInstalment ? 'The goods and the price' : 'The plan'}</h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 print-avoid-break">
-        {c.product && <Field label="Goods">{c.product.name}</Field>}
+        {c.product && <Field label="Goods">{unitTitle(c.product.name, c.inventoryItem?.name)}</Field>}
+        {c.inventoryItem?.description && <Field label="Specification">{c.inventoryItem.description}</Field>}
         {c.inventoryItem && <Field label="Serial / IMEI">{c.inventoryItem.serialNumber}</Field>}
         {isInstalment && (
           <>

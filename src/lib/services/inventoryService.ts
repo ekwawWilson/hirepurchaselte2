@@ -17,6 +17,9 @@ export async function receiveInventoryItem(params: {
   branchId: string;
   serialNumber: string;
   createdById: string;
+  /** The unit's own model name, e.g. "HP Envy" under the product "HP Laptop". */
+  name?: string;
+  /** Its specification, e.g. 15" screen, 200 GB HDD, 6 GB RAM. */
   description?: string;
   reason?: string;
 }) {
@@ -26,7 +29,8 @@ export async function receiveInventoryItem(params: {
         productId: params.productId,
         branchId: params.branchId,
         serialNumber: params.serialNumber,
-        description: params.description || null,
+        name: params.name?.trim() || null,
+        description: params.description?.trim() || null,
         status: 'AVAILABLE',
       },
     });

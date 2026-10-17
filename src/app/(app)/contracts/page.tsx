@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Plus, FileText as FileTextIcon, ChevronRight, Search } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
+import { unitTitle } from '@/lib/unitLabel';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, contractTypeLabel, getStatusColor } from '@/lib/utils';
 import {
@@ -29,7 +30,7 @@ interface Customer {
 }
 const customerPhone = (c: Customer) => c.phone ?? c.phone2 ?? c.phone3 ?? '—';
 interface InventoryItem {
-  id: string; serialNumber: string; productId: string;
+  id: string; serialNumber: string; productId: string; name: string | null; description: string | null;
   product: { id: string; name: string; cashPriceMinor: number; category?: { name: string } | null };
 }
 const frequencyLabel = (f: string) => f.charAt(0) + f.slice(1).toLowerCase();
@@ -458,7 +459,7 @@ export default function ContractsPage() {
                   <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
                   <input
                     type="text"
-                    placeholder="Search by product name, category, or serial/IMEI..."
+                    placeholder="Search by model, specification, product, category or serial/IMEI..."
                     className="flex h-10 w-full border border-input bg-white/90 pl-9 pr-3 py-2 text-sm"
                     value={itemSearch}
                     onChange={(e) => setItemSearch(e.target.value)}
@@ -474,7 +475,8 @@ export default function ContractsPage() {
                     >
                       <div className="flex justify-between items-start gap-3">
                         <div className="min-w-0">
-                          <p className="font-medium text-gray-900">{i.product.name}</p>
+                          <p className="font-medium text-gray-900">{unitTitle(i.product.name, i.name)}</p>
+                          {i.description && <p className="text-xs text-gray-600 mt-0.5">{i.description}</p>}
                           <p className="text-xs text-gray-500 mt-0.5">
                             <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">{i.serialNumber}</span>
                             {i.product.category?.name && <span className="ml-2">{i.product.category.name}</span>}
@@ -544,7 +546,8 @@ export default function ContractsPage() {
                 <div className="bg-green-50 p-3">
                   <p className="text-xs font-medium text-green-900">Product & Unit</p>
                   <p className="text-sm text-green-900">
-                    {selectedItem?.product.name} &middot; <span className="font-mono">{selectedItem?.serialNumber}</span>
+                    {selectedItem && unitTitle(selectedItem.product.name, selectedItem.name)} &middot; <span className="font-mono">{selectedItem?.serialNumber}</span>
+                    {selectedItem?.description && <span className="block text-xs text-green-800 mt-0.5">{selectedItem.description}</span>}
                   </p>
                 </div>
 

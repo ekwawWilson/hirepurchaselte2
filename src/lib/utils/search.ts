@@ -29,6 +29,9 @@ export function contractSearchWhere(q: string | null | undefined) {
 
 export function inventorySearchWhere(q: string | null | undefined) {
   return searchTerms(q).map((term) => ({
-    OR: [{ serialNumber: insensitive(term) }, { product: { name: insensitive(term) } }, { product: { category: { name: insensitive(term) } } }],
+    OR: [
+      { serialNumber: insensitive(term) }, { name: insensitive(term) }, { description: insensitive(term) },
+      { product: { name: insensitive(term) } }, { product: { category: { name: insensitive(term) } } },
+    ],
   }));
 }

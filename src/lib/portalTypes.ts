@@ -61,7 +61,7 @@ export interface PortalPayment {
 }
 
 export interface PortalContractDetail extends PortalContract {
-  inventoryItem: { serialNumber: string } | null;
+  inventoryItem: { serialNumber: string; name: string | null; description: string | null } | null;
   instalments: PortalInstalment[];
   payments: PortalPayment[];
 }

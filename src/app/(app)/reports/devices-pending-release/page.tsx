@@ -13,7 +13,7 @@ import { formatCurrency, formatDate } from '@/lib/utils';
 interface Row {
   id: string; contractNumber: string; totalPayableMinor: number; completedAt: string | null;
   customer: { firstName: string; lastName: string; phone: string | null; phone2: string | null; phone3: string | null };
-  inventoryItem: { serialNumber: string } | null;
+  inventoryItem: { serialNumber: string; name: string | null } | null;
 }
 
 export default function DevicesPendingReleaseReportPage() {
@@ -51,7 +51,7 @@ export default function DevicesPendingReleaseReportPage() {
                       <TableCell className="font-mono text-xs">{c.contractNumber}</TableCell>
                       <TableCell className="font-medium text-gray-900">{c.customer.firstName} {c.customer.lastName}</TableCell>
                       <TableCell>{c.customer.phone ?? c.customer.phone2 ?? c.customer.phone3 ?? '—'}</TableCell>
-                      <TableCell className="font-mono text-xs">{c.inventoryItem?.serialNumber ?? '—'}</TableCell>
+                      <TableCell className="font-mono text-xs">{c.inventoryItem?.name && <span className="block font-sans text-gray-700">{c.inventoryItem.name}</span>}{c.inventoryItem?.serialNumber ?? '—'}</TableCell>
                       <TableCell>{formatCurrency(c.totalPayableMinor)}</TableCell>
                       <TableCell>{formatDate(c.completedAt)}</TableCell>
                     </TableRow>

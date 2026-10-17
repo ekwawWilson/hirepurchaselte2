@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   if (q) where.AND = inventorySearchWhere(q);
 
   const items = await prisma.inventoryItem.findMany({
-    where, include: { product: { include: { category: true } } }, orderBy: { createdAt: 'desc' }, take: 200,
+    where, include: { product: { include: { category: true } }, branch: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 200,
   });
   return NextResponse.json({ items });
 }
@@ -45,9 +45,13 @@ export async function POST(req: NextRequest) {
   if (!perm.authorized) return perm.error;
   const user = auth.user;
 
-  const { productId, serialNumber, branchId: branchIdInput, description, reason } = (await req.json()) as Record<string, string | undefined>;
+  const { productId, serialNumber: serialInput, branchId: branchIdInput, name, description, reason } = (await req.json()) as Record<string, string | undefined>;
+  const serialNumber = serialInput?.trim();
   if (!productId || !serialNumber) {
     return NextResponse.json({ error: 'productId and serialNumber are required' }, { status: 400 });
+  }
+  if (!(await prisma.product.findUnique({ where: { id: productId }, select: { id: true } }))) {
+    return NextResponse.json({ error: 'Product not found' }, { status: 400 });
   }
   const branchId = user.branchId ?? branchIdInput;
   if (!branchId) return NextResponse.json({ error: 'branchId is required for an all-branch user' }, { status: 400 });
@@ -55,6 +59,6 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.inventoryItem.findUnique({ where: { serialNumber } });
   if (existing) return NextResponse.json({ error: 'An inventory item with this serial number already exists' }, { status: 409 });
 
-  const item = await receiveInventoryItem({ productId, branchId, serialNumber, description, createdById: user.id, reason });
+  const item = await receiveInventoryItem({ productId, branchId, serialNumber, name, description, createdById: user.id, reason });
   return NextResponse.json({ item }, { status: 201 });
 }

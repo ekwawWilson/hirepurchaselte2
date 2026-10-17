@@ -104,7 +104,7 @@ export async function portalContract(customerId: string, contractId: string) {
     where: { id: contractId, customerId, status: { notIn: PRE_APPROVAL_STATUSES } },
     include: {
       product: { select: { name: true } },
-      inventoryItem: { select: { serialNumber: true } },
+      inventoryItem: { select: { serialNumber: true, name: true, description: true } },
       instalments: { orderBy: { instalmentNo: 'asc' } },
       payments: {
         where: { status: 'SUCCESS' },
