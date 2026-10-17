@@ -693,3 +693,34 @@ export async function resubmitContract(params: { contractId: string; updates: Re
     return tx.contract.update({ where: { id: contract.id }, data });
   });
 }
+
+/** How long an agent's unapproved Deposit + Instalment contract may hold its unit. */
+export const SUBMISSION_EXPIRY_DAYS = 14;
+
+/**
+ * Cancels every agent submission that has held a unit of stock, untouched,
+ * for SUBMISSION_EXPIRY_DAYS while waiting for approval or for the agent's
+ * changes — so a deal nobody is pursuing stops keeping the phone off the
+ * shelf. No money can have moved on one (payments are refused before
+ * approval); cancelling returns the unit to stock. Run daily.
+ */
+export async function expireStaleSubmissions(days = SUBMISSION_EXPIRY_DAYS): Promise<number> {
+  const stale = await prisma.contract.findMany({
+    where: {
+      status: { in: PRE_APPROVAL_STATUSES },
+      contractType: 'DEPOSIT_INSTALMENT',
+      inventoryItemId: { not: null },
+      updatedAt: { lt: new Date(Date.now() - days * 24 * 60 * 60 * 1000) },
+    },
+    select: { id: true, status: true, createdById: true, contractNumber: true },
+  });
+  const { logAudit } = await import('./auditService');
+  for (const contract of stale) {
+    const reason = contract.status === 'REVISION_REQUESTED'
+      ? `Automatically cancelled: not resubmitted within ${days} days of being sent back`
+      : `Automatically cancelled: not approved within ${days} days`;
+    await cancelContract({ contractId: contract.id, reason, userId: contract.createdById });
+    await logAudit({ userId: null, action: 'CONTRACT_AUTO_CANCEL', entityType: 'Contract', entityId: contract.id, newValues: { reason, contractNumber: contract.contractNumber } });
+  }
+  return stale.length;
+}

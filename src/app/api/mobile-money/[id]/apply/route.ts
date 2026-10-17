@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
+import { OWN_SCOPED_ROLES } from '@/lib/constants/rbac';
 import { reapplyCollectedCharge } from '@/lib/services/mobileMoneyOpsService';
 import { HubtelError } from '@/lib/services/hubtelPaymentService';
 import { logAudit } from '@/lib/services/auditService';
@@ -10,6 +11,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const auth = await requireAuth(req);
   if ('error' in auth) return auth.error;
   const perm = requirePermission(auth.user, 'payment.cash.record');
+  if (perm.authorized && OWN_SCOPED_ROLES.includes(auth.user.roleName)) {
+    // The review queue is back-office work; an agent records only the cash they collect.
+    return NextResponse.json({ error: 'Forbidden: missing required permission' }, { status: 403 });
+  }
   if (!perm.authorized) return perm.error;
 
   const { id } = await params;

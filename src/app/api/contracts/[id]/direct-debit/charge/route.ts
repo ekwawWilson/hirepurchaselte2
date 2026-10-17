@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
-import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
+import { requireAuth, requirePermission, assertBranchAccess, assertOwnRecordAccess } from '@/lib/auth/rbac';
 import { chargeDirectDebit, PreapprovalError } from '@/lib/services/hubtelPreapprovalService';
 import { logAudit } from '@/lib/services/auditService';
 
@@ -20,6 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const contract = await prisma.contract.findUnique({ where: { id } });
   if (!contract) return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
   if (!assertBranchAccess(auth.user, contract.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!assertOwnRecordAccess(auth.user, contract.createdById)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
     const transaction = await chargeDirectDebit({ contractId: id, amountMinor });

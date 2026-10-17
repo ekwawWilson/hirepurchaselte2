@@ -111,6 +111,9 @@ export default function ContractsPage() {
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [listSearch, setListSearch] = useState('');
   const [listTotal, setListTotal] = useState(0);
+  // A status to show only, from a link such as /contracts?status=REVISION_REQUESTED
+  // (the dashboard's agent summary and Needs attention list use these).
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [listPage, setListPage] = useState(1);
   const isSaveToOwn = contractType === 'SAVE_TO_OWN';
   const isDeviceLoan = contractType === 'DEVICE_LOAN';
@@ -166,10 +169,10 @@ export default function ContractsPage() {
   }
 
   /** `page` 1 replaces the list (a new search); a later page is appended ("Load more"). */
-  async function loadContracts(search = listSearch, page = 1) {
+  async function loadContracts(search = listSearch, page = 1, status = statusFilter) {
     setIsLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), ...(search && { q: search }) });
+      const params = new URLSearchParams({ page: String(page), ...(search && { q: search }), ...(status && { status }) });
       const res = await api.get<{ contracts: Contract[]; total: number }>(`/contracts?${params}`);
       setContracts((prev) => (page === 1 ? res.contracts : [...prev, ...res.contracts]));
       setListTotal(res.total);
@@ -182,7 +185,9 @@ export default function ContractsPage() {
   }
 
   useEffect(() => {
-    if (canView) loadContracts(); else setIsLoading(false);
+    const status = new URLSearchParams(window.location.search).get('status');
+    setStatusFilter(status);
+    if (canView) loadContracts(listSearch, 1, status); else setIsLoading(false);
     // Which types this company offers (Settings > Contract types) — drives both
     // the page's subtitle and the wizard's type picker.
     api.get<{ settings: { saveToOwnEnabled: boolean; deviceLoanEnabled: boolean } }>('/settings/contract-types')
@@ -728,6 +733,17 @@ export default function ContractsPage() {
             </div>
             <Button type="submit" variant="outline">Search</Button>
           </form>
+          {statusFilter && (
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 text-sm text-gray-600">
+              Showing only <strong>{statusFilter.replace(/_/g, ' ').toLowerCase()}</strong> contracts.
+              <button
+                type="button" className="text-primary underline"
+                onClick={() => { setStatusFilter(null); window.history.replaceState(null, '', '/contracts'); void loadContracts(listSearch.trim(), 1, null); }}
+              >
+                Show all
+              </button>
+            </div>
+          )}
           {isLoading && contracts.length === 0 ? (
             <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
           ) : contracts.length === 0 ? (

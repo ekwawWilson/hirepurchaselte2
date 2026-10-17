@@ -4,6 +4,7 @@ import Link from 'next/link';
 import {
   Banknote, FileText, Scale, Receipt, Wallet, AlertTriangle, PieChart,
   Warehouse, PackageCheck, Landmark, History, UserPlus, type LucideIcon,
+Users,
 } from 'lucide-react';
 import { useAuthStore } from '@/lib/authStore';
 import { Card, CardContent } from '@/components/ui/card';
@@ -41,6 +42,7 @@ const REPORTS: ReportLink[] = [
   { href: '/reports/devices-pending-release', label: 'Devices pending release', desc: 'Completed Save-to-Own contracts awaiting hand-over.', icon: PackageCheck, color: 'amber' },
   { href: '/reports/loan-book', label: 'Loan book', desc: 'Device Loan: principal/interest outstanding and earned.', icon: Landmark, color: 'blue' },
   { href: '/reports/audit-trail', label: 'User activity / audit trail', desc: 'Who did what, when.', icon: History, color: 'gray', perms: ['audit.view'] },
+  { href: '/reports/agent-performance', label: 'Agent performance', desc: 'Per agent: contracts brought in, cash, commission and arrears.', icon: Users, color: 'blue' },
   { href: '/reports/customer-registrations', label: 'Customer registrations', desc: 'New customers in range, by user.', icon: UserPlus, color: 'emerald' },
 ];
 

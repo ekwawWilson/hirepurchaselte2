@@ -19,13 +19,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     if (action === 'confirm') {
-      const remittance = await confirmRemittance({ remittanceId: id, confirmedById: auth.user.id });
+      const remittance = await confirmRemittance({ remittanceId: id, confirmedById: auth.user.id, confirmerBranchId: auth.user.branchId });
       await logAudit({ userId: auth.user.id, action: 'AGENT_REMITTANCE_CONFIRM', entityType: 'AgentRemittance', entityId: id, newValues: remittance });
       return NextResponse.json({ remittance });
     }
     if (action === 'reject') {
       if (!reason?.trim()) return NextResponse.json({ error: 'reason is required to reject a remittance' }, { status: 400 });
-      const remittance = await rejectRemittance({ remittanceId: id, confirmedById: auth.user.id, reason });
+      const remittance = await rejectRemittance({ remittanceId: id, confirmedById: auth.user.id, confirmerBranchId: auth.user.branchId, reason });
       await logAudit({ userId: auth.user.id, action: 'AGENT_REMITTANCE_REJECT', entityType: 'AgentRemittance', entityId: id, newValues: remittance });
       return NextResponse.json({ remittance });
     }

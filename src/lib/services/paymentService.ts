@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { generateTransactionRef, generateReceiptNumber } from '../utils/idGenerators';
 import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES, defaultCutoffDate } from '../constants/contracts';
-import { recordAgentDepositIfApplicable } from './agentLedgerService';
+import { syncAgentLedger } from './agentLedgerService';
 import { applyStockMovement } from './inventoryService';
 import { queueSms, deliverQueuedSms } from './smsService';
 
@@ -95,6 +95,9 @@ async function recomputeContract(tx: Tx, contractId: string) {
   if (totalPaidMinor !== contract.totalPaidMinor || balanceMinor !== contract.balanceMinor) {
     await tx.contract.update({ where: { id: contractId }, data: { totalPaidMinor, balanceMinor } });
   }
+  // What the agent who brought the contract in holds or has earned on it is
+  // derived from the same ledger, so it moves with every payment and reversal.
+  await syncAgentLedger(tx, contractId);
 }
 
 export interface PendingDirectDebitInit {
@@ -222,6 +225,8 @@ export interface PostPaymentParams {
   createdById?: string;
   initiatedByCustomerId?: string;
   receivedAt?: Date;
+  /** Cash an AGENT took from the customer themselves — theirs to remit (agentLedgerService.ts). */
+  collectedByAgentId?: string;
 }
 
 async function allocatePayment(tx: Tx, paymentId: string, contractId: string, amountMinor: number) {
@@ -309,6 +314,7 @@ export async function postPayment(params: PostPaymentParams) {
         createdById: params.createdById,
         initiatedByCustomerId: params.initiatedByCustomerId,
         receivedAt: params.receivedAt ?? new Date(),
+        collectedByAgentId: params.channel === 'CASH' ? params.collectedByAgentId ?? null : null,
       },
     });
 
@@ -320,18 +326,10 @@ export async function postPayment(params: PostPaymentParams) {
       await allocatePayment(tx, payment.id, contract.id, payment.amountMinor);
     }
 
-    // The Agent module (schema.prisma's Contract comment): a deposit
-    // collected in cash by an AGENT is money in THEIR hand, not the till's —
-    // recordAgentDepositIfApplicable is itself a no-op for every other
-    // channel/creator, where there is no such custody question at all.
-    if (params.entryType === 'DEPOSIT' && params.channel === 'CASH') {
-      await recordAgentDepositIfApplicable(tx, {
-        contractId: contract.id, agentId: contract.createdById, depositAmountMinor: payment.amountMinor,
-      });
-    }
-
     await recomputeContract(tx, contract.id);
     const { queuedSmsIds: statusSmsIds, pendingDirectDebit } = await advanceContractStatus(tx, contract.id);
+    // Again after any activation above: a deposit paid in full earns the agent their commission.
+    await syncAgentLedger(tx, contract.id);
 
     const paymentSms = await queueSms({ contractId: contract.id, templateKey: 'payment.success', paymentId: payment.id, tx });
     const queuedSmsIds = paymentSms ? [...statusSmsIds, paymentSms.id] : statusSmsIds;
@@ -491,6 +489,8 @@ export interface PostDeviceLoanPaymentParams {
   rawGatewayPayload?: string;
   createdById?: string;
   initiatedByCustomerId?: string;
+  /** Cash an AGENT took from the customer themselves — theirs to remit (agentLedgerService.ts). */
+  collectedByAgentId?: string;
   // Gateway callbacks only. The customer confirmed an interest amount on
   // their phone, and more interest may have accrued before Hubtel's callback
   // arrived. When set, an INTEREST amount smaller than what's owed now is
@@ -574,6 +574,7 @@ export async function postDeviceLoanPayment(params: PostDeviceLoanPaymentParams)
         createdById: params.createdById,
         initiatedByCustomerId: params.initiatedByCustomerId,
         receivedAt: new Date(),
+        collectedByAgentId: params.channel === 'CASH' ? params.collectedByAgentId ?? null : null,
       },
     });
 

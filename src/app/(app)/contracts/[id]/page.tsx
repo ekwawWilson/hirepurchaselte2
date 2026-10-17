@@ -59,6 +59,7 @@ interface ContractDetail {
   // The Agent module (schema.prisma's Contract comment) — null on every
   // contract not created by an agent.
   createdById: string;
+  createdBy: { firstName: string; lastName: string; role: { name: string } } | null;
   revisionReason: string | null;
   termWeeks: number | null;
   // What cancelling left owed back to the customer, and what was recorded as handed over.
@@ -81,6 +82,8 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [amount, setAmount] = useState('');
   const [entryType, setEntryType] = useState<'DEPOSIT' | 'INSTALMENT_PAYMENT'>('INSTALMENT_PAYMENT');
   const [paymentNotes, setPaymentNotes] = useState('');
+  // On a contract an agent brought in: did the agent take this cash (theirs to pay in), or was it paid at the counter?
+  const [collectedByAgent, setCollectedByAgent] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -226,10 +229,16 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     setSaving(true);
     try {
       const amountMinor = Math.round(parseFloat(amount) * 100);
-      await api.post('/payments/cash', { contractId: id, amountMinor, entryType, notes: paymentNotes.trim() || undefined });
-      toast({ title: 'Payment recorded', description: formatCurrency(amountMinor) });
+      await api.post('/payments/cash', { contractId: id, amountMinor, entryType, notes: paymentNotes.trim() || undefined, collectedByAgent });
+      toast({
+        title: 'Payment recorded',
+        description: user?.role === 'AGENT'
+          ? `${formatCurrency(amountMinor)} — the customer's receipt is in Payments below. Pay the cash in at the office; it is listed on My Deposits.`
+          : formatCurrency(amountMinor),
+      });
       setAmount('');
       setPaymentNotes('');
+      setCollectedByAgent(false);
       await load();
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to record payment', variant: 'destructive' });
@@ -258,7 +267,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   async function payLoan(option: 'INTEREST' | 'PRINCIPAL', amountMinor: number) {
     setLoanPaying(option);
     try {
-      await api.post('/payments/device-loan', { contractId: id, amountMinor, option });
+      await api.post('/payments/device-loan', { contractId: id, amountMinor, option, collectedByAgent });
       toast({ title: option === 'INTEREST' ? 'Interest paid' : 'Loan amount paid', description: formatCurrency(amountMinor) });
       await load();
     } catch (e) {
@@ -478,6 +487,17 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const canReschedule = canManageMandate && contract.contractType === 'DEPOSIT_INSTALMENT'
     && ['ACTIVE', 'DEFAULTED'].includes(contract.status) && scheduleOutstandingMinor > 0;
   const inArrears = contract.status === 'DEFAULTED' || contract.instalments.some((i) => i.status === 'OVERDUE');
+  // Cash on a contract an agent brought in may have been taken by the agent in
+  // the field and handed over now — theirs to account for — or paid at the
+  // counter. Staff say which; an agent recording it themselves took it.
+  const broughtInByAgent = contract.createdBy?.role.name === 'AGENT' && user?.role !== 'AGENT';
+  const agentCashChoice = broughtInByAgent && (
+    <fieldset className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-gray-700">
+      <legend className="mb-1 text-xs font-medium text-gray-500">Who took this cash from the customer?</legend>
+      <label className="flex items-center gap-2"><input type="radio" name="collected-by" checked={!collectedByAgent} onChange={() => setCollectedByAgent(false)} /> Paid here at the counter</label>
+      <label className="flex items-center gap-2"><input type="radio" name="collected-by" checked={collectedByAgent} onChange={() => setCollectedByAgent(true)} /> Agent {contract.createdBy?.firstName} {contract.createdBy?.lastName} collected it</label>
+    </fieldset>
+  );
   const terminal = ['COMPLETED', 'RELEASED', 'CANCELLED', 'WRITTEN_OFF'].includes(contract.status);
   // The Agent module: nothing has been agreed yet on either of these two
   // statuses, so no money can move and no mandate can be requested — see
@@ -629,6 +649,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               {loanPaying === 'PRINCIPAL' ? 'Paying...' : `Pay full loan amount (${formatCurrency(contract.deviceLoanState?.principalMinor ?? 0)})`}
             </Button>
             <p className="text-xs text-gray-400 w-full">Paying the full loan amount clears the principal only — any interest already accrued at that point is still owed separately.</p>
+            <div className="w-full">{agentCashChoice}</div>
           </CardContent>
         </Card>
       )}
@@ -666,6 +687,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               </div>
               <Button type="submit" disabled={saving}>{saving ? 'Recording...' : 'Record payment'}</Button>
             </form>
+            {agentCashChoice}
           </CardContent>
         </Card>
       )}

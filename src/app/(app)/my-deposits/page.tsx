@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { AGENT_CASH_HOLD_ALERT_DAYS } from '@/lib/constants/agents';
 
 interface Remittance {
   id: string;
@@ -33,12 +34,21 @@ interface LedgerEntry {
   commissionCategoryName: string | null;
   amountOwedMinor: number;
   amountRemittedMinor: number;
+  commissionPaidMinor: number;
   status: string;
   createdAt: string;
-  contract: { id: string; contractNumber: string; customer: { firstName: string; lastName: string; membershipId: string } };
+  /** Positive: you owe the office. Negative: the office owes you. */
+  agentOwesMinor: number;
+  owedToAgentMinor: number;
+  daysHeld: number | null;
+  contract: { id: string; contractNumber: string; status: string; customer: { firstName: string; lastName: string; membershipId: string } };
   remittances: Remittance[];
+  payouts: { id: string; amountMinor: number; method: string; reference: string | null; createdAt: string }[];
 }
-interface Totals { depositAmountMinor: number; commissionAmountMinor: number; amountOwedMinor: number; amountRemittedMinor: number }
+interface Totals {
+  depositAmountMinor: number; commissionAmountMinor: number; amountRemittedMinor: number; commissionPaidMinor: number;
+  agentOwesMinor: number; owedToAgentMinor: number;
+}
 
 const METHOD_LABELS: Record<string, string> = { CASH: 'Cash at branch', MOBILE_MONEY: 'Mobile money', BANK_TRANSFER: 'Bank transfer' };
 const STATUS_TONE: Record<string, string> = {
@@ -48,9 +58,10 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 /**
- * The Agent module: what an agent has collected in cash on the company's
- * behalf, what they keep as commission, and what they still owe — plus a
- * form to tell the office they have paid some of it in (agentLedgerService.ts).
+ * The Agent module: the cash an agent has collected on the company's behalf,
+ * the commission they have earned, what they owe the office (or the office
+ * owes them) and how long they have held cash — plus a form to tell the
+ * office they have paid some of it in (agentLedgerService.ts).
  */
 export default function MyDepositsPage() {
   const canView = useAuthStore((s) => s.hasPermission('agent.ledger.view'));
@@ -79,9 +90,10 @@ export default function MyDepositsPage() {
 
   useEffect(() => { if (canView) load(); }, [load, canView]);
 
+  /** What can still be remitted: what is owed, less claims still waiting to be confirmed. */
   function outstanding(e: LedgerEntry) {
-    const pendingOrConfirmed = e.remittances.filter((r) => r.status !== 'REJECTED').reduce((s, r) => s + r.amountMinor, 0);
-    return Math.max(0, e.amountOwedMinor - pendingOrConfirmed);
+    const pending = e.remittances.filter((r) => r.status === 'PENDING').reduce((s, r) => s + r.amountMinor, 0);
+    return Math.max(0, e.agentOwesMinor - pending);
   }
 
   function openRemit(e: LedgerEntry) {
@@ -116,7 +128,7 @@ export default function MyDepositsPage() {
       <div className="space-y-5">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">My Deposits</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Cash deposits you have collected, and what you still owe the office</p>
+          <p className="text-sm text-gray-500 mt-0.5">Cash you have collected, the commission you have earned, and what you and the office owe each other</p>
         </div>
         <AccessDenied
           message="You don't have permission to view an agent deposit ledger."
@@ -130,16 +142,18 @@ export default function MyDepositsPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">My Deposits</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Cash deposits you have collected, and what you still owe the office</p>
+        <p className="text-sm text-gray-500 mt-0.5">Cash you have collected, the commission you have earned, and what you and the office owe each other</p>
       </div>
 
       {totals && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Collected</p><p className="text-lg font-semibold text-gray-900">{formatCurrency(totals.depositAmountMinor)}</p></CardContent></Card>
-          <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Your commission</p><p className="text-lg font-semibold text-emerald-600">{formatCurrency(totals.commissionAmountMinor)}</p></CardContent></Card>
-          <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Remitted so far</p><p className="text-lg font-semibold text-gray-900">{formatCurrency(totals.amountRemittedMinor)}</p></CardContent></Card>
-          <Card className={totals.amountOwedMinor - totals.amountRemittedMinor > 0 ? 'border-red-200 ring-1 ring-red-100' : undefined}>
-            <CardContent className="p-4"><p className="text-xs text-gray-500">Still owed</p><p className="text-lg font-semibold text-red-600">{formatCurrency(Math.max(0, totals.amountOwedMinor - totals.amountRemittedMinor))}</p></CardContent>
+          <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Cash you collected</p><p className="text-lg font-semibold text-gray-900">{formatCurrency(totals.depositAmountMinor)}</p></CardContent></Card>
+          <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Commission earned</p><p className="text-lg font-semibold text-emerald-600">{formatCurrency(totals.commissionAmountMinor)}</p></CardContent></Card>
+          <Card className={totals.agentOwesMinor > 0 ? 'border-red-200 ring-1 ring-red-100' : undefined}>
+            <CardContent className="p-4"><p className="text-xs text-gray-500">You still owe</p><p className="text-lg font-semibold text-red-600">{formatCurrency(totals.agentOwesMinor)}</p></CardContent>
+          </Card>
+          <Card className={totals.owedToAgentMinor > 0 ? 'border-emerald-200 ring-1 ring-emerald-100' : undefined}>
+            <CardContent className="p-4"><p className="text-xs text-gray-500">Commission owed to you</p><p className="text-lg font-semibold text-emerald-600">{formatCurrency(totals.owedToAgentMinor)}</p></CardContent>
           </Card>
         </div>
       )}
@@ -147,7 +161,7 @@ export default function MyDepositsPage() {
       {isLoading ? (
         <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
       ) : entries.length === 0 ? (
-        <Card><CardContent className="text-center py-12 px-4"><Wallet className="h-8 w-8 text-gray-300 mx-auto mb-2" /><p className="text-gray-500">No deposit collections yet</p></CardContent></Card>
+        <Card><CardContent className="text-center py-12 px-4"><Wallet className="h-8 w-8 text-gray-300 mx-auto mb-2" /><p className="text-gray-500">Nothing yet — cash you collect and commission you earn on your contracts will show here</p></CardContent></Card>
       ) : (
         <div className="space-y-3">
           {entries.map((e) => {
@@ -160,17 +174,33 @@ export default function MyDepositsPage() {
                       <Link href={`/contracts/${e.contract.id}`} className="font-mono text-xs text-blue-700 hover:underline">{e.contract.contractNumber}</Link>
                       <p className="text-sm font-medium text-gray-900 mt-0.5">{e.contract.customer.firstName} {e.contract.customer.lastName}</p>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        Collected {formatCurrency(e.depositAmountMinor)} &middot; Commission {formatCurrency(e.commissionAmountMinor)}{e.commissionCategoryName ? ` (${e.commissionCategoryName})` : ''} &middot; Owed {formatCurrency(e.amountOwedMinor)}
+                        Cash collected {formatCurrency(e.depositAmountMinor)} &middot; Commission {e.commissionAmountMinor > 0 ? formatCurrency(e.commissionAmountMinor) : 'not yet earned'}{e.commissionCategoryName ? ` (${e.commissionCategoryName})` : ''}
+                        {e.amountRemittedMinor > 0 && <> &middot; Paid in {formatCurrency(e.amountRemittedMinor)}</>}
+                        {e.commissionPaidMinor > 0 && <> &middot; Commission paid to you {formatCurrency(e.commissionPaidMinor)}</>}
                       </p>
+                      {e.agentOwesMinor > 0 && (
+                        <p className={cn('text-xs mt-0.5', e.daysHeld !== null && e.daysHeld >= AGENT_CASH_HOLD_ALERT_DAYS ? 'text-red-600 font-semibold' : 'text-gray-600')}>
+                          You owe {formatCurrency(e.agentOwesMinor)}{e.daysHeld !== null && ` — held for ${e.daysHeld} day${e.daysHeld === 1 ? '' : 's'}`}
+                        </p>
+                      )}
+                      {e.owedToAgentMinor > 0 && <p className="text-xs text-emerald-700 mt-0.5">The office owes you {formatCurrency(e.owedToAgentMinor)} commission</p>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <Badge className={e.status === 'SETTLED' ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/60'}>{e.status}</Badge>
+                      <Badge className={e.status === 'SETTLED' ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60' : e.status === 'DUE_TO_AGENT' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200/60' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/60'}>
+                        {e.status === 'DUE_TO_AGENT' ? 'OWED TO YOU' : e.status}
+                      </Badge>
                       {due > 0 && <Button size="sm" onClick={() => openRemit(e)}>Remit {formatCurrency(due)}</Button>}
                     </div>
                   </div>
 
-                  {e.remittances.length > 0 && (
+                  {(e.remittances.length > 0 || e.payouts.length > 0) && (
                     <div className="border-t border-gray-100 pt-2.5 space-y-1.5">
+                      {e.payouts.map((p) => (
+                        <div key={p.id} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-gray-500">Commission of {formatCurrency(p.amountMinor)} paid to you via {METHOD_LABELS[p.method] ?? p.method}{p.reference && <> ({p.reference})</>} &middot; {formatDateTime(p.createdAt)}</span>
+                          <Badge className="bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60">PAID</Badge>
+                        </div>
+                      ))}
                       {e.remittances.map((r) => (
                         <div key={r.id} className="flex items-center justify-between gap-2 text-xs">
                           <span className="text-gray-500">

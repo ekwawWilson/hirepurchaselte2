@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
 import { logAudit } from '@/lib/services/auditService';
+import { agentOutstanding } from '@/lib/services/agentLedgerService';
 
 function toUserResponse(user: {
   id: string; email: string; firstName: string; lastName: string; isActive: boolean;
@@ -26,12 +27,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!perm.authorized) return perm.error;
 
   const { id } = await params;
-  const { firstName, lastName, role, branchId, isActive } = (await req.json()) as {
-    firstName?: string; lastName?: string; role?: string; branchId?: string | null; isActive?: boolean;
+  const { firstName, lastName, role, branchId, isActive, acknowledgeOutstanding } = (await req.json()) as {
+    firstName?: string; lastName?: string; role?: string; branchId?: string | null; isActive?: boolean; acknowledgeOutstanding?: boolean;
   };
 
-  const existing = await prisma.user.findUnique({ where: { id } });
+  const existing = await prisma.user.findUnique({ where: { id }, include: { role: true } });
   if (!existing) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+  // An agent leaving — deactivated, or moved to another role, which also
+  // stops their ledger following their contracts — while they still hold the
+  // office's cash, or are owed commission, is said out loud first.
+  const agentLeaving = existing.role.name === 'AGENT'
+    && ((isActive === false && existing.isActive) || (role !== undefined && role !== 'AGENT'));
+  if (agentLeaving && !acknowledgeOutstanding) {
+    const outstanding = await agentOutstanding(id);
+    if (outstanding.agentOwesMinor > 0 || outstanding.owedToAgentMinor > 0) {
+      const parts = [
+        outstanding.agentOwesMinor > 0 && `still owes GHS ${(outstanding.agentOwesMinor / 100).toFixed(2)} of customers' cash`,
+        outstanding.owedToAgentMinor > 0 && `is owed GHS ${(outstanding.owedToAgentMinor / 100).toFixed(2)} of commission`,
+      ].filter(Boolean).join(' and ');
+      return NextResponse.json({
+        error: `${existing.firstName} ${existing.lastName} ${parts}. Settle it on the Agent Ledger first, or confirm to go ahead anyway.`,
+        code: 'AGENT_HAS_BALANCE', ...outstanding,
+      }, { status: 409 });
+    }
+  }
 
   let roleId: string | undefined;
   if (role !== undefined) {

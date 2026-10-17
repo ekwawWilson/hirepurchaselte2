@@ -16,6 +16,9 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { AGENT_CASH_HOLD_ALERT_DAYS } from '@/lib/constants/agents';
 
 interface Remittance {
   id: string;
@@ -32,10 +35,16 @@ interface LedgerEntry {
   commissionAmountMinor: number;
   amountOwedMinor: number;
   amountRemittedMinor: number;
+  commissionPaidMinor: number;
+  commissionCategoryName: string | null;
   status: string;
+  agentOwesMinor: number;
+  owedToAgentMinor: number;
+  daysHeld: number | null;
   agent: { id: string; firstName: string; lastName: string; email: string };
-  contract: { id: string; contractNumber: string; customer: { firstName: string; lastName: string; membershipId: string } };
+  contract: { id: string; contractNumber: string; status: string; customer: { firstName: string; lastName: string; membershipId: string } };
   remittances: Remittance[];
+  payouts: { id: string; amountMinor: number; method: string; reference: string | null; createdAt: string }[];
 }
 
 const METHOD_LABELS: Record<string, string> = { CASH: 'Cash at branch', MOBILE_MONEY: 'Mobile money', BANK_TRANSFER: 'Bank transfer' };
@@ -47,12 +56,17 @@ const METHOD_LABELS: Record<string, string> = { CASH: 'Cash at branch', MOBILE_M
  */
 export default function AgentLedgerPage() {
   const canManage = useAuthStore((s) => s.hasPermission('agent.ledger.manage'));
+  // An auditor holds agent.ledger.manage to see this page; paying out is for those who also handle money.
+  const canPay = useAuthStore((s) => s.hasPermission('payment.cash.record'));
   const { toast } = useToast();
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [rejectTarget, setRejectTarget] = useState<Remittance | null>(null);
   const [reason, setReason] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [agentFilter, setAgentFilter] = useState('__all__');
+  const [payTarget, setPayTarget] = useState<LedgerEntry | null>(null);
+  const [payForm, setPayForm] = useState({ amount: '', method: 'CASH', reference: '' });
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -97,15 +111,36 @@ export default function AgentLedgerPage() {
     }
   }
 
-  const totalOwed = entries.reduce((s, e) => s + Math.max(0, e.amountOwedMinor - e.amountRemittedMinor), 0);
-  const pendingRemittances = entries.flatMap((e) => e.remittances.filter((r) => r.status === 'PENDING').map((r) => ({ ...r, entry: e })));
+  async function payCommission() {
+    if (!payTarget) return;
+    const amountMinor = Math.round(parseFloat(payForm.amount) * 100);
+    if (!amountMinor || amountMinor <= 0) { toast({ title: 'Enter a valid amount', variant: 'destructive' }); return; }
+    setBusyId(payTarget.id);
+    try {
+      await api.post(`/agent/ledger/${payTarget.id}/pay-commission`, { amountMinor, method: payForm.method, reference: payForm.reference || undefined });
+      toast({ title: 'Commission payment recorded' });
+      setPayTarget(null);
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to record the payment', variant: 'destructive' });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const agents = [...new Map(entries.map((e) => [e.agent.id, e.agent])).values()];
+  const shown = agentFilter === '__all__' ? entries : entries.filter((e) => e.agent.id === agentFilter);
+  const totalOwed = shown.reduce((s, e) => s + e.agentOwesMinor, 0);
+  const totalOwedToAgents = shown.reduce((s, e) => s + e.owedToAgentMinor, 0);
+  const longHeld = shown.filter((e) => e.daysHeld !== null && e.daysHeld >= AGENT_CASH_HOLD_ALERT_DAYS).length;
+  const pendingRemittances = shown.flatMap((e) => e.remittances.filter((r) => r.status === 'PENDING').map((r) => ({ ...r, entry: e })));
 
   if (!canManage) {
     return (
       <div className="space-y-5">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Agent Ledger</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Cash deposits collected by agents, and what each still owes</p>
+          <p className="text-sm text-gray-500 mt-0.5">Cash agents have collected, the commission they have earned, and what they and the office owe each other</p>
         </div>
         <AccessDenied
           message="You don't have permission to view agent ledgers."
@@ -119,10 +154,28 @@ export default function AgentLedgerPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Agent Ledger</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Cash deposits collected by agents, and what each still owes</p>
+        <p className="text-sm text-gray-500 mt-0.5">Cash agents have collected, the commission they have earned, and what they and the office owe each other</p>
       </div>
 
-      <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Total still owed, across every agent</p><p className="text-lg font-semibold text-red-600">{formatCurrency(totalOwed)}</p></CardContent></Card>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Cash agents still hold</p><p className="text-lg font-semibold text-red-600">{formatCurrency(totalOwed)}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Commission owed to agents</p><p className="text-lg font-semibold text-emerald-600">{formatCurrency(totalOwedToAgents)}</p></CardContent></Card>
+        <Card className={longHeld > 0 ? 'border-red-200 ring-1 ring-red-100' : undefined}>
+          <CardContent className="p-4"><p className="text-xs text-gray-500">Held {AGENT_CASH_HOLD_ALERT_DAYS}+ days</p><p className={cn('text-lg font-semibold', longHeld > 0 ? 'text-red-600' : 'text-gray-900')}>{longHeld} contract{longHeld === 1 ? '' : 's'}</p></CardContent>
+        </Card>
+      </div>
+
+      {agents.length > 1 && (
+        <div className="max-w-xs">
+          <Select value={agentFilter} onValueChange={setAgentFilter}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All agents</SelectItem>
+              {agents.map((a) => <SelectItem key={a.id} value={a.id}>{a.firstName} {a.lastName}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
@@ -156,13 +209,12 @@ export default function AgentLedgerPage() {
           )}
 
           <div>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Every deposit collected</h2>
-            {entries.length === 0 ? (
-              <Card><CardContent className="text-center py-12 px-4"><Wallet className="h-8 w-8 text-gray-300 mx-auto mb-2" /><p className="text-gray-500">No agent deposit collections yet</p></CardContent></Card>
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Every contract</h2>
+            {shown.length === 0 ? (
+              <Card><CardContent className="text-center py-12 px-4"><Wallet className="h-8 w-8 text-gray-300 mx-auto mb-2" /><p className="text-gray-500">Nothing yet — agents&apos; cash and commission will show here</p></CardContent></Card>
             ) : (
               <div className="space-y-2">
-                {entries.map((e) => {
-                  const due = Math.max(0, e.amountOwedMinor - e.amountRemittedMinor);
+                {shown.map((e) => {
                   return (
                     <Card key={e.id}>
                       <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
@@ -170,12 +222,33 @@ export default function AgentLedgerPage() {
                           <p className="text-sm font-medium text-gray-900">{e.agent.firstName} {e.agent.lastName}</p>
                           <p className="text-xs text-gray-500 mt-0.5">
                             <Link href={`/contracts/${e.contract.id}`} className="font-mono text-blue-700 hover:underline">{e.contract.contractNumber}</Link>
-                            {' '}&middot; {e.contract.customer.firstName} {e.contract.customer.lastName} &middot; Collected {formatCurrency(e.depositAmountMinor)} &middot; Owed {formatCurrency(e.amountOwedMinor)}
+                            {' '}&middot; {e.contract.customer.firstName} {e.contract.customer.lastName}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            Cash collected {formatCurrency(e.depositAmountMinor)} &middot; Commission {e.commissionAmountMinor > 0 ? formatCurrency(e.commissionAmountMinor) : 'not yet earned'}{e.commissionCategoryName ? ` (${e.commissionCategoryName})` : ''}
+                            {e.amountRemittedMinor > 0 && <> &middot; Paid in {formatCurrency(e.amountRemittedMinor)}</>}
+                            {e.commissionPaidMinor > 0 && <> &middot; Commission paid {formatCurrency(e.commissionPaidMinor)}</>}
                           </p>
                         </div>
-                        <div className={cn('text-right shrink-0')}>
-                          <Badge className={e.status === 'SETTLED' ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/60'}>{e.status}</Badge>
-                          {due > 0 && <p className="text-xs text-red-600 mt-1">{formatCurrency(due)} outstanding</p>}
+                        <div className={cn('text-right shrink-0 space-y-1')}>
+                          <Badge className={e.status === 'SETTLED' ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60' : e.status === 'DUE_TO_AGENT' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200/60' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/60'}>
+                            {e.status === 'DUE_TO_AGENT' ? 'OWED TO AGENT' : e.status}
+                          </Badge>
+                          {e.agentOwesMinor > 0 && (
+                            <p className={cn('text-xs', e.daysHeld !== null && e.daysHeld >= AGENT_CASH_HOLD_ALERT_DAYS ? 'text-red-600 font-semibold' : 'text-red-600')}>
+                              Agent owes {formatCurrency(e.agentOwesMinor)}{e.daysHeld !== null && ` · held ${e.daysHeld}d`}
+                            </p>
+                          )}
+                          {e.owedToAgentMinor > 0 && (
+                            <div className="flex items-center justify-end gap-2">
+                              <p className="text-xs text-emerald-700">Owed to agent {formatCurrency(e.owedToAgentMinor)}</p>
+                              {canPay && (
+                                <Button size="sm" variant="outline" onClick={() => { setPayTarget(e); setPayForm({ amount: (e.owedToAgentMinor / 100).toFixed(2), method: 'CASH', reference: '' }); }}>
+                                  Pay commission
+                                </Button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
@@ -186,6 +259,42 @@ export default function AgentLedgerPage() {
           </div>
         </>
       )}
+
+      <Dialog open={!!payTarget} onOpenChange={(open) => { if (!open) setPayTarget(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Pay commission — {payTarget?.agent.firstName} {payTarget?.agent.lastName}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              On {payTarget?.contract.contractNumber} the office owes this agent {payTarget && formatCurrency(payTarget.owedToAgentMinor)} — the commission they earned is more than the cash they collected.
+            </p>
+            <div>
+              <Label htmlFor="pay-amount">Amount paid (GHS)</Label>
+              <Input id="pay-amount" type="number" min="0.01" step="0.01" className="mt-1.5" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} />
+            </div>
+            <div>
+              <Label>Paid by</Label>
+              <Select value={payForm.method} onValueChange={(v) => setPayForm({ ...payForm, method: v })}>
+                <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CASH">Cash</SelectItem>
+                  <SelectItem value="MOBILE_MONEY">Mobile money</SelectItem>
+                  <SelectItem value="BANK_TRANSFER">Bank transfer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {payForm.method !== 'CASH' && (
+              <div>
+                <Label htmlFor="pay-ref">Reference (optional)</Label>
+                <Input id="pay-ref" className="mt-1.5" value={payForm.reference} onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })} placeholder="Transaction ID" />
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPayTarget(null)}>Cancel</Button>
+            <Button disabled={busyId === payTarget?.id} onClick={payCommission}>{busyId === payTarget?.id ? 'Saving...' : 'Record payment'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
         <DialogContent>

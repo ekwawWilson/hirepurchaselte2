@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
+import { ledgerEntriesWithBalances } from '@/lib/services/agentLedgerService';
 
 /**
  * Every agent's deposit ledger, for an approver (agent.ledger.manage) to
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status') ?? undefined;
   const branchWhere = branchScopeWhere(auth.user);
 
-  const entries = await prisma.agentDepositLedger.findMany({
+  const rows = await prisma.agentDepositLedger.findMany({
     where: {
       ...(agentId && { agentId }),
       ...(status && { status }),
@@ -29,10 +30,11 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
     include: {
       agent: { select: { id: true, firstName: true, lastName: true, email: true } },
-      contract: { select: { id: true, contractNumber: true, customer: { select: { firstName: true, lastName: true, membershipId: true } } } },
+      contract: { select: { id: true, contractNumber: true, status: true, customer: { select: { firstName: true, lastName: true, membershipId: true } } } },
       remittances: { orderBy: { createdAt: 'desc' } },
+      payouts: { orderBy: { createdAt: 'desc' } },
     },
   });
 
-  return NextResponse.json({ entries });
+  return NextResponse.json({ entries: await ledgerEntriesWithBalances(rows) });
 }

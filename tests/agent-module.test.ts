@@ -285,17 +285,18 @@ describe('Agent module', () => {
   });
 
   describe('agent deposit ledger', () => {
-    async function approveAndDeposit(customerId: string, depositAmountMinor = 12000, categoryId?: string) {
+    /** The agent took the deposit in the field and the office records it as theirs to pay in — unless `collectedByAgent` is false. */
+    async function approveAndDeposit(customerId: string, depositAmountMinor = 12000, categoryId?: string, collectedByAgent = true) {
       const contract = await submitDepositInstalmentAsAgent(customerId, agentToken, categoryId);
       await approvePOST(makeRequest('POST', `/api/contracts/${contract.id}/approve`, { token: managerToken }), makeParams({ id: contract.id }));
       const res = await cashPaymentPOST(makeRequest('POST', '/api/payments/cash', {
-        token: adminToken, body: { contractId: contract.id, amountMinor: depositAmountMinor, entryType: 'DEPOSIT' },
+        token: adminToken, body: { contractId: contract.id, amountMinor: depositAmountMinor, entryType: 'DEPOSIT', collectedByAgent },
       }));
       expect(res.status).toBe(201);
       return contract.id as string;
     }
 
-    it('creates a ledger entry, with commission clamped to the deposit, when an agent-submitted deposit is paid in cash', async () => {
+    it('creates a ledger entry for cash the agent collected, with the commission earned once the deposit is paid in full', async () => {
       await commissionPATCH(makeRequest('PATCH', '/api/settings/commission', { token: adminToken, body: { fixedCommissionMinor: 500 } }));
       const customer = await registerCustomer(agentToken);
       const contractId = await approveAndDeposit(customer.id, 12000);
@@ -308,15 +309,11 @@ describe('Agent module', () => {
       expect(entry!.amountOwedMinor).toBe(11500);
       expect(entry!.status).toBe('OWED');
 
-      // Commission never exceeds the deposit itself.
-      await commissionPATCH(makeRequest('PATCH', '/api/settings/commission', { token: adminToken, body: { fixedCommissionMinor: 999999 } }));
-      const smallDepositCustomer = await registerCustomer(agentToken);
-      const smallContractId = await approveAndDeposit(smallDepositCustomer.id, 100);
-      const smallEntry = await prisma.agentDepositLedger.findUniqueOrThrow({ where: { contractId: smallContractId } });
-      expect(smallEntry.commissionAmountMinor).toBe(100);
-      expect(smallEntry.amountOwedMinor).toBe(0);
-      expect(smallEntry.status).toBe('SETTLED');
-      await commissionPATCH(makeRequest('PATCH', '/api/settings/commission', { token: adminToken, body: { fixedCommissionMinor: 500 } }));
+      // A deposit not yet paid in full earns nothing yet: the agent owes all the cash they hold.
+      const partCustomer = await registerCustomer(agentToken);
+      const partContractId = await approveAndDeposit(partCustomer.id, 100);
+      expect(await prisma.agentDepositLedger.findUniqueOrThrow({ where: { contractId: partContractId } }))
+        .toMatchObject({ depositAmountMinor: 100, commissionAmountMinor: 0, amountOwedMinor: 100, status: 'OWED' });
     });
 
     it('takes the commission from the product\'s category, and the default where the category has none', async () => {
@@ -385,7 +382,8 @@ describe('Agent module', () => {
       const { entries, totals } = await res.json();
       expect(entries.length).toBeGreaterThan(0);
       expect(entries.every((e: { agent?: unknown }) => !('agent' in e))).toBe(true); // own view never leaks who else's this is
-      expect(totals.amountOwedMinor).toBeGreaterThanOrEqual(11500);
+      expect(totals.agentOwesMinor).toBeGreaterThanOrEqual(11500);
+      expect(entries[0]).toHaveProperty('daysHeld');
     });
 
     it('files, over-claims, confirms and rejects a remittance correctly', async () => {

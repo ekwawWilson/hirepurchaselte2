@@ -347,3 +347,15 @@ If no fulfilment arrives, the existing five-minute reconciliation asks Hubtel's 
 Why: the earlier design had the menu send a Direct Receive Money prompt itself. That needs the `mobilemoney-receive-direct` scope on the merchant account, which is separate from having a USSD code. `HUBTEL_USSD_PAYMENT=receive-money` switches back to it. Mock mode is unchanged (the simulator settles a payment at once). Staff-sent prompts, portal payments and direct debit still use Receive Money and Preapproval.
 
 Every `Message`, `Label` and `ItemName` sent to Hubtel passes through `ussdSafeText`: Hubtel rejects a response containing a special character, and customer and company names are typed by people.
+
+---
+
+## 25. Agent ledger reworked (October 2026)
+
+Supersedes the ledger description in §22. The ledger entry for an agent's contract is now re-derived from the payments, remittances and payouts whenever any of them changes (`agentLedgerService.syncAgentLedger`, called from `paymentService.recomputeContract` and after activation in `postPayment`), so a deposit paid in parts, a reversal or a cancellation can no longer leave it wrong.
+
+- **Who took the cash** is recorded per payment (`Payment.collectedByAgentId`). An agent may now record cash on their own contracts (`payment.cash.record`, scoped by `assertOwnRecordAccess`), which gives the customer a receipt; staff recording cash on an agent's contract say whether it was paid at the counter or collected by the agent. Only cash the agent took counts against them — deposits and any instalments.
+- **Commission** is earned on a Deposit + Instalment sale once its deposit is paid in full, however it was paid, at the product category's rate (snapshotted when first earned). It falls back to nothing if the deposit is unwound; a cancellation after the device went out keeps it. Save to Own and Device Loan carry no commission.
+- **A signed balance**: cash collected − commission − confirmed remittances + commission paid out. Positive is `OWED` (the agent pays in); negative is `DUE_TO_AGENT` (the office pays the agent, recorded as an `AgentCommissionPayout`); zero is `SETTLED`.
+- **Controls**: remittances and payouts are limited to approvers in the agent's branch; payouts also need `payment.cash.record`. Deactivating an agent, or moving them off the role, with money outstanding is refused until confirmed. An agent's unapproved Deposit + Instalment contract left untouched for 14 days is cancelled, returning its unit to stock (`expireStaleSubmissions`, daily).
+- **Visibility**: how long each agent has held cash, with an alert after `AGENT_CASH_HOLD_ALERT_DAYS` (3); agent submissions, remittances to confirm, contracts sent back and money owed either way in Needs attention; and the Agent performance report.

@@ -124,6 +124,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
   AGENT: [
     'customer.create', 'customer.view',
     'contract.create', 'contract.view',
+    // Cash the agent takes from a customer is recorded by the agent there and
+    // then, with a receipt — on their own contracts only (the payment routes'
+    // assertOwnRecordAccess) — and is theirs to remit (agentLedgerService.ts).
+    'payment.cash.record',
     'pricechart.view', 'inventory.view',
     'agent.ledger.view', 'agent.ledger.remit',
   ],

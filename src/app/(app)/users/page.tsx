@@ -45,6 +45,8 @@ export default function UsersPage() {
   const [editForm, setEditForm] = useState({ role: '', branchId: ALL_BRANCHES, isActive: true });
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
+  // An agent leaving with money still outstanding: the server's warning, shown before saving anyway.
+  const [outstandingWarning, setOutstandingWarning] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ name: string; password: string } | null>(null);
 
   const branchName = (id: string | null) => (id ? branches.find((b) => b.id === id)?.name ?? id : 'All branches');
@@ -113,7 +115,7 @@ export default function UsersPage() {
     setEditForm({ role: u.role, branchId: u.branchId ?? ALL_BRANCHES, isActive: u.isActive });
   }
 
-  async function onSaveEdit() {
+  async function onSaveEdit(acknowledgeOutstanding = false) {
     if (!editUser) return;
     setSaving(true);
     try {
@@ -121,11 +123,14 @@ export default function UsersPage() {
         role: editForm.role,
         branchId: editForm.branchId === ALL_BRANCHES ? null : editForm.branchId,
         isActive: editForm.isActive,
+        ...(acknowledgeOutstanding && { acknowledgeOutstanding: true }),
       });
       toast({ title: 'User updated' });
       setEditUser(null);
+      setOutstandingWarning(null);
       await load();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409) { setOutstandingWarning(e.message); return; }
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to update user', variant: 'destructive' });
     } finally {
       setSaving(false);
@@ -254,7 +259,7 @@ export default function UsersPage() {
       </Dialog>
 
       {/* Edit user */}
-      <Dialog open={!!editUser} onOpenChange={(open) => !open && setEditUser(null)}>
+      <Dialog open={!!editUser} onOpenChange={(open) => { if (!open) { setEditUser(null); setOutstandingWarning(null); } }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editUser?.firstName} {editUser?.lastName}</DialogTitle></DialogHeader>
           <div className="space-y-4">
@@ -293,9 +298,14 @@ export default function UsersPage() {
               </div>
             )}
           </div>
+          {outstandingWarning && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{outstandingWarning}</p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditUser(null)}>Cancel</Button>
-            <Button onClick={onSaveEdit} disabled={saving}>{saving ? 'Saving...' : 'Save changes'}</Button>
+            <Button variant="outline" onClick={() => { setEditUser(null); setOutstandingWarning(null); }}>Cancel</Button>
+            {outstandingWarning
+              ? <Button variant="destructive" onClick={() => onSaveEdit(true)} disabled={saving}>{saving ? 'Saving...' : 'Save anyway'}</Button>
+              : <Button onClick={() => onSaveEdit()} disabled={saving}>{saving ? 'Saving...' : 'Save changes'}</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

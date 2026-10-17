@@ -2,6 +2,7 @@ import { prisma } from '../db/prisma';
 import { listOpenAlerts } from './alertService';
 import { countPendingApprovals } from './approvalService';
 import { countFollowUpsDue } from './arrearsFollowUpService';
+import { ledgerBalance } from './agentLedgerService';
 import type { AuthenticatedUser } from '../auth/types';
 import type { Permission } from '../constants/rbac';
 
@@ -16,7 +17,8 @@ export async function needsAttention(user: AuthenticatedUser) {
   const branch = user.branchId ? { branchId: user.branchId } : {};
   const own = user.roleName === 'AGENT' ? { createdById: user.id } : {};
 
-  const [paymentsToReview, refunds, approvals, followUps, alerts] = await Promise.all([
+  const isAgent = user.roleName === 'AGENT';
+  const [paymentsToReview, refunds, approvals, followUps, alerts, contractsToApprove, remittancesToConfirm, sentBack, agentEntries] = await Promise.all([
     can('payment.view')
       ? prisma.hubtelTransaction.count({ where: { status: 'NEEDS_REVIEW', resolvedAt: null, ...(user.branchId && { contract: branch }) } })
       : 0,
@@ -32,13 +34,27 @@ export async function needsAttention(user: AuthenticatedUser) {
     // counted above, and its alert (which is what texts the owner) closes
     // itself when the payment is applied or resolved.
     can('settings.manage') ? listOpenAlerts().then((all) => all.filter((a) => a.kind !== 'PAYMENT_NEEDS_REVIEW')) : [],
+    // Agents' submissions waiting on an approver, and their claims to have paid cash in.
+    can('contract.approve') ? prisma.contract.count({ where: { ...branch, status: 'PENDING_APPROVAL' } }) : 0,
+    can('agent.ledger.manage')
+      ? prisma.agentRemittance.count({ where: { status: 'PENDING', ...(user.branchId && { agent: { branchId: user.branchId } }) } })
+      : 0,
+    // An agent's own: contracts sent back to them, and what they and the office owe each other.
+    isAgent ? prisma.contract.count({ where: { createdById: user.id, status: 'REVISION_REQUESTED' } }) : 0,
+    isAgent ? prisma.agentDepositLedger.findMany({ where: { agentId: user.id, status: { not: 'SETTLED' } } }) : [],
   ]);
+  const agentBalances = agentEntries.map(ledgerBalance);
 
   return {
     paymentsToReview,
     refundsOwed: refunds?._count ?? 0,
     refundsOwedMinor: refunds?._sum.refundDueMinor ?? 0,
     approvalsWaiting: approvals,
+    contractsToApprove,
+    remittancesToConfirm,
+    contractsSentBack: sentBack,
+    cashToRemitMinor: agentBalances.filter((b) => b > 0).reduce((s, b) => s + b, 0),
+    commissionOwedToYouMinor: agentBalances.filter((b) => b < 0).reduce((s, b) => s - b, 0),
     followUpsDue: followUps,
     alerts,
     // Not an alert that comes and goes, but a standing fact worth saying

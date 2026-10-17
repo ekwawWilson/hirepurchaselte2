@@ -10,6 +10,7 @@ import { formatCurrency, formatDateTime } from '@/lib/utils';
 interface Alert { id: string; kind: string; message: string; occurrences: number; lastSeenAt: string }
 interface Attention {
   paymentsToReview: number; refundsOwed: number; refundsOwedMinor: number; approvalsWaiting: number; followUpsDue: number;
+  contractsToApprove: number; remittancesToConfirm: number; contractsSentBack: number; cashToRemitMinor: number; commissionOwedToYouMinor: number;
   alerts: Alert[]; smsNotSending: boolean;
 }
 
@@ -46,6 +47,21 @@ export function NeedsAttention() {
     },
     data.approvalsWaiting > 0 && {
       href: '/approvals', text: `${plural(data.approvalsWaiting, 'reversal, write-off or cancellation is', 'reversals, write-offs or cancellations are')} waiting for your approval`,
+    },
+    data.contractsToApprove > 0 && {
+      href: '/contract-approvals', text: `${plural(data.contractsToApprove, 'contract submitted by an agent is', 'contracts submitted by agents are')} waiting for approval`,
+    },
+    data.remittancesToConfirm > 0 && {
+      href: '/agent-ledger', text: `${plural(data.remittancesToConfirm, 'agent payment-in is', 'agent payments-in are')} waiting to be confirmed`,
+    },
+    data.contractsSentBack > 0 && {
+      href: '/contracts?status=REVISION_REQUESTED', text: `${plural(data.contractsSentBack, 'of your contracts was', 'of your contracts were')} sent back for changes`,
+    },
+    data.cashToRemitMinor > 0 && {
+      href: '/my-deposits', text: `You are holding ${formatCurrency(data.cashToRemitMinor)} of customers' cash to pay in`,
+    },
+    data.commissionOwedToYouMinor > 0 && {
+      href: '/my-deposits', text: `${formatCurrency(data.commissionOwedToYouMinor)} of commission is owed to you`,
     },
     data.followUpsDue > 0 && {
       href: '/collections', text: `${plural(data.followUpsDue, 'customer follow-up is', 'customer follow-ups are')} due`,

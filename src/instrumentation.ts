@@ -26,6 +26,8 @@ export async function register() {
   const { sendDirectDebitNotices, sendOwnerDailySummary } = await import('@/lib/services/dailyNoticesService');
   const { pruneLoginThrottles } = await import('@/lib/auth/loginThrottle');
   const { retryFulfilmentCallbacks } = await import('@/lib/services/ussdCheckoutService');
+  const { alertLongHeldAgentCash } = await import('@/lib/services/agentLedgerService');
+  const { expireStaleSubmissions } = await import('@/lib/services/contractService');
   const { raiseAlert } = await import('@/lib/services/alertService');
 
   /**
@@ -59,6 +61,8 @@ export async function register() {
     await job('retryFailedDirectDebits', 'retry failed direct debits', retryFailedDirectDebits, counted((n) => `retried ${n} failed direct debit charge(s)`));
     await job('accrueDailyLoanInterest', 'accrue daily loan interest', accrueDailyLoanInterest, counted((n) => `accrued daily interest on ${n} DEVICE_LOAN contract(s)`));
     await job('pruneLoginThrottles', 'clear old sign-in counts', pruneLoginThrottles);
+    await job('expireStaleSubmissions', 'cancel agent submissions left unapproved', expireStaleSubmissions, counted((n) => `cancelled ${n} stale agent submission(s)`));
+    await job('alertLongHeldAgentCash', 'check cash agents are holding', alertLongHeldAgentCash, counted((n) => `${n} agent(s) holding cash too long`));
   });
 
   // Daily at 09:00 and 10:00 — customer payment reminders, after the 08:00

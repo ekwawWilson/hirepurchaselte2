@@ -116,6 +116,9 @@ model User {
   agentLedgerEntries        AgentDepositLedger[] @relation("AgentLedgerAgent")
   remittancesFiled          AgentRemittance[]   @relation("AgentRemittanceAgent")
   remittancesConfirmed      AgentRemittance[]   @relation("AgentRemittanceConfirmedBy")
+  commissionPayoutsReceived AgentCommissionPayout[] @relation("AgentPayoutAgent")
+  commissionPayoutsMade     AgentCommissionPayout[] @relation("AgentPayoutPaidBy")
+  paymentsCollectedAsAgent  Payment[]           @relation("PaymentCollectedByAgent")
 
   @@map("users")
 }
@@ -493,10 +496,15 @@ model Payment {
   reversalReason        String?
   reversedById          String?
   receivedAt            DateTime?
+  // A cash payment an AGENT took from the customer themselves: the money is
+  // in their hand until they remit it (AgentDepositLedger). Null for cash
+  // paid at the counter, and for every other channel.
+  collectedByAgentId    String?
   createdAt             DateTime  @default(now())
 
   contract            Contract  @relation(fields: [contractId], references: [id])
   createdBy           User?     @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+  collectedByAgent    User?     @relation("PaymentCollectedByAgent", fields: [collectedByAgentId], references: [id])
   reversedBy          User?     @relation("PaymentReversedBy", fields: [reversedById], references: [id])
   initiatedByCustomer Customer? @relation("PaymentInitiatedByCustomer", fields: [initiatedByCustomerId], references: [id])
   reverses            Payment?  @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
@@ -876,37 +884,48 @@ model CommissionSettings {
   @@map("commission_settings")
 }
 
-// One row per DEPOSIT_INSTALMENT contract an AGENT brought in and collected
-// the deposit for IN CASH (created in paymentService.postPayment, the same
-// moment the deposit payment itself is posted — see that file's comment).
-// The deposit is already correctly reflected on the contract/customer side
-// (it's a normal Payment row); this is the SEPARATE bookkeeping question of
-// "the agent, not the till, is currently holding this cash" — what they owe
-// the business is depositAmountMinor minus the commission they keep.
-// A deposit collected by any other channel (USSD/direct debit — money that
-// went straight to the company, never through the agent's hand) never gets a
-// row here at all: there is no cash custody question to track.
+// One row per contract an AGENT brought in, once there is anything to settle
+// between them and the office: cash they collected on it, or commission
+// they have earned on it. Never edited piecemeal — re-derived from the
+// payments and remittances whenever any of them changes
+// (agentLedgerService.syncAgentLedger), so a split deposit, a reversal or a
+// cancellation can never leave it disagreeing with the money.
+//
+//   balance = depositAmountMinor - commissionAmountMinor
+//             - amountRemittedMinor + commissionPaidMinor
+//   > 0: the agent owes the office (OWED); < 0: the office owes the agent
+//   their commission (DUE_TO_AGENT, e.g. a deposit paid by mobile money);
+//   0: SETTLED.
 model AgentDepositLedger {
   id                   String   @id @default(uuid())
   contractId           String   @unique
   agentId              String
+  // Cash in the agent's hand on this contract: every effective cash payment
+  // recorded as collected by them (Payment.collectedByAgentId), net of
+  // reversals. Not only the deposit, if they collect instalments too.
   depositAmountMinor   Int
+  // Earned once the contract's deposit has been paid in full, however it was
+  // paid (Deposit + Instalment sales only); 0 before then, and again if the
+  // deposit is unwound. The rate is snapshotted when first earned.
   commissionAmountMinor Int
-  // The product category whose rate set commissionAmountMinor, as named at
-  // the time; null when the default amount applied.
+  commissionRateMinor  Int?
+  // The product category whose rate set the commission, as named at the
+  // time; null when the default amount applied.
   commissionCategoryName String?
-  // = depositAmountMinor - commissionAmountMinor, floored at 0. Stored (not
-  // just derived) because it's the number every ledger/dashboard reads most
-  // often; amountRemittedMinor below is what actually moves it toward SETTLED.
+  // = depositAmountMinor - commissionAmountMinor. Negative when the
+  // commission is more than the cash the agent holds.
   amountOwedMinor      Int
   amountRemittedMinor  Int      @default(0)
-  status               String   @default("OWED") // OWED | SETTLED
+  // Commission the office has paid out to the agent (AgentCommissionPayout).
+  commissionPaidMinor  Int      @default(0)
+  status               String   @default("OWED") // OWED | DUE_TO_AGENT | SETTLED
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
   contract     Contract          @relation(fields: [contractId], references: [id])
   agent        User              @relation("AgentLedgerAgent", fields: [agentId], references: [id])
   remittances  AgentRemittance[]
+  payouts      AgentCommissionPayout[]
 
   @@index([agentId, status])
   @@index([agentId, createdAt])
@@ -941,6 +960,27 @@ model AgentRemittance {
   @@index([ledgerId, status])
   @@index([agentId, status])
   @@map("agent_remittances")
+}
+
+// Commission the office has paid an agent — on a contract where what they
+// earned is more than the cash they held (the deposit was paid by mobile
+// money, say). Recorded by an approver (agent.ledger.manage).
+model AgentCommissionPayout {
+  id          String   @id @default(uuid())
+  ledgerId    String
+  agentId     String
+  amountMinor Int
+  method      String   // CASH | MOBILE_MONEY | BANK_TRANSFER
+  reference   String?
+  paidById    String
+  createdAt   DateTime @default(now())
+
+  ledger AgentDepositLedger @relation(fields: [ledgerId], references: [id])
+  agent  User               @relation("AgentPayoutAgent", fields: [agentId], references: [id])
+  paidBy User               @relation("AgentPayoutPaidBy", fields: [paidById], references: [id])
+
+  @@index([agentId])
+  @@map("agent_commission_payouts")
 }
 
 // Failed sign-ins per account ("staff:<email>" / "portal:<phone>"), so a
