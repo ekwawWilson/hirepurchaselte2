@@ -11,6 +11,11 @@
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+# On a 1 GB droplet Node caps its heap at about 490 MB, and the build's type
+# check outgrew that (October 2026: "JavaScript heap out of memory"). The
+# server has swap to spare, so the build may use more; the running app is
+# unaffected (this stage only).
+ENV NODE_OPTIONS=--max-old-space-size=2048
 
 # openssl in the BUILDER too, not just the runtime stage. `prisma generate`
 # picks its query-engine target by sniffing the platform, and with no openssl
