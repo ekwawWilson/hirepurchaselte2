@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateWebhookRequest } from '@/lib/auth/webhookSecurity';
+import { validateWebhookRequest, logRejectedWebhook } from '@/lib/auth/webhookSecurity';
 import { processPreapprovalCallback, PreapprovalError } from '@/lib/services/hubtelPreapprovalService';
 import { recordHubtelSample } from '@/lib/services/hubtelSampleLogService';
 
@@ -12,6 +12,7 @@ import { recordHubtelSample } from '@/lib/services/hubtelSampleLogService';
 export async function POST(req: NextRequest) {
   const check = validateWebhookRequest(req);
   if (!check.valid) {
+    logRejectedWebhook(req, check.reason);
     return NextResponse.json({ error: 'Unauthorized webhook request' }, { status: 401 });
   }
 

@@ -19,6 +19,18 @@ export function validateWebhookRequest(req: NextRequest): { valid: boolean; reas
   return isWebhookToken(provided) ? { valid: true } : { valid: false, reason: 'Invalid webhook token' };
 }
 
+/**
+ * Notes a Hubtel callback this server turned away. Without it a refused
+ * callback leaves no trace anywhere — the web server keeps no access log —
+ * and "Hubtel says it paid but nothing arrived" cannot be told apart from
+ * "Hubtel never called". The path is logged without its query string, and
+ * the token itself never, so the log is safe to read and share.
+ */
+export function logRejectedWebhook(req: NextRequest, reason: string | undefined, path = req.nextUrl.pathname): void {
+  const from = req.headers.get('cf-connecting-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+  console.warn(`[webhook] refused ${req.method} ${path} from ${from}: ${reason ?? 'invalid token'}`);
+}
+
 /** Whether `candidate` is the configured shared secret. False, always, when none is configured. */
 export function isWebhookToken(candidate: string): boolean {
   const secret = process.env.WEBHOOK_SHARED_TOKEN;

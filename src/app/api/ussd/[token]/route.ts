@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isWebhookToken } from '@/lib/auth/webhookSecurity';
+import { isWebhookToken, logRejectedWebhook } from '@/lib/auth/webhookSecurity';
 import { answerUssdRequest } from '@/lib/services/ussdGatewayService';
 
 /**
@@ -9,6 +9,9 @@ import { answerUssdRequest } from '@/lib/services/ussdGatewayService';
  * route that isn't there.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
-  if (!isWebhookToken((await params).token)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!isWebhookToken((await params).token)) {
+    logRejectedWebhook(req, 'wrong token in the address', '/api/ussd/<token>');
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
   return answerUssdRequest(req);
 }

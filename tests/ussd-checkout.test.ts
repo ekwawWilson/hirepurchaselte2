@@ -10,6 +10,7 @@ import { prisma } from '@/lib/db/prisma';
 
 import { POST as ussdGatewayPOST } from '@/app/api/ussd/[token]/route';
 import { POST as fulfilmentPOST } from '@/app/api/payments/hubtel/service-fulfilment/route';
+import { POST as fulfilmentWithPathTokenPOST } from '@/app/api/payments/hubtel/service-fulfilment/[token]/route';
 import { createContract } from '@/lib/services/contractService';
 import { reconcilePendingHubtelTransactions } from '@/lib/services/hubtelPaymentService';
 import { retryFulfilmentCallbacks } from '@/lib/services/ussdCheckoutService';
@@ -38,7 +39,8 @@ describe('USSD payments through Hubtel\'s checkout', () => {
       data: { membershipId: `CHK-${runId}-${counter}`, firstName: names.firstName ?? 'Checkout', lastName: names.lastName ?? `Payer${counter}`, phone, branchId, createdById: adminUserId },
     });
     const contract = await createContract({ contractType: 'SAVE_TO_OWN', customerId: customer.id, branchId, createdById: adminUserId });
-    return { customer, contract, phone, sessionId: `chk${runId}${counter}`.padEnd(32, '0') };
+    // The counter is zero-padded: padding `...1` and `...10` with zeros would give the same id.
+    return { customer, contract, phone, sessionId: `chk${runId}${String(counter).padStart(3, '0')}`.padEnd(32, '0') };
   }
 
   /** One step of a dial-in, exactly as Hubtel's gateway sends it to the registered address. */
@@ -227,6 +229,58 @@ describe('USSD payments through Hubtel\'s checkout', () => {
     const late = await fulfil(fulfilment(sessionId, `order-${runId}-f`, 80, phone));
     expect(await paid(contract.id)).toBe(8000);
     expect(late.calls[0].body).toMatchObject({ ServiceStatus: 'success' });
+  });
+
+  it('the fulfilment address also works with the secret in its path, for a gateway that drops the query string', async () => {
+    const { contract, phone, sessionId } = await makeSaver();
+    await payThroughMenu(sessionId, phone, '45');
+    const post = (pathToken: string) => withLiveHubtel(() => ({}), async () => {
+      const res = await fulfilmentWithPathTokenPOST(
+        makeRequest('POST', `/api/payments/hubtel/service-fulfilment/${pathToken}`, { body: fulfilment(sessionId, `order-${runId}-p`, 45, phone) }),
+        makeParams({ token: pathToken }),
+      );
+      statuses.push(res.status);
+    });
+    const statuses: number[] = [];
+
+    await post('not-the-secret');
+    expect(statuses).toEqual([404]);
+    expect(await paid(contract.id)).toBe(0);
+
+    const calls = await post(token());
+    expect(statuses).toEqual([404, 200]);
+    expect(await paid(contract.id)).toBe(4500);
+    expect(calls.filter(isCallback).map((c) => c.body)).toContainEqual({ SessionId: sessionId, OrderId: `order-${runId}-p`, ServiceStatus: 'success', MetaData: null });
+  });
+
+  it('a status check that cannot reach Hubtel leaves the payment waiting, and someone is told once it has waited half an hour', async () => {
+    const { contract, phone, sessionId } = await makeSaver();
+    await payThroughMenu(sessionId, phone, '15');
+    const unreachable = (call: HubtelCall) => {
+      if (call.url.includes('api-txnstatus.hubtel.com')) throw new TypeError('fetch failed', { cause: new Error('Connect Timeout Error') });
+      return {};
+    };
+    await prisma.systemAlert.deleteMany({ where: { dedupeKey: 'hubtel-status-check-failing' } });
+
+    // Ten minutes in: still waiting, not written off, and too soon to raise anything.
+    await prisma.hubtelTransaction.update({ where: { clientReference: sessionId }, data: { createdAt: new Date(Date.now() - 10 * 60_000) } });
+    let result: Awaited<ReturnType<typeof reconcilePendingHubtelTransactions>> | undefined;
+    await withLiveHubtel(unreachable, async () => { result = await reconcilePendingHubtelTransactions(); });
+    expect(result!.statusCheckErrors).toBeGreaterThan(0);
+    expect(await txnFor(sessionId)).toMatchObject({ status: 'PENDING' });
+    expect(await prisma.systemAlert.findUnique({ where: { dedupeKey: 'hubtel-status-check-failing' } })).toBeNull();
+
+    // Forty minutes in: still not guessed at, but now put in front of a person, with the reason.
+    await prisma.hubtelTransaction.update({ where: { clientReference: sessionId }, data: { createdAt: new Date(Date.now() - 40 * 60_000) } });
+    await withLiveHubtel(unreachable, async () => { await reconcilePendingHubtelTransactions(); });
+    expect(await txnFor(sessionId)).toMatchObject({ status: 'PENDING' });
+    expect(await paid(contract.id)).toBe(0);
+    const alert = await prisma.systemAlert.findUnique({ where: { dedupeKey: 'hubtel-status-check-failing' } });
+    expect(alert?.message).toMatch(/no result from Hubtel for over 30 minutes.*fetch failed \(Connect Timeout Error\)/);
+
+    // Hubtel's report arriving afterwards still lands.
+    await fulfil(fulfilment(sessionId, `order-${runId}-t`, 15, phone));
+    expect(await paid(contract.id)).toBe(1500);
   });
 
   it('nothing but plain text reaches a USSD screen, whatever a name contains', async () => {

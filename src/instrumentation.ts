@@ -86,7 +86,10 @@ export async function register() {
   cron.schedule('*/5 * * * *', async () => {
     await job('reconcilePendingHubtelTransactions', 'check unanswered mobile money payments', reconcilePendingHubtelTransactions, (result) => {
       if (result.unrecordedRetried > 0) console.log(`[cron] Hubtel reconciliation: retried ledger posting for ${result.unrecordedRetried} collected charge(s)`);
-      return result.checked > 0 ? `Hubtel reconciliation: checked ${result.checked}, failed ${result.failed}` : null;
+      return result.checked > 0
+        ? `Hubtel reconciliation: checked ${result.checked}, succeeded ${result.succeeded}, failed ${result.failed}, still waiting ${result.stillPending}`
+          + (result.statusCheckErrors > 0 ? ` (status check failed for ${result.statusCheckErrors})` : '')
+        : null;
     });
     await job('reconcilePendingPreapprovals', 'check unanswered direct debit approvals', reconcilePendingPreapprovals,
       (result) => (result.checked > 0 ? `Hubtel mandate reconciliation: checked ${result.checked}, resolved ${result.resolved}` : null));

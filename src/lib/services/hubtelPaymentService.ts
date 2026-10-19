@@ -361,6 +361,9 @@ export function normalizeHubtelPaymentCallback(body: unknown): { clientReference
  * may still be sitting on the customer's phone, so it is checked again each
  * sweep and only written off once `giveUpAfterMinutes` old.
  */
+/** How long a payment may go unanswered, with the status check failing, before someone is told. */
+const STATUS_CHECK_ALERT_AFTER_MS = 30 * 60_000;
+
 export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 5, giveUpAfterMinutes = 15) {
   // Imported lazily to avoid a module-load cycle (hubtelPreapprovalService doesn't
   // import this file, but both sit in the same service layer — keeping this one
@@ -375,14 +378,22 @@ export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 5, 
   let succeeded = 0;
   let failed = 0;
   let stillPending = 0;
+  let statusCheckErrors = 0;
+  let lastStatusCheckError: string | null = null;
+  let oldestUnanswered: Date | null = null;
   for (const txn of stale) {
     let checkedStatus: 'SUCCESS' | 'FAILED' | 'PENDING';
     try {
       checkedStatus = (await checkHubtelTransactionStatus(txn.clientReference)).status;
-    } catch {
+    } catch (e) {
       // The status check itself failed (network/misconfiguration) — don't guess;
       // leave this one PENDING for the next sweep rather than risk wrongly
-      // failing a payment that may actually have succeeded.
+      // failing a payment that may actually have succeeded. But say why: a
+      // check that never works leaves payments waiting with no one told.
+      lastStatusCheckError = e instanceof Error ? (e.cause instanceof Error ? `${e.message} (${e.cause.message})` : e.message) : String(e);
+      console.error(`[hubtel] status check for ${txn.channel} payment ${txn.clientReference} failed: ${lastStatusCheckError}`);
+      statusCheckErrors += 1;
+      if (!oldestUnanswered || txn.createdAt < oldestUnanswered) oldestUnanswered = txn.createdAt;
       stillPending += 1;
       continue;
     }
@@ -424,5 +435,16 @@ export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 5, 
     }
   }
 
-  return { checked: stale.length, succeeded, failed, stillPending, unrecordedRetried: unrecorded.length, recorded };
+  // Thirty minutes is well past both Hubtel's callback and its own five-minute
+  // status-check rule: these payments will not resolve on their own.
+  if (oldestUnanswered && Date.now() - oldestUnanswered.getTime() > STATUS_CHECK_ALERT_AFTER_MS) {
+    const { raiseAlert } = await import('./alertService');
+    await raiseAlert({
+      kind: 'HUBTEL_STATUS_CHECK_FAILING',
+      message: `${statusCheckErrors} mobile money payment(s) have had no result from Hubtel for over 30 minutes, and Hubtel's status check is not answering (${lastStatusCheckError}). They stay pending until Hubtel answers or sends the payment result. Check with Hubtel that this server's IP address is whitelisted for the status check, and that the Service Fulfilment URL is set.`,
+      dedupeKey: 'hubtel-status-check-failing',
+    });
+  }
+
+  return { checked: stale.length, succeeded, failed, stillPending, statusCheckErrors, unrecordedRetried: unrecorded.length, recorded };
 }
