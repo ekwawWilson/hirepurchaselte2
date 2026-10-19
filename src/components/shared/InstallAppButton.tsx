@@ -5,7 +5,7 @@
 // this renders nothing until the site has a certificate.
 
 import { useEffect, useState } from "react";
-import { Download } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface BeforeInstallPromptEvent extends Event {
@@ -29,12 +29,50 @@ function isStandalone() {
   );
 }
 
+// The button floats over the page, so on a phone it can sit on top of a form
+// field. Hiding it is remembered for a while on this device, and the browser's
+// own menu can still install the app in the meantime.
+const DISMISS_KEY = "hplite.installAppDismissedAt";
+const DISMISS_DAYS = 30;
+
+function dismissedRecently() {
+  try {
+    const at = Number(localStorage.getItem(DISMISS_KEY));
+    return at > 0 && Date.now() - at < DISMISS_DAYS * 86_400_000;
+  } catch {
+    return false;
+  }
+}
+
+function HideButton({ onHide }: { onHide: () => void }) {
+  return (
+    <Button
+      variant="outline"
+      size="icon"
+      className="h-8 w-8 bg-white"
+      aria-label="Hide install button"
+      onClick={() => {
+        try {
+          localStorage.setItem(DISMISS_KEY, String(Date.now()));
+        } catch {
+          // Storage unavailable (private mode): hide for this visit only.
+        }
+        onHide();
+      }}
+    >
+      <X />
+    </Button>
+  );
+}
+
 export function InstallAppButton() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
   const [showIosHint, setShowIosHint] = useState(false);
+  const [hidden, setHidden] = useState(false);
 
   useEffect(() => {
+    if (dismissedRecently()) setHidden(true);
     if (isStandalone()) {
       setInstalled(true);
       return;
@@ -59,17 +97,20 @@ export function InstallAppButton() {
     };
   }, []);
 
-  if (installed) return null;
+  if (installed || hidden) return null;
 
   if (!deferredPrompt) {
     if (!isIosSafari()) return null;
 
     return (
       <>
-        <Button variant="outline" size="sm" onClick={() => setShowIosHint(true)}>
-          <Download />
-          Install App
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="sm" className="bg-white" onClick={() => setShowIosHint(true)}>
+            <Download />
+            Install App
+          </Button>
+          <HideButton onHide={() => setHidden(true)} />
+        </div>
         {showIosHint && (
           <div
             role="dialog"
@@ -105,9 +146,12 @@ export function InstallAppButton() {
   };
 
   return (
-    <Button variant="outline" size="sm" onClick={handleInstallClick}>
-      <Download />
-      Install App
-    </Button>
+    <div className="flex items-center gap-1">
+      <Button variant="outline" size="sm" className="bg-white" onClick={handleInstallClick}>
+        <Download />
+        Install App
+      </Button>
+      <HideButton onHide={() => setHidden(true)} />
+    </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { FileText, FileSignature } from 'lucide-react';
-import { useEffect, useState, use } from 'react';
+import { useEffect, useState, use, type ReactNode } from 'react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { unitTitle } from '@/lib/unitLabel';
@@ -538,22 +538,22 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="max-w-4xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">{contract.contractNumber}</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone ?? contract.customer.phone2 ?? contract.customer.phone3}
-            {contract.product && <> &middot; {unitTitle(contract.product.name, contract.inventoryItem?.name)}</>} &middot; {contractTypeLabel(contract.contractType)}
-            {contract.contractType !== 'SAVE_TO_OWN' && <> &middot; {contract.paymentFrequency.charAt(0) + contract.paymentFrequency.slice(1).toLowerCase()}</>}
-          </p>
-          {contract.inventoryItem && (
-            <p className="text-xs text-gray-500 mt-0.5">
-              {contract.inventoryItem.description && <>{contract.inventoryItem.description} &middot; </>}
-              <span className="font-mono">{contract.inventoryItem.serialNumber}</span>
-            </p>
-          )}
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{contract.contractNumber}</h1>
+          <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${getStatusColor(contract.status)}`}>{contract.status.replace(/_/g, ' ')}</span>
         </div>
-        <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${getStatusColor(contract.status)}`}>{contract.status}</span>
+        <p className="text-sm text-gray-500 mt-0.5">
+          {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone ?? contract.customer.phone2 ?? contract.customer.phone3}
+          {contract.product && <> &middot; {unitTitle(contract.product.name, contract.inventoryItem?.name)}</>} &middot; {contractTypeLabel(contract.contractType)}
+          {contract.contractType !== 'SAVE_TO_OWN' && <> &middot; {contract.paymentFrequency.charAt(0) + contract.paymentFrequency.slice(1).toLowerCase()}</>}
+        </p>
+        {contract.inventoryItem && (
+          <p className="text-xs text-gray-500 mt-0.5">
+            {contract.inventoryItem.description && <>{contract.inventoryItem.description} &middot; </>}
+            <span className="font-mono">{contract.inventoryItem.serialNumber}</span>
+          </p>
+        )}
       </div>
 
       {!preApproval && (
@@ -636,26 +636,23 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       )}
 
       {contract.contractType === 'SAVE_TO_OWN' ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total saved</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPaidMinor)}</p></CardContent></Card>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
+          <SummaryFigure label="Total saved" value={formatCurrency(contract.totalPaidMinor)} />
         </div>
       ) : contract.contractType === 'DEVICE_LOAN' ? (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Loan amount</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.deviceLoanState?.principalMinor ?? contract.principalMinor ?? 0)}</p></CardContent></Card>
-          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Principal</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{contract.deviceLoanState?.principalOutstanding ? 'Outstanding' : 'Paid'}</p></CardContent></Card>
-          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Interest owed</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.deviceLoanState?.accruedInterestMinor ?? 0)}</p></CardContent></Card>
-          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total owed</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.deviceLoanState?.totalOwedMinor ?? 0)}</p></CardContent></Card>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
+          <SummaryFigure label="Loan amount" value={formatCurrency(contract.deviceLoanState?.principalMinor ?? contract.principalMinor ?? 0)} />
+          <SummaryFigure label="Principal" value={contract.deviceLoanState?.principalOutstanding ? 'Outstanding' : 'Paid'} />
+          <SummaryFigure label="Interest owed" value={formatCurrency(contract.deviceLoanState?.accruedInterestMinor ?? 0)} />
+          <SummaryFigure label="Total owed" value={formatCurrency(contract.deviceLoanState?.totalOwedMinor ?? 0)} />
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-4">
-          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total payable</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPayableMinor ?? 0)}</p></CardContent></Card>
-          <Card className="min-w-0"><CardContent className="p-4"><p className="text-xs text-gray-500">Total paid</p><p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.totalPaidMinor)}</p></CardContent></Card>
-          <Card className="min-w-0">
-            <CardContent className="p-4">
-              <p className="text-xs text-gray-500">Balance</p>
-              <p className="text-base sm:text-lg font-semibold text-gray-900 break-words">{formatCurrency(contract.balanceMinor ?? 0)}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4">
+          <SummaryFigure label="Total payable" value={formatCurrency(contract.totalPayableMinor ?? 0)} />
+          <SummaryFigure label="Total paid" value={formatCurrency(contract.totalPaidMinor)} />
+          <SummaryFigure label="Balance" value={formatCurrency(contract.balanceMinor ?? 0)}>
               {contract.creditMinor > 0 && (
-                <p className="text-xs text-green-700 mt-0.5 break-words">
+                <p className="text-xs text-green-700 mt-0.5 text-right sm:text-left break-words">
                   Overpaid by {formatCurrency(contract.creditMinor)}
                   {hasPermission('payment.reverse') && (
                     <button
@@ -667,8 +664,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   )}
                 </p>
               )}
-            </CardContent>
-          </Card>
+          </SummaryFigure>
         </div>
       )}
 
@@ -699,12 +695,12 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         <Card>
           <CardHeader><CardTitle>Record a cash payment</CardTitle></CardHeader>
           <CardContent>
-            <form className="flex items-end gap-3" onSubmit={recordPayment}>
+            <form className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3" onSubmit={recordPayment}>
               {contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT' && (
                 <div>
                   <Label>Type</Label>
                   <select
-                    className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                    className="mt-1.5 flex h-10 w-full sm:w-auto border border-input bg-white/90 px-3 py-2 text-sm"
                     value={entryType}
                     onChange={(e) => setEntryType(e.target.value as 'DEPOSIT' | 'INSTALMENT_PAYMENT')}
                   >
@@ -715,9 +711,9 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               )}
               <div>
                 <Label>Amount (GHS)</Label>
-                <Input required type="number" step="0.01" min="1" className="mt-1.5 w-40" value={amount} onChange={(e) => { setAmount(e.target.value); setDuplicateWarning(null); }} />
+                <Input required type="number" step="0.01" min="1" className="mt-1.5 w-full sm:w-40" value={amount} onChange={(e) => { setAmount(e.target.value); setDuplicateWarning(null); }} />
               </div>
-              <div className="flex-1 min-w-[10rem]">
+              <div className="sm:flex-1 sm:min-w-[10rem]">
                 <Label>Description</Label>
                 <Input
                   placeholder="e.g. counter cash deposit"
@@ -726,7 +722,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   onChange={(e) => setPaymentNotes(e.target.value)}
                 />
               </div>
-              <Button type="submit" disabled={saving}>{saving ? 'Recording...' : 'Record payment'}</Button>
+              <Button type="submit" className="w-full sm:w-auto" disabled={saving}>{saving ? 'Recording...' : 'Record payment'}</Button>
             </form>
             {agentCashChoice}
             {duplicateWarning && (
@@ -750,11 +746,11 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               {numbers.length === 0 ? (
                 <p className="text-sm text-gray-500">This customer has no phone number on file to send a prompt to.</p>
               ) : (
-                <form className="flex flex-wrap items-end gap-3" onSubmit={sendMomoPrompt}>
+                <form className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3" onSubmit={sendMomoPrompt}>
                   <div>
                     <Label>Customer&apos;s number</Label>
                     <select
-                      className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                      className="mt-1.5 flex h-10 w-full sm:w-auto border border-input bg-white/90 px-3 py-2 text-sm"
                       value={momoMsisdn}
                       onChange={(e) => { setMomoMsisdn(e.target.value); setMomoNetwork(networkForPhone(e.target.value) || ''); }}
                       disabled={momoWaiting}
@@ -766,7 +762,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                     <Label>Network</Label>
                     <select
                       required
-                      className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                      className="mt-1.5 flex h-10 w-full sm:w-auto border border-input bg-white/90 px-3 py-2 text-sm"
                       value={momoNetwork}
                       onChange={(e) => setMomoNetwork(e.target.value)}
                       disabled={momoWaiting}
@@ -778,11 +774,11 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   <div>
                     <Label>Amount (GHS)</Label>
                     <Input
-                      required type="number" step="0.01" min="0.01" className="mt-1.5 w-36"
+                      required type="number" step="0.01" min="0.01" className="mt-1.5 w-full sm:w-36"
                       value={momoAmount} onChange={(e) => setMomoAmount(e.target.value)} disabled={momoWaiting}
                     />
                   </div>
-                  <Button type="submit" disabled={momoWaiting}>{momoWaiting ? 'Waiting for approval...' : 'Send prompt'}</Button>
+                  <Button type="submit" className="w-full sm:w-auto" disabled={momoWaiting}>{momoWaiting ? 'Waiting for approval...' : 'Send prompt'}</Button>
                 </form>
               )}
               {loan && (
@@ -838,7 +834,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                         below.
                       </p>
                       {canVerifyMandate && (
-                        <form className="flex items-end gap-3" onSubmit={submitOtp}>
+                        <form className="flex flex-wrap items-end gap-3" onSubmit={submitOtp}>
                           <div>
                             <Label>OTP code</Label>
                             <div className="mt-1.5 flex items-center gap-2">
@@ -889,7 +885,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   </p>
                 )}
                 {canPay && contract.hubtelPreapproval.status === 'APPROVED' && contract.status === 'ACTIVE' && (
-                  <form className="flex items-end gap-3" onSubmit={chargeNow}>
+                  <form className="flex flex-wrap items-end gap-3" onSubmit={chargeNow}>
                     <div>
                       <Label>Charge amount (GHS)</Label>
                       <Input required type="number" step="0.01" className="mt-1.5 w-40" value={chargeAmount} onChange={(e) => setChargeAmount(e.target.value)} />
@@ -941,15 +937,15 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               <p className="text-sm text-gray-500">No direct debit on this contract. A manager can set it up.</p>
             ) : contract.status === 'ACTIVE' || contract.status === 'PENDING_DEPOSIT' ? (
               <div className="space-y-2">
-                <form className="flex flex-wrap items-end gap-3" onSubmit={setupDirectDebit}>
+                <form className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3" onSubmit={setupDirectDebit}>
                   <div>
                     <Label>Mobile money number</Label>
-                    <Input required className="mt-1.5 w-44" value={ddMsisdn} onChange={(e) => setDdMsisdn(e.target.value)} />
+                    <Input required className="mt-1.5 w-full sm:w-44" value={ddMsisdn} onChange={(e) => setDdMsisdn(e.target.value)} />
                   </div>
                   <div>
                     <Label>Network</Label>
                     <select
-                      className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                      className="mt-1.5 flex h-10 w-full sm:w-auto border border-input bg-white/90 px-3 py-2 text-sm"
                       value={ddNetwork}
                       onChange={(e) => setDdNetwork(e.target.value)}
                     >
@@ -959,7 +955,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   <div>
                     <Label>Mode</Label>
                     <select
-                      className="mt-1.5 flex h-10 border border-input bg-white/90 px-3 py-2 text-sm"
+                      className="mt-1.5 flex h-10 w-full sm:w-auto border border-input bg-white/90 px-3 py-2 text-sm"
                       value={ddMode}
                       onChange={(e) => setDdMode(e.target.value as 'DIRECT_DEBIT' | 'BOTH')}
                     >
@@ -967,7 +963,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                       <option value="BOTH">Both — on default</option>
                     </select>
                   </div>
-                  <Button type="submit" disabled={ddSaving}>{ddSaving ? 'Requesting...' : 'Set up direct debit'}</Button>
+                  <Button type="submit" className="w-full sm:w-auto" disabled={ddSaving}>{ddSaving ? 'Requesting...' : 'Set up direct debit'}</Button>
                 </form>
                 <p className="text-xs text-gray-400">
                   Hubtel asks the customer to approve once — by a USSD prompt on their phone, or by an OTP you enter
@@ -1304,5 +1300,20 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/** One headline figure. On a phone it is a single row — label left, amount right — so a long amount never has to squeeze into a third of the screen. */
+function SummaryFigure({ label, value, children }: { label: string; value: string; children?: ReactNode }) {
+  return (
+    <Card className="min-w-0">
+      <CardContent className="p-3 sm:p-4">
+        <div className="flex items-baseline justify-between gap-3 sm:block">
+          <p className="text-xs text-gray-500">{label}</p>
+          <p className="text-base sm:text-lg font-semibold text-gray-900 tabular-nums break-words">{value}</p>
+        </div>
+        {children}
+      </CardContent>
+    </Card>
   );
 }

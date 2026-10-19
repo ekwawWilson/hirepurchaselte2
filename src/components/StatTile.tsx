@@ -33,7 +33,7 @@ export function StatTile({
         </div>
       </div>
       <div className="min-w-0">
-        <p className="truncate text-base sm:text-xl font-bold text-gray-900" title={value}>{value}</p>
+        <p className="break-words tabular-nums text-base sm:text-xl font-bold text-gray-900">{value}</p>
         {caption && <p className="text-xs text-gray-400 mt-0.5 truncate">{caption}</p>}
       </div>
     </div>

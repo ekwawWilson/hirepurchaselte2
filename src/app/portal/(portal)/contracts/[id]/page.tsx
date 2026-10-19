@@ -84,7 +84,7 @@ export default function PortalContractDetailPage() {
 
       {/* Headline figures, worded for the contract type in hand */}
       <Card>
-        <CardContent className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <CardContent className="p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
           <Figure label={isSavings ? 'Saved so far' : 'Paid so far'} value={formatCurrency(contract.totalPaidMinor)} tone="good" />
           {isSavings ? (
             <Figure label="Type" value="Open savings" />
@@ -193,9 +193,9 @@ export default function PortalContractDetailPage() {
 
 function Figure({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'bad' }) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0 flex items-baseline justify-between gap-3 sm:block">
       <p className="text-xs text-gray-500">{label}</p>
-      <p className={cn('text-lg font-semibold truncate',
+      <p className={cn('text-lg font-semibold tabular-nums break-words',
         tone === 'good' ? 'text-emerald-600' : tone === 'bad' ? 'text-red-600' : 'text-gray-900')}>
         {value}
       </p>
