@@ -8,6 +8,8 @@ export type HubtelSampleKind =
   // this server told it back (ussdCheckoutService.ts).
   | 'SERVICE_FULFILMENT'
   | 'SERVICE_FULFILMENT_CALLBACK'
+  // Hubtel's mobile money name lookup (hubtelVerificationService.ts).
+  | 'MOMO_VERIFY'
   // Outbound — this server calling Hubtel — captured in hubtelClient.ts, the
   // single choke point every one of these calls goes through regardless of
   // which service initiated it.

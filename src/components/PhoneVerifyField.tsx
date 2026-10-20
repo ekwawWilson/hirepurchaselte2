@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useToast } from '@/hooks/useToast';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,10 @@ import { networkForPhone } from '@/lib/constants/customers';
  * purely as a typo/sanity check (never blocks the form; the verify call itself
  * fails open — see hubtelVerificationService.ts). The network is read from the
  * number's prefix rather than asked for.
+ *
+ * The answer shows under the field: the wallet name to compare with the
+ * customer's, a number Hubtel says has no wallet, or — when the check could not
+ * be made at all — why, which says nothing either way about the number.
  */
 export function PhoneVerifyField({
   label, value, onChange, required,
@@ -27,7 +31,7 @@ export function PhoneVerifyField({
 }) {
   const { toast } = useToast();
   const [checking, setChecking] = useState(false);
-  const [result, setResult] = useState<{ verified: boolean; accountName: string | null } | null>(null);
+  const [result, setResult] = useState<{ verified: boolean; checked?: boolean; accountName: string | null; message: string } | null>(null);
   const network = value.trim().length >= 3 ? networkForPhone(value) : null;
 
   async function verify() {
@@ -35,9 +39,7 @@ export function PhoneVerifyField({
     setChecking(true);
     setResult(null);
     try {
-      const res = await api.post<{ verified: boolean; accountName: string | null; message: string }>('/customers/verify-phone', { phone: value });
-      setResult(res);
-      if (!res.verified) toast({ title: 'Could not verify', description: res.message, variant: 'destructive' });
+      setResult(await api.post<{ verified: boolean; checked: boolean; accountName: string | null; message: string }>('/customers/verify-phone', { phone: value }));
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Verification failed', variant: 'destructive' });
     } finally {
@@ -63,9 +65,21 @@ export function PhoneVerifyField({
         </Button>
       </div>
       {result?.verified ? (
-        <p className="mt-1 flex items-center gap-1 text-xs text-emerald-700">
-          <CheckCircle2 className="h-3.5 w-3.5" />
-          {result.accountName ? `Registered to ${result.accountName}` : 'Registered mobile money number'}
+        <p className="mt-1 flex items-start gap-1 text-xs text-emerald-700">
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-px" />
+          <span>
+            {result.accountName ? <>Registered to <strong>{result.accountName}</strong> — check this is the customer</> : result.message}
+          </span>
+        </p>
+      ) : result?.checked ? (
+        <p className="mt-1 flex items-start gap-1 text-xs text-red-600">
+          <XCircle className="h-3.5 w-3.5 shrink-0 mt-px" />
+          <span>{result.message}</span>
+        </p>
+      ) : result ? (
+        <p className="mt-1 flex items-start gap-1 text-xs text-amber-700">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+          <span>Not checked: {result.message}</span>
         </p>
       ) : network ? (
         <p className="mt-1 text-xs text-gray-500">{MOBILE_MONEY_NETWORK_LABELS[network]}</p>

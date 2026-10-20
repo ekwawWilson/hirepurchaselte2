@@ -11,7 +11,7 @@
  *    collections run.
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { makeRequest, enableOptionalContractTypes, registrationFields, freshPhone } from './helpers';
+import { makeRequest, enableOptionalContractTypes, registrationFields, freshPhone, withLiveHubtel, hubtelHttp, type HubtelCall } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -152,6 +152,60 @@ describe('Hubtel mobile money verification (mock mode)', () => {
       token: cashier, body: { phone: '0314123456' },
     }));
     expect(unknownPrefix.status).toBe(400);
+  });
+
+  describe('against a live Hubtel account', () => {
+    const isVerify = (call: HubtelCall) => call.url.startsWith('https://rnv.hubtel.com/');
+    const lookup = async (phone: string, answer: (call: HubtelCall) => unknown, network = 'MTN') => {
+      let result: Awaited<ReturnType<typeof verifyMobileMoneyNumber>> | undefined;
+      const calls = await withLiveHubtel(answer, async () => {
+        result = await verifyMobileMoneyNumber({ msisdn: phone, network, requestedById: 'live-test-user' });
+      });
+      return { result: result!, calls };
+    };
+
+    it('asks Hubtel\'s Verification API and shows the name on the wallet', async () => {
+      const phone = await uniquePhone();
+      const { result, calls } = await lookup(phone, () => ({
+        message: 'Success', responseCode: '0000', data: { isRegistered: true, name: 'AMA OWUSU', status: 'active', profile: 'Subscriber' },
+      }));
+      expect(calls.map((c) => c.url)).toEqual([
+        `https://rnv.hubtel.com/v2/merchantaccount/merchants/11684/mobilemoney/verify?channel=mtn-gh&customerMsisdn=233${phone.slice(1)}`,
+      ]);
+      expect(result).toEqual({ verified: true, checked: true, accountName: 'AMA OWUSU', message: 'Registered mobile money number.' });
+
+      // A Telecel number goes to Hubtel's vodafone channel.
+      const telecel = await freshPhone('020');
+      const t = await lookup(telecel, () => ({ responseCode: '0000', data: { isRegistered: true, name: 'KOFI MENSAH', status: 'active' } }), 'TELECEL');
+      expect(t.calls[0].url).toContain('channel=vodafone-gh');
+    });
+
+    it('says plainly when the number has no mobile money wallet', async () => {
+      const { result } = await lookup(await uniquePhone(), () => ({ message: 'Success', responseCode: '0000', data: { isRegistered: false, name: null, status: null } }));
+      expect(result).toMatchObject({ verified: false, checked: true, accountName: null });
+      expect(result.message).toMatch(/not registered for mobile money/);
+    });
+
+    it('when Hubtel refuses or is unreachable, says the number was not checked — and tries again next time', async () => {
+      const phone = await uniquePhone();
+      const refused = await lookup(phone, () => hubtelHttp(403, { message: 'Forbidden' }));
+      expect(refused.result).toMatchObject({ verified: false, checked: false });
+      expect(refused.result.message).toMatch(/Hubtel refused the number check/);
+
+      const down = await lookup(phone, () => { throw new TypeError('fetch failed'); });
+      expect(down.calls.filter(isVerify)).toHaveLength(1); // not served the refusal from cache
+      expect(down.result).toMatchObject({ verified: false, checked: false });
+
+      // Hubtel's own documented refusal, passed through as written.
+      const declined = await lookup(phone, () => ({ message: 'Customer number is invalid', responseCode: '2001', data: null }));
+      expect(declined.result).toEqual({ verified: false, checked: false, accountName: null, message: 'Customer number is invalid' });
+
+      // Once it answers, the answer is kept for a while.
+      await lookup(phone, () => ({ responseCode: '0000', data: { isRegistered: true, name: 'YAW DARKO', status: 'active' } }));
+      const again = await lookup(phone, () => { throw new Error('should come from the cache'); });
+      expect(again.calls).toEqual([]);
+      expect(again.result.accountName).toBe('YAW DARKO');
+    });
   });
 
   it('POST /api/customers/verify-phone still rejects a genuinely unknown network', async () => {
