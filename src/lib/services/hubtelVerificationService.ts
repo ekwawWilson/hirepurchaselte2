@@ -148,7 +148,8 @@ export async function verifyMobileMoneyNumber(params: {
     result = unchecked(e instanceof Error ? e.message : 'Verification unavailable');
   }
 
-  // Only a real answer is kept: a hiccup should not stop the next try for five minutes.
-  if (result.checked) cache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+  // Only a real answer from Hubtel is kept: a hiccup should not stop the next
+  // try for five minutes, and a simulated one must never stand in for Hubtel's.
+  if (result.checked && isHubtelLiveMode()) cache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   return result;
 }
