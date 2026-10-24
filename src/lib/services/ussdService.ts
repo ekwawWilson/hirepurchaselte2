@@ -1,7 +1,7 @@
 import { prisma } from '../db/prisma';
 import { formatMoney } from '../utils/money';
 import { initiateHubtelPayment, HubtelError } from './hubtelPaymentService';
-import { networkForOperator } from '../constants/customers';
+import { networkForOperator, networkForPhone } from '../constants/customers';
 import { getOrgSettings } from './orgSettingsService';
 import { getDeviceLoanState } from './paymentService';
 import { assertPaymentsAcceptedToday, PaymentsClosedError } from './operatingSettingsService';
@@ -10,8 +10,12 @@ import { phoneVariants } from './hubtelClient';
 import { beginUssdCheckout, ussdUsesHubtelCheckout } from './ussdCheckoutService';
 import { parseCedis, paymentAmountProblem, waitingPromptProblem } from './paymentLimitsService';
 import { MONEY_OUT_ENTRY_TYPES } from '../constants/contracts';
+import { verifyMobileMoneyNumber } from './hubtelVerificationService';
 
 const SESSION_TTL_MINUTES = 5;
+// The gateway is waiting on the whole answer: a slow name lookup is dropped
+// (the registered name is used instead) rather than left to time the session out.
+const WALLET_NAME_TIMEOUT_MS = 3_000;
 
 interface UssdContext {
   contractIds?: string[];
@@ -19,6 +23,10 @@ interface UssdContext {
   page?: number;
   contractId?: string;
   amountMinor?: number;
+  /** Who the caller is welcomed as: the name on the dialling phone's wallet when Hubtel confirmed it, else the registered one. */
+  name?: string;
+  /** The first line of the account screens: "Welcome {name}", or "Paying for {name}" when paying for someone else. */
+  heading?: string;
 }
 
 /**
@@ -41,12 +49,15 @@ export interface UssdResult {
   checkout?: { itemName: string; amountMinor: number };
 }
 
-const ALT_PHONE_PROMPT = 'Enter a registered phone number to continue, or 0 to cancel:';
+const MAIN_MENU = '1. Self payment\n2. Pay for others';
+const NO_CONTRACT_MENU = '1. Pay for others\n2. Cancel';
+const ALT_PHONE_PROMPT = 'Enter their registered phone number, or 0 to go back:';
 
 // A customer can dial in from any of their three registered numbers, not just
 // whichever one happens to be stored in the "main" slot (customerService.ts) —
-// and, via ENTER_ALT_PHONE below, from a number that isn't registered at all
-// (a shared/agent phone) as long as they can type in one that is.
+// and, via "Pay for others" (ENTER_ALT_PHONE below), anyone can pay from a
+// number that isn't registered at all (a shared/agent phone, a relative) as
+// long as they can type in one that is.
 // Hubtel's real dial-in "Mobile" always arrives 233-prefixed; a customer's
 // number is stored exactly as typed at registration (0-prefixed, 233-prefixed
 // or +233-prefixed, all seen in practice) — so every equivalent form has to be
@@ -83,11 +94,13 @@ function nextStateFor(contractType: string): 'DEVICE_LOAN_CHOOSE' | 'ENTER_AMOUN
  *    accrued interest owed so far, or the full loan amount. Whichever of the
  *    two is currently owed is shown; a fully-paid-off option isn't offered.
  *
- * Opens with "{companyName}\nHi {full name}" — the tenant's own configured
- * company name (Settings page, same source startSession's no-account-found
- * message uses), not the application's default branding, since this is a
- * customer-facing screen. The customer should see who they're paying and
- * their own name the moment they dial in, not an account/contract number.
+ * Opens with "Welcome {name}" — the name on the customer's mobile money
+ * wallet as Hubtel's Verification API reports it (see walletName) — or, when
+ * someone is paying for another person, "Paying for {account holder}", then
+ * the tenant's own configured company name (Settings page), not the
+ * application's default branding, since this is a customer-facing screen. The
+ * customer should see whose account it is and who they're paying, not an
+ * account/contract number.
  *
  * Kept deliberately terse otherwise (abbreviated labels, no contract-type
  * name here) to stay well inside a USSD screen's character budget — this app
@@ -103,12 +116,55 @@ function nextStateFor(contractType: string): 'DEVICE_LOAN_CHOOSE' | 'ENTER_AMOUN
  */
 export const USSD_SCREEN_LIMIT = 160;
 
-/** The opening lines of every screen: who is asking, kept short whatever the names are. */
-async function greeting(customerName: string): Promise<string> {
+/**
+ * A name as a screen shows it. Hubtel hands a wallet name back in capitals
+ * ("AMA OWUSU"), which is put in ordinary case; a name typed at registration
+ * is left as it was. Whole words only, up to 20 characters.
+ */
+function displayName(name: string): string {
+  const cased = name === name.toUpperCase() ? name.toLowerCase().replace(/(^|[\s'-])\p{L}/gu, (m) => m.toUpperCase()) : name;
+  const [first, ...rest] = cased.trim().split(/\s+/);
+  let shown = first.slice(0, 20);
+  for (const word of rest) {
+    if (shown.length + 1 + word.length > 20) break;
+    shown += ` ${word}`;
+  }
+  return shown;
+}
+
+const welcomeLine = (name: string) => `Welcome ${displayName(name)}`;
+const payingForLine = (name: string) => `Paying for ${displayName(name)}`;
+
+/** The tenant's company name, kept short enough for a screen. */
+async function shortCompanyName(): Promise<string> {
   const { companyName } = await getOrgSettings();
-  const company = companyName.length > 22 ? `${companyName.slice(0, 21).trimEnd()}.` : companyName;
-  const firstName = customerName.trim().split(/\s+/)[0].slice(0, 15);
-  return `${company}\nHi ${firstName}\n`;
+  return companyName.length > 22 ? `${companyName.slice(0, 21).trimEnd()}.` : companyName;
+}
+
+/** The opening lines of every account screen: whose account it is, then who is being paid. */
+async function greeting(heading: string): Promise<string> {
+  return `${heading}\n${await shortCompanyName()}\n`;
+}
+
+/** The first screen of every dial-in: the caller welcomed by name, and whether they are paying for themselves. */
+async function mainMenu(name: string | undefined, notice = ''): Promise<UssdResult> {
+  const welcome = name ? welcomeLine(name) : `Welcome to ${await shortCompanyName()}`;
+  return { message: `${notice}${welcome}\n${MAIN_MENU}`, continueSession: true, label: 'Choose option', fieldType: 'number' };
+}
+
+/**
+ * The name on the dialling phone's mobile money wallet, from Hubtel's
+ * Verification API (hubtelVerificationService.ts) — what the customer is
+ * welcomed by. Null when Hubtel did not confirm one (not a wallet, not
+ * answered in time, product not enabled, network unknown); the screens then
+ * use the name the customer was registered with. Answers are cached there
+ * for five minutes, so redialling does not ask again.
+ */
+async function walletName(msisdn: string, operator?: string): Promise<string | null> {
+  const network = networkForOperator(operator) ?? networkForPhone(msisdn);
+  if (!network) return null;
+  const result = await verifyMobileMoneyNumber({ msisdn, network, requestedById: `ussd:${msisdn}`, timeoutMs: WALLET_NAME_TIMEOUT_MS });
+  return result.verified ? result.accountName : null;
 }
 
 /** dd/mm — the year is never in doubt on a screen about what is due now. */
@@ -119,8 +175,8 @@ async function contractPrompt(contract: {
   contractType: string;
   balanceMinor: number | null;
   totalPaidMinor: number;
-}, customerName: string): Promise<string> {
-  const hello = await greeting(customerName);
+}, heading: string): Promise<string> {
+  const hello = await greeting(heading);
 
   if (contract.contractType === 'SAVE_TO_OWN') {
     return `${hello}Saved GHS${formatMoney(contract.totalPaidMinor)}\n0. Last payments\nEnter amount to pay:`;
@@ -163,7 +219,7 @@ type ListedContract = { id: string; contractType: string; totalPaidMinor: number
  * number. A list too long for one screen is split, with 0 for the next part;
  * the numbers stay the same on every part, so a choice means one thing.
  */
-async function contractListScreen(contracts: ListedContract[], customerName: string, page: number, notice = ''): Promise<{ message: string; page: number }> {
+async function contractListScreen(contracts: ListedContract[], heading: string, page: number, notice = ''): Promise<{ message: string; page: number }> {
   const lines = await Promise.all(contracts.map(async (c, i) => {
     const what = (c.product?.name ?? (c.contractType === 'SAVE_TO_OWN' ? 'Savings' : c.contractType === 'DEVICE_LOAN' ? 'Loan' : contractTypeLabel(c.contractType))).slice(0, 16);
     const amount = c.contractType === 'SAVE_TO_OWN'
@@ -173,7 +229,7 @@ async function contractListScreen(contracts: ListedContract[], customerName: str
         : `bal GHS${formatMoney(c.balanceMinor ?? 0)}`;
     return `${i + 1}. ${what} ${amount}`;
   }));
-  const head = `${notice}${await greeting(customerName)}Choose:`;
+  const head = `${notice}${await greeting(heading)}Choose:`;
   const more = '0. More';
   const pages: string[][] = [[]];
   for (const line of lines) {
@@ -214,14 +270,14 @@ async function lastPaymentsScreen(contractId: string): Promise<UssdResult> {
 }
 
 /**
- * Looks up this customer's payable contracts and writes/advances the session
- * to whichever next state applies — shared by the normal dial-in path and by
- * ENTER_ALT_PHONE once a typed-in number resolves to an account, via upsert
- * since only the latter has an existing session row to update. `dialedMsisdn`
- * is always the phone actually dialed in (what a payment gets billed to) —
- * never an alternate number typed in purely to *find* the account.
+ * Looks up this customer's payable contracts and advances the session to
+ * whichever next state applies — shared by "Self payment" and by "Pay for
+ * others" once a typed-in number resolves to an account. Null, with the
+ * session left as it was, when nothing is payable: each path asks again in
+ * its own way. The session's msisdn stays the phone actually dialed in (what
+ * a payment gets billed to) — never a number typed in to *find* the account.
  */
-async function beginForCustomer(sessionId: string, dialedMsisdn: string, customerId: string, customerName: string): Promise<UssdResult> {
+async function beginForCustomer(sessionId: string, customerId: string, heading: string): Promise<UssdResult | null> {
   // DEFAULTED is deliberately included: it isn't a terminal status (see
   // overdueService.markDefaultedContracts / paymentService.advanceContractStatus) —
   // a customer catching up their own arrears via USSD is exactly the self-service
@@ -238,20 +294,16 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
     orderBy: { createdAt: 'asc' },
     select: listedContractSelect,
   });
-  if (contracts.length === 0) {
-    await prisma.ussdSession.deleteMany({ where: { sessionId } }); // no-op if no row exists yet (fresh dial-in)
-    return { message: 'You have no contracts with an outstanding balance.', continueSession: false, label: 'Nothing due' };
-  }
+  if (contracts.length === 0) return null;
 
   const expiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60_000);
 
   if (contracts.length > 1) {
-    const screen = await contractListScreen(contracts, customerName, 0);
-    const context: UssdContext = { contractIds: contracts.map((c) => c.id), page: screen.page };
-    await prisma.ussdSession.upsert({
+    const screen = await contractListScreen(contracts, heading, 0);
+    const context: UssdContext = { contractIds: contracts.map((c) => c.id), page: screen.page, heading };
+    await prisma.ussdSession.update({
       where: { sessionId },
-      create: { sessionId, msisdn: dialedMsisdn, state: 'SELECT_CONTRACT', context: JSON.stringify(context), expiresAt },
-      update: { state: 'SELECT_CONTRACT', contractId: null, context: JSON.stringify(context), expiresAt },
+      data: { state: 'SELECT_CONTRACT', contractId: null, context: JSON.stringify(context), expiresAt },
     });
     return { message: screen.message, continueSession: true, label: 'Select contract', fieldType: 'number' };
   }
@@ -259,40 +311,40 @@ async function beginForCustomer(sessionId: string, dialedMsisdn: string, custome
   const contract = contracts[0];
   const context: UssdContext = { contractId: contract.id };
   const nextState = nextStateFor(contract.contractType);
-  await prisma.ussdSession.upsert({
+  await prisma.ussdSession.update({
     where: { sessionId },
-    create: { sessionId, msisdn: dialedMsisdn, state: nextState, contractId: contract.id, context: JSON.stringify(context), expiresAt },
-    update: { state: nextState, contractId: contract.id, context: JSON.stringify(context), expiresAt },
+    data: { state: nextState, contractId: contract.id, context: JSON.stringify(context), expiresAt },
   });
   return {
-    message: await contractPrompt(contract, customerName),
+    message: await contractPrompt(contract, heading),
     continueSession: true,
     label: nextState === 'DEVICE_LOAN_CHOOSE' ? 'Choose option' : 'Enter amount',
     fieldType: nextState === 'DEVICE_LOAN_CHOOSE' ? 'number' : 'decimal',
   };
 }
 
-async function startSession(sessionId: string, msisdn: string): Promise<UssdResult> {
-  const customer = await findCustomerByPhone(msisdn);
-  if (customer) return beginForCustomer(sessionId, msisdn, customer.id, `${customer.firstName} ${customer.lastName}`);
-
-  // Unrecognized dial-in number (e.g. a shared or agent phone) — let them
-  // identify their account by typing in a registered number instead of
-  // dead-ending the session outright. The tenant's own configured company
-  // name (Settings page), not the application's default branding — this is
-  // a customer-facing message, so it should read as coming from the
-  // business, not the product.
-  const { companyName } = await getOrgSettings();
+/**
+ * Every dial-in opens on the same menu, whoever is calling: "Welcome {name}",
+ * then 1 to pay on their own account or 2 to pay on someone else's. The name
+ * is the one on the dialling phone's wallet (walletName), else the name the
+ * number is registered under; a number Hubtel and this app both know nothing
+ * about is welcomed to the company instead.
+ */
+async function startSession(sessionId: string, msisdn: string, operator?: string): Promise<UssdResult> {
+  const [customer, verifiedName] = await Promise.all([findCustomerByPhone(msisdn), walletName(msisdn, operator)]);
+  const name = verifiedName ?? (customer ? `${customer.firstName} ${customer.lastName}` : undefined);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60_000);
+  const context: UssdContext = { name };
   await prisma.ussdSession.create({
-    data: { sessionId, msisdn, state: 'ENTER_ALT_PHONE', expiresAt },
+    data: { sessionId, msisdn, state: 'MAIN_MENU', context: JSON.stringify(context), expiresAt },
   });
-  return {
-    message: `No ${companyName} account found for this number.\n${ALT_PHONE_PROMPT}`,
-    continueSession: true,
-    label: 'Enter phone number',
-    fieldType: 'phone',
-  };
+  return mainMenu(name);
+}
+
+/** "Pay for others": ask for the registered number of the account being paid on. */
+async function askForOthersNumber(sessionRowId: string): Promise<UssdResult> {
+  await prisma.ussdSession.update({ where: { id: sessionRowId }, data: { state: 'ENTER_ALT_PHONE' } });
+  return { message: ALT_PHONE_PROMPT, continueSession: true, label: 'Enter phone number', fieldType: 'phone' };
 }
 
 async function endSession(sessionId: string) {
@@ -331,16 +383,45 @@ export async function handleUssdInput(params: {
 
   if (!existing || existing.expiresAt < new Date()) {
     if (existing) await endSession(existing.id);
-    return startSession(params.sessionId, params.msisdn);
+    return startSession(params.sessionId, params.msisdn, params.operator);
   }
 
   const context: UssdContext = existing.context ? JSON.parse(existing.context) : {};
 
   switch (existing.state) {
-    case 'ENTER_ALT_PHONE': {
-      if (params.input.trim() === '0') {
+    case 'MAIN_MENU': {
+      const choice = params.input.trim();
+      if (choice === '1') {
+        // Self payment: the phone dialling in has to be a registered number
+        // with something to pay on it; otherwise the caller can pay for
+        // someone else instead, or stop there.
+        const customer = await findCustomerByPhone(params.msisdn);
+        const started = customer
+          ? await beginForCustomer(params.sessionId, customer.id, welcomeLine(context.name ?? `${customer.firstName} ${customer.lastName}`))
+          : null;
+        if (started) return started;
+        await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'NO_CONTRACT' } });
+        const why = customer ? 'This number has no active contract.' : 'This number is not registered.';
+        return { message: `${why}\n${NO_CONTRACT_MENU}`, continueSession: true, label: 'Choose option', fieldType: 'number' };
+      }
+      if (choice === '2') return askForOthersNumber(existing.id);
+      return mainMenu(context.name, 'Not an option.\n');
+    }
+
+    case 'NO_CONTRACT': {
+      const choice = params.input.trim();
+      if (choice === '1') return askForOthersNumber(existing.id);
+      if (choice === '2') {
         await endSession(existing.id);
         return { message: 'Cancelled.', continueSession: false, label: 'Cancelled' };
+      }
+      return { message: `Not an option.\n${NO_CONTRACT_MENU}`, continueSession: true, label: 'Choose option', fieldType: 'number' };
+    }
+
+    case 'ENTER_ALT_PHONE': {
+      if (params.input.trim() === '0') {
+        await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'MAIN_MENU' } });
+        return mainMenu(context.name);
       }
       const altPhone = params.input.trim();
       const customer = await findCustomerByPhone(altPhone);
@@ -353,8 +434,16 @@ export async function handleUssdInput(params: {
         };
       }
       // params.msisdn (the phone actually dialed in) stays what gets billed —
-      // altPhone was only used to identify the account.
-      return beginForCustomer(params.sessionId, params.msisdn, customer.id, `${customer.firstName} ${customer.lastName}`);
+      // altPhone was only used to identify the account, whose holder the
+      // screens that follow name, so the payer can see whose account it is.
+      const started = await beginForCustomer(params.sessionId, customer.id, payingForLine(`${customer.firstName} ${customer.lastName}`));
+      if (started) return started;
+      return {
+        message: `${altPhone} has no active contract.\n${ALT_PHONE_PROMPT}`,
+        continueSession: true,
+        label: 'Enter phone number',
+        fieldType: 'phone',
+      };
     }
 
     case 'SELECT_CONTRACT': {
@@ -366,8 +455,8 @@ export async function handleUssdInput(params: {
         // the list is asked again, not the end of the session.
         const listed = await prisma.contract.findMany({ where: { id: { in: contractIds } }, select: { ...listedContractSelect, customer: { select: { firstName: true, lastName: true } } } });
         const ordered = contractIds.map((id) => listed.find((c) => c.id === id)!).filter(Boolean);
-        const name = ordered[0] ? `${ordered[0].customer.firstName} ${ordered[0].customer.lastName}` : '';
-        const screen = await contractListScreen(ordered, name, choice === '0' ? (context.page ?? 0) + 1 : context.page ?? 0, choice === '0' ? '' : 'Not on the list.\n');
+        const heading = context.heading ?? welcomeLine(ordered[0] ? `${ordered[0].customer.firstName} ${ordered[0].customer.lastName}` : '');
+        const screen = await contractListScreen(ordered, heading, choice === '0' ? (context.page ?? 0) + 1 : context.page ?? 0, choice === '0' ? '' : 'Not on the list.\n');
         await prisma.ussdSession.update({ where: { id: existing.id }, data: { context: JSON.stringify({ ...context, page: screen.page }) } });
         return { message: screen.message, continueSession: true, label: 'Select contract', fieldType: 'number' };
       }
@@ -378,7 +467,7 @@ export async function handleUssdInput(params: {
         data: { state: nextState, contractId: contract.id, context: JSON.stringify({ contractId: contract.id }) },
       });
       return {
-        message: await contractPrompt(contract, `${contract.customer.firstName} ${contract.customer.lastName}`),
+        message: await contractPrompt(contract, context.heading ?? welcomeLine(`${contract.customer.firstName} ${contract.customer.lastName}`)),
         continueSession: true,
         label: nextState === 'DEVICE_LOAN_CHOOSE' ? 'Choose option' : 'Enter amount',
         fieldType: nextState === 'DEVICE_LOAN_CHOOSE' ? 'number' : 'decimal',

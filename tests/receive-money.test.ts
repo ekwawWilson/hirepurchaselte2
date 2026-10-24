@@ -120,11 +120,12 @@ describe('Hubtel Direct Receive Money', () => {
 
     const calls = await withReceiveMoneyUssd(() => withLiveHubtel(accepted, async () => {
       await handleUssdInput({ sessionId, msisdn: phone, operator: 'vodafone', input: '', isNewSession: true });
+      await handleUssdInput({ sessionId, msisdn: phone, operator: 'vodafone', input: '1', isNewSession: false }); // Self payment
       await handleUssdInput({ sessionId, msisdn: phone, operator: 'vodafone', input: '50', isNewSession: false });
       last = await handleUssdInput({ sessionId, msisdn: phone, operator: 'vodafone', input: '1', isNewSession: false });
     }));
 
-    expect(calls[0].body!.Channel).toBe('vodafone-gh');
+    expect(calls.filter((c) => c.method === 'POST')[0].body!.Channel).toBe('vodafone-gh'); // after the dial-in's name lookup
     expect(last.continueSession).toBe(false);
     expect(last.message).toMatch(/approve the prompt on your phone/i);
     expect(last.message).not.toMatch(/failed/i);
@@ -135,10 +136,11 @@ describe('Hubtel Direct Receive Money', () => {
     const sessionId = `rm-ussd-tel-${runId}`;
     const calls = await withReceiveMoneyUssd(() => withLiveHubtel(accepted, async () => {
       await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+      await handleUssdInput({ sessionId, msisdn: phone, input: '1', isNewSession: false }); // Self payment
       await handleUssdInput({ sessionId, msisdn: phone, input: '20', isNewSession: false });
       await handleUssdInput({ sessionId, msisdn: phone, input: '1', isNewSession: false });
     }));
-    expect(calls[0].body!.Channel).toBe('vodafone-gh');
+    expect(calls.filter((c) => c.method === 'POST')[0].body!.Channel).toBe('vodafone-gh'); // after the dial-in's name lookup
   });
 
   it('a refusal is settled at once, with a reason fit to show the customer', async () => {

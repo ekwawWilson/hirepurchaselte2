@@ -20,6 +20,7 @@ const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000)
 let counter = 0;
 const token = () => process.env.WEBHOOK_SHARED_TOKEN!;
 const isCallback = (call: HubtelCall) => call.url.startsWith('https://gs-callback.hubtel.com:9055/callback');
+const isNameLookup = (call: HubtelCall) => call.url.startsWith('https://rnv.hubtel.com/');
 
 beforeAll(enableOptionalContractTypes);
 
@@ -54,11 +55,12 @@ describe('USSD payments through Hubtel\'s checkout', () => {
     return res.json();
   }
 
-  /** Dial, type an amount in cedis, confirm — in live mode — and return the last answer and every outbound call made. */
+  /** Dial, choose Self payment, type an amount in cedis, confirm — in live mode — and return the last answer and every outbound call made. */
   async function payThroughMenu(sessionId: string, phone: string, amountGhs: string, respond: (call: HubtelCall) => unknown = () => ({})) {
     let last: Record<string, unknown> = {};
     const calls = await withLiveHubtel(respond, async () => {
       await dial(sessionId, phone, 'Initiation', '*713#');
+      await dial(sessionId, phone, 'Response', '1'); // Self payment
       await dial(sessionId, phone, 'Response', amountGhs);
       last = await dial(sessionId, phone, 'Response', '1');
     });
@@ -103,7 +105,7 @@ describe('USSD payments through Hubtel\'s checkout', () => {
       DataType: 'display',
       FieldType: 'text',
     });
-    expect(calls).toEqual([]); // no Receive Money request — that API is not used
+    expect(calls.filter((c) => !isNameLookup(c))).toEqual([]); // no Receive Money request — that API is not used
 
     // Recorded against Hubtel's own session id, waiting to hear the customer paid.
     expect(await txnFor(sessionId)).toMatchObject({ contractId: contract.id, amountMinor: 5050, status: 'PENDING', channel: 'USSD', hubtelOrderId: null });
@@ -289,9 +291,29 @@ describe('USSD payments through Hubtel\'s checkout', () => {
     const { phone, sessionId } = await makeSaver({ firstName: 'Kɔfi', lastName: 'Ésí-Ɔbɛŋ' });
     let first: Record<string, string> = {};
     await withLiveHubtel(() => ({}), async () => { first = await dial(sessionId, phone, 'Initiation', '*713#'); });
-    expect(first.Message).toContain('Hi Kofi'); // the first name; the screen also stays plain text
+    expect(first.Message).toBe('Welcome Kofi Esi-Oben\n1. Self payment\n2. Pay for others'); // Hubtel gave no wallet name, so the registered one, in plain text
     // Nothing outside plain ASCII and line breaks.
     expect(first.Message).toMatch(/^[\x20-\x7E\n]+$/);
+  });
+
+  it('welcomes the caller first by the name on their mobile money wallet, as Hubtel\'s Verification API reports it', async () => {
+    const { phone, sessionId } = await makeSaver({ firstName: 'Registered', lastName: 'Name' });
+    let first: Record<string, string> = {};
+    const calls = await withLiveHubtel(
+      () => ({ message: 'Success', responseCode: '0000', data: { isRegistered: true, name: 'AMA SERWAA OWUSU-ANSAH', status: 'active' } }),
+      async () => { first = await dial(sessionId, phone, 'Initiation', '*713#'); },
+    );
+    expect(calls.map((c) => c.url)).toEqual([
+      `https://rnv.hubtel.com/v2/merchantaccount/merchants/11684/mobilemoney/verify?channel=mtn-gh&customerMsisdn=233${phone.slice(1)}`,
+    ]);
+    expect(first.Message).toBe('Welcome Ama Serwaa\n1. Self payment\n2. Pay for others'); // ordinary case, whole words, cut to fit
+
+    // Self payment's screens carry the same name; the lookup is not repeated.
+    let account: Record<string, string> = {};
+    const later = await withLiveHubtel(() => ({}), async () => { account = await dial(sessionId, phone, 'Response', '1'); });
+    expect(later).toEqual([]);
+    expect(account.Message).toMatch(/^Welcome Ama Serwaa\n/);
+    expect(account.Message).not.toContain('Registered');
   });
 
   it('can be switched back to sending the prompt itself', async () => {
@@ -303,8 +325,9 @@ describe('USSD payments through Hubtel\'s checkout', () => {
       }));
       expect(last.Type).toBe('release');
       expect(last).not.toHaveProperty('Item');
-      expect(calls).toHaveLength(1);
-      expect(calls[0].url).toContain('receive/mobilemoney');
+      const charges = calls.filter((c) => !isNameLookup(c));
+      expect(charges).toHaveLength(1);
+      expect(charges[0].url).toContain('receive/mobilemoney');
     } finally {
       delete process.env.HUBTEL_USSD_PAYMENT;
     }

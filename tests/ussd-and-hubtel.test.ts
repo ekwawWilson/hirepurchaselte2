@@ -56,16 +56,60 @@ describe('USSD + Hubtel payments', () => {
     return (await contract.json()).contract;
   }
 
+  /** Dial in and choose 1, Self payment: what follows is the caller's own account. */
+  async function dialSelf(sessionId: string, msisdn: string) {
+    const menu = await handleUssdInput({ sessionId, msisdn, input: '', isNewSession: true });
+    expect(menu.message).toMatch(/\n1\. Self payment\n2\. Pay for others$/);
+    return handleUssdInput({ sessionId, msisdn, input: '1', isNewSession: false });
+  }
+
+  it('the first screen welcomes the caller by name and asks whether they are paying for themselves or someone else', async () => {
+    const phone = await uniquePhone();
+    await setupContract(phone);
+    const menu = await handleUssdInput({ sessionId: `sess-${runId}-menu`, msisdn: phone, input: '', isNewSession: true });
+    expect(menu).toMatchObject({ continueSession: true, fieldType: 'number' });
+    expect(menu.message).toBe('Welcome Ussd Tester\n1. Self payment\n2. Pay for others'); // mock mode: the registered name stands in for the wallet's
+
+    const again = await handleUssdInput({ sessionId: `sess-${runId}-menu`, msisdn: phone, input: '7', isNewSession: false });
+    expect(again.message).toBe('Not an option.\nWelcome Ussd Tester\n1. Self payment\n2. Pay for others');
+  });
+
+  it('Self payment from a registered number with nothing to pay offers to pay for someone else instead, or to cancel', async () => {
+    const phone = await uniquePhone();
+    await customersPOST(makeRequest('POST', '/api/customers', {
+      token: cashier, body: { ...registrationFields(), firstName: 'Nothing', lastName: 'Owed', phone },
+    }));
+    const sessionId = `sess-${runId}-noactive`;
+    await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+    const self = await handleUssdInput({ sessionId, msisdn: phone, input: '1', isNewSession: false });
+    expect(self.continueSession).toBe(true);
+    expect(self.message).toBe('This number has no active contract.\n1. Pay for others\n2. Cancel');
+
+    const wrong = await handleUssdInput({ sessionId, msisdn: phone, input: '5', isNewSession: false });
+    expect(wrong).toMatchObject({ continueSession: true, message: 'Not an option.\n1. Pay for others\n2. Cancel' });
+
+    const others = await handleUssdInput({ sessionId, msisdn: phone, input: '1', isNewSession: false });
+    expect(others.message).toMatch(/enter their registered phone number/i);
+
+    // ...or the caller stops there.
+    const cancelSession = `sess-${runId}-noactive-cancel`;
+    await handleUssdInput({ sessionId: cancelSession, msisdn: phone, input: '', isNewSession: true });
+    await handleUssdInput({ sessionId: cancelSession, msisdn: phone, input: '1', isNewSession: false });
+    const cancelled = await handleUssdInput({ sessionId: cancelSession, msisdn: phone, input: '2', isNewSession: false });
+    expect(cancelled).toMatchObject({ continueSession: false, message: 'Cancelled.' });
+    expect(await prisma.ussdSession.findUnique({ where: { sessionId: cancelSession } })).toBeNull();
+  });
+
   it('full USSD flow: initiation -> amount -> confirm -> mock payment posts to the ledger', async () => {
     const phone = await uniquePhone();
     const contract = await setupContract(phone);
     const sessionId = `sess-${runId}-1`;
 
-    const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+    const step1 = await dialSelf(sessionId, phone);
     expect(step1.continueSession).toBe(true);
     const { companyName } = await getOrgSettings();
     expect(step1.message).toContain(companyName); // the tenant's own configured business name, on the welcome screen
-    expect(step1.message).toContain('Hi Ussd'); // greets the customer by their first name — not an account/contract number, and short enough for one screen
+    expect(step1.message).toMatch(/^Welcome Ussd Tester\n/); // the first thing on screen: the name on the wallet (mock mode: the registered name) — not an account/contract number
     expect(step1.message).not.toContain(contract.contractNumber);
     expect(step1.message).toContain('Enter amount');
 
@@ -88,7 +132,7 @@ describe('USSD + Hubtel payments', () => {
     const contract = await setupContract(phone);
     const sessionId = `sess-${runId}-2`;
 
-    await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+    await dialSelf(sessionId, phone);
     await handleUssdInput({ sessionId, msisdn: phone, input: '100', isNewSession: false });
     const cancelled = await handleUssdInput({ sessionId, msisdn: phone, input: '2', isNewSession: false });
     expect(cancelled.continueSession).toBe(false);
@@ -104,9 +148,9 @@ describe('USSD + Hubtel payments', () => {
     const contractB = await setupContract(phone, { customerId: contractA.customerId });
     const sessionId = `sess-${runId}-multi`;
 
-    const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+    const step1 = await dialSelf(sessionId, phone);
     expect(step1.continueSession).toBe(true);
-    expect(step1.message).toContain('Hi Ussd');
+    expect(step1.message).toContain('Welcome Ussd Tester');
     expect(step1.message).toContain('Choose:');
     // Lines name what the customer is paying for, not contract numbers.
     expect(step1.message).toMatch(/1\. Savings saved GHS0\.00\n2\. Savings saved GHS0\.00/);
@@ -117,7 +161,7 @@ describe('USSD + Hubtel payments', () => {
     // list above, to tell the choices apart).
     const step2 = await handleUssdInput({ sessionId, msisdn: phone, input: '2', isNewSession: false });
     expect(step2.continueSession).toBe(true);
-    expect(step2.message).toContain('Hi Ussd');
+    expect(step2.message).toContain('Welcome Ussd Tester');
     expect(step2.message).not.toContain(contractA.contractNumber);
     expect(step2.message).not.toContain(contractB.contractNumber);
 
@@ -139,7 +183,7 @@ describe('USSD + Hubtel payments', () => {
     await setupContract(phone, { customerId: first.customerId });
     const sessionId = `sess-${runId}-badselect`;
 
-    await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+    await dialSelf(sessionId, phone);
     const result = await handleUssdInput({ sessionId, msisdn: phone, input: '99', isNewSession: false });
     expect(result.continueSession).toBe(true);
     expect(result.message).toMatch(/^Not on the list\.\n/);
@@ -155,32 +199,37 @@ describe('USSD + Hubtel payments', () => {
     await prisma.contract.update({ where: { id: contract.id }, data: { status: 'DEFAULTED' } });
 
     const sessionId = `sess-${runId}-defaulted`;
-    const step1 = await handleUssdInput({ sessionId, msisdn: phone, input: '', isNewSession: true });
+    const step1 = await dialSelf(sessionId, phone);
     expect(step1.continueSession).toBe(true);
-    expect(step1.message).toContain('Hi Ussd');
+    expect(step1.message).toContain('Welcome Ussd Tester');
   });
 
-  it('unknown phone number is prompted for a registered number instead of dead-ending', async () => {
+  it('an unknown number choosing Self payment is offered Pay for others, and can go back to the menu from there', async () => {
     const sessionId = `sess-${runId}-unknown`;
-    const result = await handleUssdInput({ sessionId, msisdn: '0200000000', input: '', isNewSession: true });
-    expect(result.continueSession).toBe(true);
-    expect(result.message).toMatch(/no .+ account found/i);
-    expect(result.message).toMatch(/enter a registered phone number/i);
+    const ask = (input: string, isNewSession = false) => handleUssdInput({ sessionId, msisdn: '0200000000', input, isNewSession });
+    const { companyName } = await getOrgSettings();
+    expect((await ask('', true)).message).toBe(`Welcome to ${companyName.length > 22 ? `${companyName.slice(0, 21).trimEnd()}.` : companyName}\n1. Self payment\n2. Pay for others`);
 
-    const cancelled = await handleUssdInput({ sessionId, msisdn: '0200000000', input: '0', isNewSession: false });
-    expect(cancelled.continueSession).toBe(false);
-    expect(cancelled.message).toMatch(/cancelled/i);
+    const self = await ask('1');
+    expect(self.continueSession).toBe(true);
+    expect(self.message).toBe('This number is not registered.\n1. Pay for others\n2. Cancel');
+
+    expect((await ask('1')).message).toMatch(/enter their registered phone number/i);
+    const back = await ask('0');
+    expect(back.continueSession).toBe(true);
+    expect(back.message).toMatch(/\n1\. Self payment\n2\. Pay for others$/);
   });
 
-  it('unknown phone number can identify their account with a registered alternate number, and gets billed on the dialed-in number', async () => {
+  it('Pay for others: anyone can pay on an account by typing its registered number, and is billed on the phone they dialled from', async () => {
     const dialedPhone = '0200000001';
     const registeredPhone = await uniquePhone();
     const contract = await setupContract(registeredPhone);
     const sessionId = `sess-${runId}-altphone`;
 
-    const step1 = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '', isNewSession: true });
+    await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '', isNewSession: true });
+    const step1 = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '2', isNewSession: false });
     expect(step1.continueSession).toBe(true);
-    expect(step1.message).toMatch(/no .+ account found/i);
+    expect(step1.message).toMatch(/enter their registered phone number/i);
 
     // A typo/unregistered number first — must re-prompt, not crash or end the session.
     const retry = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '0200000002', isNewSession: false });
@@ -189,7 +238,7 @@ describe('USSD + Hubtel payments', () => {
 
     const found = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: registeredPhone, isNewSession: false });
     expect(found.continueSession).toBe(true);
-    expect(found.message).toContain('Hi Ussd');
+    expect(found.message).toMatch(/^Paying for Ussd Tester\n/); // whose account it is, for the person paying
 
     const enterAmount = await handleUssdInput({ sessionId, msisdn: dialedPhone, input: '400', isNewSession: false });
     expect(enterAmount.message).toMatch(/confirm payment/i);
@@ -457,7 +506,7 @@ describe('USSD + Hubtel payments', () => {
     const phone = await uniquePhone();
     const contract = await setupContract(phone);
 
-    const step1 = await handleUssdInput({ sessionId: `sess-${runId}-sto`, msisdn: phone, input: '', isNewSession: true });
+    const step1 = await dialSelf(`sess-${runId}-sto`, phone);
     expect(step1.message).not.toContain(contract.contractNumber);
     expect(step1.message).toContain('Saved GHS0.00');
     expect(step1.message).not.toContain('Bal ');
@@ -478,7 +527,7 @@ describe('USSD + Hubtel payments', () => {
     const contract = (await contractRes.json()).contract;
 
     // Fresh loan, nothing accrued yet — only "pay full loan" is offered, no interest option.
-    const step1 = await handleUssdInput({ sessionId: `sess-${runId}-dl1`, msisdn: phone, input: '', isNewSession: true });
+    const step1 = await dialSelf(`sess-${runId}-dl1`, phone);
     expect(step1.continueSession).toBe(true);
     expect(step1.message).not.toContain('Pay interest');
     expect(step1.message).toContain('Pay full loan GHS1000.00');
@@ -490,7 +539,7 @@ describe('USSD + Hubtel payments', () => {
       data: { contractId: contract.id, amountMinor: 1000, reason: 'DAILY_LOAN_INTEREST', appliedDate: new Date() },
     });
 
-    const step2 = await handleUssdInput({ sessionId: `sess-${runId}-dl2`, msisdn: phone, input: '', isNewSession: true });
+    const step2 = await dialSelf(`sess-${runId}-dl2`, phone);
     expect(step2.message).toContain('1. Pay interest GHS10.00');
     expect(step2.message).toContain('2. Pay full loan GHS1000.00');
 
@@ -521,7 +570,7 @@ describe('USSD + Hubtel payments', () => {
       token: cashier, body: { contractType: 'DEVICE_LOAN', customerId, loanAmountMinor: 50000 },
     }));
 
-    await handleUssdInput({ sessionId: `sess-${runId}-dlbad`, msisdn: phone, input: '', isNewSession: true });
+    await dialSelf(`sess-${runId}-dlbad`, phone);
     // Option 1 (pay interest) isn't valid yet — nothing has accrued.
     const result = await handleUssdInput({ sessionId: `sess-${runId}-dlbad`, msisdn: phone, input: '1', isNewSession: false });
     expect(result.continueSession).toBe(true);

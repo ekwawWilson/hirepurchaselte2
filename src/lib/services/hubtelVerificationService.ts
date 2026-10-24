@@ -50,14 +50,14 @@ const unchecked = (message: string): VerifyResult => ({ verified: false, checked
  * answers servers whose IP it has whitelisted, and the product has to be
  * enabled on the account — either missing shows up here as a refusal.
  */
-async function askHubtel(msisdn: string, network: string): Promise<VerifyResult> {
+async function askHubtel(msisdn: string, network: string, timeoutMs: number): Promise<VerifyResult> {
   const creds = requireHubtelCredentials();
   const url = `https://rnv.hubtel.com/v2/merchantaccount/merchants/${encodeURIComponent(creds.salesId)}/mobilemoney/verify`
     + `?channel=${encodeURIComponent(getHubtelChannel(network))}&customerMsisdn=${encodeURIComponent(formatPhoneForHubtel(msisdn))}`;
 
   let res: Response;
   try {
-    res = await fetch(url, { headers: { Authorization: hubtelAuthHeader(creds), Accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    res = await fetch(url, { headers: { Authorization: hubtelAuthHeader(creds), Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
   } catch (e) {
     const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
     console.error(`[hubtel] number verification could not reach Hubtel: ${e instanceof Error ? e.message : e}`);
@@ -113,6 +113,8 @@ export async function verifyMobileMoneyNumber(params: {
   msisdn: string;
   network: string;
   requestedById: string;
+  /** How long to wait for Hubtel; a USSD screen has less time to spare than a form. */
+  timeoutMs?: number;
 }): Promise<VerifyResult> {
   const cacheKey = `${params.network}:${formatPhoneForHubtel(params.msisdn)}`;
   const cached = cache.get(cacheKey);
@@ -126,7 +128,7 @@ export async function verifyMobileMoneyNumber(params: {
   let result: VerifyResult;
   try {
     if (isHubtelLiveMode()) {
-      result = await askHubtel(params.msisdn, params.network);
+      result = await askHubtel(params.msisdn, params.network, params.timeoutMs ?? TIMEOUT_MS);
     } else {
       // Mock mode: if the number already belongs to a registered customer, "verify"
       // against their own name — a realistic stand-in for what Hubtel's wallet

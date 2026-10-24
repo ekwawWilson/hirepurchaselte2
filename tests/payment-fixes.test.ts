@@ -21,6 +21,12 @@ let counter = 0;
 const unique = () => `${runId}${++counter}`;
 const DAY = 86_400_000;
 
+/** Dial in and choose 1, Self payment: what follows is the caller's own account. */
+async function dialSelf(sessionId: string, msisdn: string) {
+  await handleUssdInput({ sessionId, msisdn, input: '', isNewSession: true });
+  return handleUssdInput({ sessionId, msisdn, input: '1', isNewSession: false });
+}
+
 beforeAll(enableOptionalContractTypes);
 
 describe('Payments', () => {
@@ -96,7 +102,7 @@ describe('Payments', () => {
       const c = await awaitingDeposit();
       const cust = await prisma.customer.findUniqueOrThrow({ where: { id: c.customerId } });
       const sid = `pf-${unique()}`;
-      await handleUssdInput({ sessionId: sid, msisdn: cust.phone!, input: '', isNewSession: true });
+      await dialSelf(sid, cust.phone!);
       const ask = (input: string) => handleUssdInput({ sessionId: sid, msisdn: cust.phone!, input, isNewSession: false });
 
       expect((await ask('50abc')).message).toBe('Enter the amount in cedis, e.g. 50 or 50.50:');
@@ -135,7 +141,7 @@ describe('Payments', () => {
       const c = await prisma.contract.findUniqueOrThrow({ where: { id: (await awaitingDeposit(cust.id)).id } });
       await prisma.hubtelTransaction.create({ data: { clientReference: `PF-U-${unique()}`, contractId: c.id, msisdn: cust.phone!, amountMinor: 5000, status: 'PENDING' } });
       const sid = `pf-${unique()}`;
-      await handleUssdInput({ sessionId: sid, msisdn: cust.phone!, input: '', isNewSession: true });
+      await dialSelf(sid, cust.phone!);
       await handleUssdInput({ sessionId: sid, msisdn: cust.phone!, input: '50', isNewSession: false });
       const confirm = await handleUssdInput({ sessionId: sid, msisdn: cust.phone!, input: '1', isNewSession: false });
       expect(confirm).toMatchObject({ continueSession: false, label: 'Request already waiting' });
@@ -167,10 +173,10 @@ describe('Payments', () => {
       const cust = await customer({ firstName: 'Bartholomew-Kwabena', lastName: 'Longname' });
       for (let i = 0; i < 7; i++) await awaitingDeposit(cust.id, `Samsung Galaxy A${50 + i} Ultra`);
       const sid = `pf-${unique()}`;
-      const first = await handleUssdInput({ sessionId: sid, msisdn: cust.phone!, input: '', isNewSession: true });
+      const first = await dialSelf(sid, cust.phone!);
       expect(first.message.length).toBeLessThanOrEqual(USSD_SCREEN_LIMIT);
       expect(first.message).toMatch(/\n0\. More$/);
-      expect(first.message).toContain('Hi Bartholomew-Kwa\n'); // first name, cut to fit
+      expect(first.message).toContain('Welcome Bartholomew-Kwabena\n'); // whole words, cut to fit
       expect(first.message).toContain('1. Samsung Galaxy A bal GHS600.00'); // product name, cut to fit
 
       const more = await handleUssdInput({ sessionId: sid, msisdn: cust.phone!, input: '0', isNewSession: false });
@@ -189,7 +195,7 @@ describe('Payments', () => {
       const cust = await prisma.customer.findUniqueOrThrow({ where: { id: c.customerId } });
       await postPayment({ contractId: c.id, amountMinor: 12000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminId });
       const sid = `pf-${unique()}`;
-      const prompt = await handleUssdInput({ sessionId: sid, msisdn: cust.phone!, input: '', isNewSession: true });
+      const prompt = await dialSelf(sid, cust.phone!);
       expect(prompt.message).toContain('0. Last payments');
       const last = await handleUssdInput({ sessionId: sid, msisdn: cust.phone!, input: '0', isNewSession: false });
       expect(last.continueSession).toBe(false);

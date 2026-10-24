@@ -57,7 +57,7 @@ describe('USSD gateway guard', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({ Type: 'response', DataType: 'input' });
-    expect(body.Message).toContain('Hi Private');
+    expect(body.Message).toContain('Welcome Private Person');
 
     const guess = await ussdByPathPOST(makeRequest('POST', '/api/ussd/guess', { body: dial() }), makeParams({ token: 'guess' }));
     expect(guess.status).toBe(404);
@@ -73,7 +73,8 @@ describe('USSD gateway guard', () => {
       expect(blocked.status).toBe(403);
       expect((await ussdPOST(makeRequest('POST', '/api/ussd', { token: admin, body: dial() }))).status).toBe(200);
     });
-    expect(calls).toHaveLength(0); // dialling in asks Hubtel for nothing
+    // Dialling in asks Hubtel only whose wallet the number is (the welcome's name) — the blocked cashier, nothing at all.
+    expect(calls.map((c) => c.url.split('?')[0])).toEqual(['https://rnv.hubtel.com/v2/merchantaccount/merchants/11684/mobilemoney/verify']);
   });
 
   it('Settings lists the two addresses Hubtel\'s Programmable Service form asks for, each carrying the secret', async () => {
