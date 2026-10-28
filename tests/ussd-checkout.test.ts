@@ -148,6 +148,7 @@ describe('USSD payments through Hubtel\'s checkout', () => {
     await payThroughMenu(sessionId, phone, '20');
     const orderId = `order-${runId}-b`;
     const refused = (call: HubtelCall) => (isCallback(call) ? hubtelHttp(403, '<html>403 Forbidden</html>') : {});
+    await prisma.systemAlert.deleteMany({ where: { dedupeKey: 'hubtel-refused:403' } });
 
     // The server's IP is not whitelisted: the payment is still applied.
     expect((await fulfil(fulfilment(sessionId, orderId, 20, phone), refused)).status).toBe(200);
@@ -162,7 +163,7 @@ describe('USSD payments through Hubtel\'s checkout', () => {
     expect(retried.filter(isCallback).map((c) => c.body)).toContainEqual({ SessionId: sessionId, OrderId: orderId, ServiceStatus: 'success', MetaData: null });
     expect((await txnFor(sessionId)).fulfilmentCallbackState).toBe('SENT');
 
-    // One that never gets through inside the hour stops being sent and is put in front of a person.
+    // One that never gets through inside the hour stops being sent, marked, and raises no alert.
     const late = await makeSaver();
     await payThroughMenu(late.sessionId, late.phone, '30');
     await fulfil(fulfilment(late.sessionId, `order-${runId}-late`, 30, late.phone), refused);
@@ -171,8 +172,8 @@ describe('USSD payments through Hubtel\'s checkout', () => {
     expect(afterTheHour.filter((c) => isCallback(c) && c.body?.SessionId === late.sessionId)).toEqual([]);
     const lateTxn = await txnFor(late.sessionId);
     expect(lateTxn.fulfilmentCallbackState).toBe('UNDELIVERED');
-    const alert = await prisma.systemAlert.findUnique({ where: { dedupeKey: `fulfilment-undelivered:${lateTxn.id}` } });
-    expect(alert?.message).toMatch(/could not be told within the hour/);
+    expect(await prisma.systemAlert.findUnique({ where: { dedupeKey: `fulfilment-undelivered:${lateTxn.id}` } })).toBeNull();
+    expect(await prisma.systemAlert.findUnique({ where: { dedupeKey: 'hubtel-refused:403' } })).toBeNull(); // refused all along, never raised
     expect(await paid(late.contract.id)).toBe(3000); // the customer's payment stands regardless
   });
 

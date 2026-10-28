@@ -176,8 +176,10 @@ async function deliverFulfilmentCallback(txnId: string): Promise<boolean> {
 /**
  * Sends again every fulfilment answer Hubtel has not yet accepted. Run on
  * the five-minute sweep. Once the hour Hubtel allows has passed there is no
- * point trying further: it is marked UNDELIVERED and raised as an alert,
- * since Hubtel may then treat a payment this server did apply as unfulfilled.
+ * point trying further: it is marked UNDELIVERED and logged. Not raised as
+ * an alert (the owner asked for none): the payment is already on the
+ * contract either way, and the order stays marked for anyone checking it
+ * with Hubtel.
  */
 export async function retryFulfilmentCallbacks(): Promise<{ sent: number; gaveUp: number }> {
   const waiting = await prisma.hubtelTransaction.findMany({ where: { fulfilmentCallbackState: 'PENDING' } });
@@ -186,11 +188,7 @@ export async function retryFulfilmentCallbacks(): Promise<{ sent: number; gaveUp
   for (const txn of waiting) {
     if (txn.fulfilmentReceivedAt && Date.now() - txn.fulfilmentReceivedAt.getTime() > CALLBACK_WINDOW_MS) {
       await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { fulfilmentCallbackState: 'UNDELIVERED' } });
-      await raiseAlert({
-        kind: 'FULFILMENT_CALLBACK_UNDELIVERED',
-        message: `Hubtel could not be told within the hour that USSD order ${txn.hubtelOrderId} was ${txn.fulfilmentStatus === 'success' ? 'fulfilled' : 'not fulfilled'}. Check that Hubtel has whitelisted this server's IP address, and confirm the order with Hubtel.`,
-        dedupeKey: `fulfilment-undelivered:${txn.id}`,
-      });
+      console.error(`[hubtel] gave up telling Hubtel within the hour that USSD order ${txn.hubtelOrderId} was ${txn.fulfilmentStatus === 'success' ? 'fulfilled' : 'not fulfilled'}`);
       gaveUp += 1;
       continue;
     }

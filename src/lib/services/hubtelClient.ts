@@ -36,13 +36,17 @@ async function hubtelFetch(url: string, init: RequestInit = {}): Promise<Respons
   }
 }
 
-/** The reason to report for a non-2xx answer: Hubtel's own if it gave one. */
-export function hubtelHttpFailure(what: string, status: number, message?: string | null): string {
+/**
+ * The reason to report for a non-2xx answer: Hubtel's own if it gave one.
+ * `alert: false` for a refusal that does not stop payments (the Service
+ * Fulfilment Callback): logged where it is called, never raised.
+ */
+export function hubtelHttpFailure(what: string, status: number, message?: string | null, opts: { alert?: boolean } = {}): string {
   // 401/403 is Hubtel turning this server or these credentials away — every
   // payment will fail the same way until someone acts, so it is raised where
   // the owner will see it rather than left in a log. One alert, however many
   // requests are refused (alertService dedupes).
-  if (status === 401 || status === 403) {
+  if ((status === 401 || status === 403) && opts.alert !== false) {
     void import('./alertService').then(({ raiseAlert }) => raiseAlert({
       kind: 'HUBTEL_REFUSED',
       message: status === 403
@@ -523,5 +527,6 @@ export async function sendServiceFulfilmentCallback(params: { sessionId: string;
   });
   const parsed = await parseHubtelResponse(res);
   await recordHubtelSample('SERVICE_FULFILMENT_CALLBACK', payload, { httpStatus: res.status, body: parsed });
-  if (!res.ok) throw new HubtelApiError(hubtelHttpFailure('service fulfilment callback', res.status));
+  // Not raised as an alert: the payment is already posted whether or not Hubtel accepts this.
+  if (!res.ok) throw new HubtelApiError(hubtelHttpFailure('service fulfilment callback', res.status, null, { alert: false }));
 }
