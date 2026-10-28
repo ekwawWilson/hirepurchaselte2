@@ -2,7 +2,7 @@ import { prisma } from '../db/prisma';
 import { CUSTOMER_SUMMARY_SELECT } from './customerService';
 import { getDeviceLoanState } from './paymentService';
 import { PRE_APPROVAL_STATUSES } from '../constants/contracts';
-import { isMoneyOut, MONEY_OUT_ENTRY_TYPES } from '../constants/contracts';
+import { isMoneyOut, MONEY_OUT_ENTRY_TYPES, INSTALMENT_SALE_TYPES } from '../constants/contracts';
 
 /** Optional branch scoping (server-applied only, per RBAC — never client-trusted beyond what the caller already resolved). */
 type Scope = { branchId?: string };
@@ -125,7 +125,7 @@ export async function paymentsRegisterReport(scope: Scope, from?: string, to?: s
   return { range: { start, end }, payments };
 }
 
-// 5. Outstanding balances / portfolio. DEPOSIT_INSTALMENT only — SAVE_TO_OWN
+// 5. Outstanding balances / portfolio. Instalment sales only — SAVE_TO_OWN
 // is open-ended savings with no target, and DEVICE_LOAN is an open-ended
 // daily-interest loan with no fixed target either (both null balanceMinor,
 // see paymentService.recomputeContract) — DEVICE_LOAN's own outstanding
@@ -134,7 +134,7 @@ export async function outstandingBalancesReport(scope: Scope) {
   const contracts = await prisma.contract.findMany({
     where: {
       status: { in: ['ACTIVE', 'PENDING_DEPOSIT', 'DEFAULTED'] },
-      contractType: 'DEPOSIT_INSTALMENT',
+      contractType: { in: INSTALMENT_SALE_TYPES },
       ...(scope.branchId && { branchId: scope.branchId }),
     },
     include: { customer: true },

@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { generateTransactionRef, generateReceiptNumber } from '../utils/idGenerators';
-import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES, defaultCutoffDate, isMoneyOut } from '../constants/contracts';
+import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES, defaultCutoffDate, isMoneyOut, isInstalmentSale } from '../constants/contracts';
 import { syncAgentLedger } from './agentLedgerService';
 import { applyStockMovement } from './inventoryService';
 import { queueSms, deliverQueuedSms } from './smsService';
+import { notifyPayTrigger } from '../paytrigger/notify';
 
 export class PaymentError extends Error {}
 
@@ -118,7 +119,7 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<Advanc
   const now = new Date();
   const queuedSmsIds: string[] = [];
 
-  if (contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT') {
+  if (isInstalmentSale(contract.contractType) && contract.status === 'PENDING_DEPOSIT') {
     if (contract.totalPaidMinor >= contract.depositAmountMinor) {
       await tx.contract.update({ where: { id: contractId }, data: { status: 'ACTIVE', activatedAt: now } });
       if (contract.inventoryItemId) {
@@ -294,8 +295,8 @@ export async function postPayment(params: PostPaymentParams) {
     if (contract.contractType === 'DEVICE_LOAN') {
       throw new PaymentError('DEVICE_LOAN payments must be posted via postDeviceLoanPayment — pay interest or the full loan amount, not a free-form amount');
     }
-    if (params.entryType === 'DEPOSIT' && contract.contractType !== 'DEPOSIT_INSTALMENT') {
-      throw new PaymentError('Only DEPOSIT_INSTALMENT contracts accept a DEPOSIT payment');
+    if (params.entryType === 'DEPOSIT' && !isInstalmentSale(contract.contractType)) {
+      throw new PaymentError('Only Deposit + Instalment and Device Financing contracts accept a DEPOSIT payment');
     }
     // Once the deposit gate has cleared (contract left PENDING_DEPOSIT), further
     // money is instalment money — posting it as DEPOSIT again would inflate
@@ -310,7 +311,7 @@ export async function postPayment(params: PostPaymentParams) {
     // labelled. Otherwise a customer who pays more than the deposit is shown
     // with every instalment unpaid (and is chased as overdue) while their
     // balance says they are ahead.
-    const awaitingDeposit = contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT';
+    const awaitingDeposit = isInstalmentSale(contract.contractType) && contract.status === 'PENDING_DEPOSIT';
     const entryType = awaitingDeposit ? 'DEPOSIT' : params.entryType;
     const scheduleShareMinor = awaitingDeposit
       ? Math.max(0, params.amountMinor - Math.max(0, contract.depositAmountMinor - contract.totalPaidMinor))
@@ -382,6 +383,7 @@ export async function postPayment(params: PostPaymentParams) {
     }
   }
 
+  notifyPayTrigger(params.contractId, 'PAYMENT');
   return result;
 }
 
@@ -488,6 +490,9 @@ export async function postCreditRefund(params: { contractId: string; amountMinor
       },
     });
     await recomputeContract(tx, contract.id);
+    return payment;
+  }).then((payment) => {
+    notifyPayTrigger(payment.contractId, 'PAYMENT_REVERSED');
     return payment;
   });
 }
@@ -717,11 +722,13 @@ async function reversePaymentInTx(tx: Tx, params: { paymentId: string; reason: s
 }
 
 export async function reversePayment(params: { paymentId: string; reason: string; reversedById: string }) {
-  return prisma.$transaction(async (tx) => {
+  const reversal = await prisma.$transaction(async (tx) => {
     const reversal = await reversePaymentInTx(tx, params);
     await recomputeContract(tx, reversal.contractId);
     return reversal;
   });
+  notifyPayTrigger(reversal.contractId, 'PAYMENT_REVERSED');
+  return reversal;
 }
 
 /**

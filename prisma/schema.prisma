@@ -72,23 +72,23 @@ model Permission {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  phone        String?
-  passwordHash String
-  firstName    String
-  lastName     String
-  roleId       String
-  branchId     String?
-  isActive     Boolean  @default(true)
+  id                 String    @id @default(uuid())
+  email              String    @unique
+  phone              String?
+  passwordHash       String
+  firstName          String
+  lastName           String
+  roleId             String
+  branchId           String?
+  isActive           Boolean   @default(true)
   // Set when an administrator issues or resets the password: the holder must
   // choose their own before doing anything else (authService.ts).
-  mustChangePassword Boolean @default(false)
+  mustChangePassword Boolean   @default(false)
   // A token issued before this moment is no longer accepted (rbac.ts), so a
   // changed or reset password signs out whoever else was holding one.
   passwordChangedAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   role   Role    @relation(fields: [roleId], references: [id])
   branch Branch? @relation(fields: [branchId], references: [id])
@@ -97,28 +97,28 @@ model User {
   approvalsRequested ApprovalRequest[] @relation("ApprovalRequestedBy")
   approvalsDecided   ApprovalRequest[] @relation("ApprovalDecidedBy")
 
-  customersCreated          Customer[]          @relation("CustomerCreatedBy")
-  customersUpdated          Customer[]          @relation("CustomerUpdatedBy")
-  contractsCreated          Contract[]          @relation("ContractCreatedBy")
-  contractsUpdated          Contract[]          @relation("ContractUpdatedBy")
-  priceChartEntries         PriceChartEntry[]
-  stockMovements            StockMovement[]
-  paymentsRecorded          Payment[]           @relation("PaymentCreatedBy")
-  paymentsReversed          Payment[]           @relation("PaymentReversedBy")
-  auditLogs                 AuditLog[]
-  hubtelPreapprovalsCreated HubtelPreapproval[] @relation("HubtelPreapprovalCreatedBy")
-  orgSettingsUpdates        OrgSettings[]
-  loanSettingsUpdates       LoanSettings[]
-  operatingSettingsUpdates  OperatingSettings[]
+  customersCreated            Customer[]              @relation("CustomerCreatedBy")
+  customersUpdated            Customer[]              @relation("CustomerUpdatedBy")
+  contractsCreated            Contract[]              @relation("ContractCreatedBy")
+  contractsUpdated            Contract[]              @relation("ContractUpdatedBy")
+  priceChartEntries           PriceChartEntry[]
+  stockMovements              StockMovement[]
+  paymentsRecorded            Payment[]               @relation("PaymentCreatedBy")
+  paymentsReversed            Payment[]               @relation("PaymentReversedBy")
+  auditLogs                   AuditLog[]
+  hubtelPreapprovalsCreated   HubtelPreapproval[]     @relation("HubtelPreapprovalCreatedBy")
+  orgSettingsUpdates          OrgSettings[]
+  loanSettingsUpdates         LoanSettings[]
+  operatingSettingsUpdates    OperatingSettings[]
   contractTypeSettingsUpdates ContractTypeSettings[]
-  commissionSettingsUpdates CommissionSettings[]
-  contractsApproved         Contract[]          @relation("ContractApprovedBy")
-  agentLedgerEntries        AgentDepositLedger[] @relation("AgentLedgerAgent")
-  remittancesFiled          AgentRemittance[]   @relation("AgentRemittanceAgent")
-  remittancesConfirmed      AgentRemittance[]   @relation("AgentRemittanceConfirmedBy")
-  commissionPayoutsReceived AgentCommissionPayout[] @relation("AgentPayoutAgent")
-  commissionPayoutsMade     AgentCommissionPayout[] @relation("AgentPayoutPaidBy")
-  paymentsCollectedAsAgent  Payment[]           @relation("PaymentCollectedByAgent")
+  commissionSettingsUpdates   CommissionSettings[]
+  contractsApproved           Contract[]              @relation("ContractApprovedBy")
+  agentLedgerEntries          AgentDepositLedger[]    @relation("AgentLedgerAgent")
+  remittancesFiled            AgentRemittance[]       @relation("AgentRemittanceAgent")
+  remittancesConfirmed        AgentRemittance[]       @relation("AgentRemittanceConfirmedBy")
+  commissionPayoutsReceived   AgentCommissionPayout[] @relation("AgentPayoutAgent")
+  commissionPayoutsMade       AgentCommissionPayout[] @relation("AgentPayoutPaidBy")
+  paymentsCollectedAsAgent    Payment[]               @relation("PaymentCollectedByAgent")
 
   @@map("users")
 }
@@ -132,22 +132,22 @@ model User {
 // stored here and is what USSD/SMS/direct-debit treat as canonical; phone2/phone3
 // are supplementary alternates. All three are independently unique across customers.
 model Customer {
-  id             String    @id @default(uuid())
-  membershipId   String    @unique
-  firstName      String
-  lastName       String
-  phone          String?   @unique
-  phone2         String?   @unique
-  phone3         String?   @unique
-  email          String?
-  address        String? // residential address — asked for at registration
-  occupation     String?
-  workAddress    String?
-  nationalId     String?
-  dateOfBirth    DateTime?
+  id                 String    @id @default(uuid())
+  membershipId       String    @unique
+  firstName          String
+  lastName           String
+  phone              String?   @unique
+  phone2             String?   @unique
+  phone3             String?   @unique
+  email              String?
+  address            String? // residential address — asked for at registration
+  occupation         String?
+  workAddress        String?
+  nationalId         String?
+  dateOfBirth        DateTime?
   // A passport-sized JPEG (210x270) stored inline as a data URL, resized in
   // the browser before upload — see CustomerPhotoField and validateCustomerPhoto.
-  photoUrl       String?
+  photoUrl           String?
   // Customer portal (src/app/portal) — a customer signs in with any of their
   // registered phone numbers and a password. Staff issue a one-time password
   // (at registration, or on request); mustChangePassword forces the customer
@@ -157,14 +157,14 @@ model Customer {
   mustChangePassword Boolean   @default(true)
   passwordChangedAt  DateTime?
   portalLastLoginAt  DateTime?
-  guarantorName  String?
-  guarantorPhone String?
-  branchId       String
-  isActivated    Boolean   @default(false)
-  createdById    String
-  updatedById    String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  guarantorName      String?
+  guarantorPhone     String?
+  branchId           String
+  isActivated        Boolean   @default(false)
+  createdById        String
+  updatedById        String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   branch    Branch @relation(fields: [branchId], references: [id])
   createdBy User   @relation("CustomerCreatedBy", fields: [createdById], references: [id])
@@ -184,8 +184,8 @@ model Customer {
 // ---------------------------------------------------------------------------
 
 model ProductCategory {
-  id   String @id @default(uuid())
-  name String @unique
+  id                   String @id @default(uuid())
+  name                 String @unique
   // What an AGENT keeps out of a cash deposit they collect on a product of
   // this category (Settings > Agent commission). Null: the default amount in
   // CommissionSettings applies. Snapshotted onto AgentDepositLedger.
@@ -310,22 +310,22 @@ model PriceChartEntry {
 //   DEPOSIT_INSTALMENT:  PENDING_DEPOSIT | ACTIVE | COMPLETED | DEFAULTED | CANCELLED
 //   DEVICE_LOAN:         ACTIVE | COMPLETED | DEFAULTED | WRITTEN_OFF
 model Contract {
-  id                  String  @id @default(uuid())
-  contractNumber      String  @unique
-  contractType        String
-  customerId          String
+  id                        String  @id @default(uuid())
+  contractNumber            String  @unique
+  contractType              String
+  customerId                String
   // Set only for DEPOSIT_INSTALMENT, from the reserved inventory item's own
   // product — SAVE_TO_OWN and DEVICE_LOAN are both never linked to a product
   // at all (contractService.ts).
-  productId           String?
-  inventoryItemId     String?
-  branchId            String
-  priceChartEntryId   String?
+  productId                 String?
+  inventoryItemId           String?
+  branchId                  String
+  priceChartEntryId         String?
   // Direct debit is opt-in per contract, and only for SAVE_TO_OWN's two siblings —
   // see docs/01-plan.md: a free-form-savings contract has no due date to auto-collect
   // against. Presence + status of the linked mandate (not a separate boolean) is what
   // "enabled" means, so this can never drift out of sync with the mandate itself.
-  hubtelPreapprovalId String?
+  hubtelPreapprovalId       String?
   // Captured in the contract wizard when the customer picks Hubtel Direct Debit as
   // their payment method before the contract is eligible for a mandate (DEPOSIT_INSTALMENT
   // starts PENDING_DEPOSIT; mandates require ACTIVE — see hubtelPreapprovalService.ts).
@@ -340,7 +340,7 @@ model Contract {
   // an instalment is actually OVERDUE (see collectionsService.runDirectDebitCollections),
   // giving the customer their due date to pay themselves first. DIRECT_DEBIT/BOTH both
   // require a mandate (hubtelPreapprovalId) — see hubtelPreapprovalService.enableDirectDebit.
-  paymentMethod String @default("CUSTOMER_INITIATED")
+  paymentMethod             String  @default("CUSTOMER_INITIATED")
 
   // Snapshotted deal terms — entered directly at contract creation, never
   // looked up from a price chart (no contract type reads PriceChartEntry
@@ -377,7 +377,7 @@ model Contract {
   // balance against, only totalPaidMinor (what's actually been deposited).
   // See paymentService.recomputeContract/advanceContractStatus.
   totalPayableMinor Int?
-  totalPaidMinor    Int @default(0)
+  totalPaidMinor    Int  @default(0)
   balanceMinor      Int?
 
   startDate      DateTime
@@ -436,15 +436,14 @@ model Contract {
   ussdSessions       UssdSession[]
   smsMessages        SmsMessage[]
   agentDepositLedger AgentDepositLedger?
+  collectionNotes    CollectionNote[]
+  approvalRequests   ApprovalRequest[]
 
   @@index([status, createdAt])
   @@index([customerId, status])
   @@index([branchId, status])
   @@index([inventoryItemId])
   @@index([hubtelPreapprovalId])
-  collectionNotes  CollectionNote[]
-  approvalRequests ApprovalRequest[]
-
   @@map("contracts")
 }
 
@@ -572,27 +571,27 @@ model Penalty {
 // populated for DIRECT_DEBIT: a USSD charge failing just ends the customer's session,
 // there's no "merchant retries it later" concept for a channel the customer drove.
 model HubtelTransaction {
-  id                 String    @id @default(uuid())
-  clientReference    String    @unique
-  contractId         String
-  msisdn             String
-  amountMinor        Int
-  status             String    @default("PENDING")
-  channel            String    @default("USSD")
-  preapprovalId      String?
-  retryCount         Int       @default(0)
-  nextRetryAt        DateTime?
-  rawCallbackPayload String?
-  paymentId          String?   @unique
+  id                         String    @id @default(uuid())
+  clientReference            String    @unique
+  contractId                 String
+  msisdn                     String
+  amountMinor                Int
+  status                     String    @default("PENDING")
+  channel                    String    @default("USSD")
+  preapprovalId              String?
+  retryCount                 Int       @default(0)
+  nextRetryAt                DateTime?
+  rawCallbackPayload         String?
+  paymentId                  String?   @unique
   // A direct-debit attempt may ask for less than the instalment (a partial
   // attempt after the full one bounced); this is the full amount the chain
   // of attempts is collecting. Null for an ordinary full-amount attempt.
-  baseAmountMinor    Int?
+  baseAmountMinor            Int?
   // How staff closed a NEEDS_REVIEW transaction that could not be applied to
   // the contract (refunded, posted by hand elsewhere).
-  resolvedAt         DateTime?
-  resolvedById       String?
-  resolutionNote     String?
+  resolvedAt                 DateTime?
+  resolvedById               String?
+  resolutionNote             String?
   // A payment taken by Hubtel's own checkout after the USSD menu answered
   // AddToCart (ussdCheckoutService.ts): clientReference is then Hubtel's
   // SessionId. Hubtel reports the payment to the Service Fulfilment URL with
@@ -605,8 +604,8 @@ model HubtelTransaction {
   fulfilmentStatus           String?
   fulfilmentCallbackState    String?
   fulfilmentCallbackAttempts Int       @default(0)
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
 
   contract    Contract           @relation(fields: [contractId], references: [id])
   payment     Payment?           @relation(fields: [paymentId], references: [id])
@@ -822,9 +821,9 @@ model LoanSettings {
 // Deliberately NOT consulted when recording a payment — a customer handing
 // over cash on a Sunday is always accepted (paymentService.ts).
 model OperatingSettings {
-  id            String   @id @default("singleton")
-  worksSaturday Boolean  @default(false)
-  worksSunday   Boolean  @default(false)
+  id                          String   @id @default("singleton")
+  worksSaturday               Boolean  @default(false)
+  worksSunday                 Boolean  @default(false)
   // Whether a customer may still pay on a day the business is closed — a
   // Saturday payment against a Monday instalment, or against loan interest
   // that only accrues on working days. Defaults ON: the common case is a
@@ -833,9 +832,9 @@ model OperatingSettings {
   // INITIATION of a new payment (the cash routes and the USSD confirm step),
   // never the recording of one already collected — see
   // assertPaymentsAcceptedToday in operatingSettingsService.ts.
-  acceptsPaymentsOnClosedDays Boolean @default(true)
-  updatedAt     DateTime @updatedAt
-  updatedById   String?
+  acceptsPaymentsOnClosedDays Boolean  @default(true)
+  updatedAt                   DateTime @updatedAt
+  updatedById                 String?
 
   updatedBy User? @relation(fields: [updatedById], references: [id])
 
@@ -874,10 +873,10 @@ model ContractTypeSettings {
 // settled (the same "snapshot, don't re-read" convention every other pricing
 // field on Contract follows). Singleton, edited from Settings > Commission.
 model CommissionSettings {
-  id                  String   @id @default("singleton")
-  fixedCommissionMinor Int     @default(0)
-  updatedAt           DateTime @updatedAt
-  updatedById         String?
+  id                   String   @id @default("singleton")
+  fixedCommissionMinor Int      @default(0)
+  updatedAt            DateTime @updatedAt
+  updatedById          String?
 
   updatedBy User? @relation(fields: [updatedById], references: [id])
 
@@ -897,35 +896,35 @@ model CommissionSettings {
 //   their commission (DUE_TO_AGENT, e.g. a deposit paid by mobile money);
 //   0: SETTLED.
 model AgentDepositLedger {
-  id                   String   @id @default(uuid())
-  contractId           String   @unique
-  agentId              String
+  id                     String   @id @default(uuid())
+  contractId             String   @unique
+  agentId                String
   // Cash in the agent's hand on this contract: every effective cash payment
   // recorded as collected by them (Payment.collectedByAgentId), net of
   // reversals. Not only the deposit, if they collect instalments too.
-  depositAmountMinor   Int
+  depositAmountMinor     Int
   // Earned once the contract's deposit has been paid in full, however it was
   // paid (Deposit + Instalment sales only); 0 before then, and again if the
   // deposit is unwound. The rate is snapshotted when first earned.
-  commissionAmountMinor Int
-  commissionRateMinor  Int?
+  commissionAmountMinor  Int
+  commissionRateMinor    Int?
   // The product category whose rate set the commission, as named at the
   // time; null when the default amount applied.
   commissionCategoryName String?
   // = depositAmountMinor - commissionAmountMinor. Negative when the
   // commission is more than the cash the agent holds.
-  amountOwedMinor      Int
-  amountRemittedMinor  Int      @default(0)
+  amountOwedMinor        Int
+  amountRemittedMinor    Int      @default(0)
   // Commission the office has paid out to the agent (AgentCommissionPayout).
-  commissionPaidMinor  Int      @default(0)
-  status               String   @default("OWED") // OWED | DUE_TO_AGENT | SETTLED
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  commissionPaidMinor    Int      @default(0)
+  status                 String   @default("OWED") // OWED | DUE_TO_AGENT | SETTLED
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
-  contract     Contract          @relation(fields: [contractId], references: [id])
-  agent        User              @relation("AgentLedgerAgent", fields: [agentId], references: [id])
-  remittances  AgentRemittance[]
-  payouts      AgentCommissionPayout[]
+  contract    Contract                @relation(fields: [contractId], references: [id])
+  agent       User                    @relation("AgentLedgerAgent", fields: [agentId], references: [id])
+  remittances AgentRemittance[]
+  payouts     AgentCommissionPayout[]
 
   @@index([agentId, status])
   @@index([agentId, createdAt])
@@ -944,8 +943,8 @@ model AgentRemittance {
   ledgerId        String
   agentId         String
   amountMinor     Int
-  method          String    // CASH | MOBILE_MONEY | BANK_TRANSFER
-  reference       String?   // customer-supplied momo/bank reference — never verified against a live gateway
+  method          String // CASH | MOBILE_MONEY | BANK_TRANSFER
+  reference       String? // customer-supplied momo/bank reference — never verified against a live gateway
   status          String    @default("PENDING") // PENDING | CONFIRMED | REJECTED
   rejectionReason String?
   confirmedById   String?
@@ -970,7 +969,7 @@ model AgentCommissionPayout {
   ledgerId    String
   agentId     String
   amountMinor Int
-  method      String   // CASH | MOBILE_MONEY | BANK_TRANSFER
+  method      String // CASH | MOBILE_MONEY | BANK_TRANSFER
   reference   String?
   paidById    String
   createdAt   DateTime @default(now())
@@ -1075,4 +1074,149 @@ model ControlSettings {
   updatedById               String?
 
   @@map("control_settings")
+}
+
+// ---------------------------------------------------------------------------
+// PayTrigger (Transsion) device locking — src/lib/paytrigger
+//
+// A sidecar for Device Financing contracts: TECNO, Infinix and itel phones
+// that lock themselves when an instalment is still unpaid after the grace
+// period. New tables only, joined to the rest of the schema by plain ID
+// columns and no relations, so nothing here can change an existing model.
+// ---------------------------------------------------------------------------
+
+// Which catalogue products are Transsion phones. An admin confirms each one;
+// a product is never treated as one from its name alone.
+model PayTriggerProduct {
+  id        String   @id @default(uuid())
+  productId String   @unique
+  brand     String // TECNO | INFINIX | ITEL
+  addedById String?
+  createdAt DateTime @default(now())
+
+  @@map("paytrigger_products")
+}
+
+// One enrolled phone. enrollmentStatus: QUEUED (enrolled, not yet switched
+// on) | ACTIVE | UNENFORCEABLE | FAILED | CANCELLED | REMOVED.
+// committedState is only ever what the phone itself reported (a callback or
+// a status read): LOCKED | UNLOCKED | PENDING | UNKNOWN. A write to
+// PayTrigger only makes it PENDING.
+model PayTriggerDevice {
+  id                String    @id @default(uuid())
+  inventoryItemId   String    @unique
+  contractId        String?   @unique
+  imei              String    @unique
+  // PayTrigger's own id for the phone, learned once it is activated.
+  deviceTag         String?
+  orderRef          String?
+  enrollmentStatus  String    @default("QUEUED")
+  committedState    String    @default("UNKNOWN")
+  // The lock date the contract implies, for staff to read.
+  scheduleExpiresAt DateTime?
+  // The lock date PayTrigger last accepted.
+  providerExpiresAt DateTime?
+  // Hash of the last decision applied, so an unchanged one is not resent.
+  fingerprint       String?
+  // Paid off: the lock is removed for good after this moment.
+  releaseAfter      DateTime?
+  releaseHeld       Boolean   @default(false)
+  // Hash of the lock-screen text PayTrigger last accepted.
+  lockMessageKey    String?
+  lastConnectAt     DateTime?
+  apkVersion        String?
+  licenceConsumedAt DateTime?
+  lastStatusReadAt  DateTime?
+  pinUnlocksUsed    Int       @default(0)
+  // Paid, so it should be open, but the phone still reports locked.
+  awaitingPinSince  DateTime?
+  lastError         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([enrollmentStatus])
+  @@map("paytrigger_devices")
+}
+
+// Outbound commands, idempotent by key, with retries.
+// type: EXTEND | LOCK (lock dates sent to a phone)
+// status: PENDING | PROCESSING | SUCCEEDED | DEFERRED | FAILED
+model PayTriggerCommand {
+  id             String    @id @default(uuid())
+  deviceId       String
+  type           String
+  status         String    @default("PENDING")
+  idempotencyKey String    @unique
+  payload        Json
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime?
+  lastError      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([deviceId, createdAt])
+  @@index([status, nextAttemptAt])
+  @@map("paytrigger_commands")
+}
+
+// Every request made to PayTrigger, sent, simulated or skipped, and every
+// callback from it. PayTrigger keeps no history of its own: this is the
+// record if a customer disputes a lock. The API key is masked; a PIN is
+// never stored.
+model PayTriggerActionLog {
+  id            String   @id @default(uuid())
+  deviceId      String?
+  contractId    String?
+  action        String
+  success       Boolean
+  dryRun        Boolean
+  providerCode  String?
+  skippedReason String?
+  request       Json?
+  response      Json?
+  actorId       String?
+  createdAt     DateTime @default(now())
+
+  @@index([deviceId, createdAt])
+  @@index([contractId, createdAt])
+  @@map("paytrigger_action_logs")
+}
+
+// Callbacks from PayTrigger, kept before they are processed and
+// de-duplicated by a hash of the body: PayTrigger re-sends until answered.
+model PayTriggerWebhookEvent {
+  id          String    @id @default(uuid())
+  dedupeKey   String    @unique
+  notifyType  String
+  body        Json
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@map("paytrigger_webhook_events")
+}
+
+// Always exactly one row (Settings > PayTrigger).
+model PayTriggerSettings {
+  id                       String    @id @default("singleton")
+  defaultRuleNum           Int       @default(0)
+  // Days after the grace period ends before the phone locks.
+  lockAfterOverdueDays     Int       @default(1)
+  // An agent's contract stays locked until the deposit cash they took is remitted.
+  lockOnUnpaidAgentDeposit Boolean   @default(true)
+  maxUnlockHorizonDays     Int       @default(45)
+  releaseHoldHours         Int       @default(24)
+  extendBreakerPercent     Int       @default(20)
+  lockTitle                String    @default("Payment overdue")
+  lockTips                 String    @default("Dear {firstName}, your payment of {amount} was due on {dueDate}. Pay to open your phone. Call {supportPhone} for help.")
+  depositHoldTitle         String    @default("Phone not yet activated")
+  depositHoldTips          String    @default("Your phone will be activated once your agent completes registration. Contact {agentName} on {agentPhone}.")
+  unlinkedTitle            String    @default("No contract on this device")
+  unlinkedTips             String    @default("This phone has no contract. Please contact {companyName} on {supportPhone}.")
+  lastSweepAt              DateTime?
+  lastSweepSummary         Json?
+  updatedById              String?
+  updatedAt                DateTime  @updatedAt
+
+  @@map("paytrigger_settings")
 }

@@ -15,6 +15,7 @@ export const PERMISSIONS = [
   'user.manage', 'role.manage', 'audit.view',
   'settings.manage',
   'agent.ledger.view', 'agent.ledger.remit', 'agent.ledger.manage',
+  'paytrigger.view', 'paytrigger.manage', 'paytrigger.pin', 'paytrigger.release',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -50,6 +51,10 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'agent.ledger.view': "View own agent deposit/commission ledger",
   'agent.ledger.remit': 'Record a remittance against own agent ledger',
   'agent.ledger.manage': "View and confirm every agent's deposit ledger",
+  'paytrigger.view': 'View PayTrigger phone locks',
+  'paytrigger.manage': 'Enrol, verify and reconcile PayTrigger phones',
+  'paytrigger.pin': 'Issue offline PayTrigger unlock PINs',
+  'paytrigger.release': 'Remove a PayTrigger lock for good',
 };
 
 /** Permissions grouped for display — the Roles admin UI's checkbox grid, in this order. */
@@ -61,6 +66,7 @@ export const PERMISSION_GROUPS: Array<{ label: string; permissions: Permission[]
   { label: 'Inventory', permissions: ['inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view'] },
   { label: 'Reports', permissions: ['report.view.branch', 'report.view.all', 'report.export'] },
   { label: 'Agent ledger', permissions: ['agent.ledger.view', 'agent.ledger.remit', 'agent.ledger.manage'] },
+  { label: 'PayTrigger', permissions: ['paytrigger.view', 'paytrigger.manage', 'paytrigger.pin', 'paytrigger.release'] },
   { label: 'Administration', permissions: ['user.manage', 'role.manage', 'audit.view'] },
   { label: 'Settings', permissions: ['settings.manage'] },
 ];
@@ -100,6 +106,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     'inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view',
     'report.view.branch', 'report.export',
     'agent.ledger.manage',
+    'paytrigger.view', 'paytrigger.manage',
   ],
   CASHIER: [
     'customer.create', 'customer.view',
@@ -133,12 +140,15 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
   ],
   STORE_KEEPER: [
     'inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view',
+    // Enrolling TECNO/Infinix/itel stock with PayTrigger is part of receiving it.
+    'paytrigger.view', 'paytrigger.manage',
   ],
   AUDITOR: [
     'customer.view', 'contract.view', 'payment.view',
     'pricechart.view', 'inventory.view',
     'report.view.all', 'report.export', 'audit.view',
     'agent.ledger.manage',
+    'paytrigger.view',
   ],
 };
 

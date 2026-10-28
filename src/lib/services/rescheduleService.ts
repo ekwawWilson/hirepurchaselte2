@@ -3,9 +3,10 @@ import { ContractError } from './contractService';
 import { resettleContract } from './paymentService';
 import { generateStraightLineSchedule } from './scheduleService';
 import { getWorkingDays } from './operatingSettingsService';
+import { notifyPayTrigger } from '../paytrigger/notify';
 import {
   DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
-  type PaymentFrequencyName,
+  type PaymentFrequencyName, isInstalmentSale,
 } from '../constants/contracts';
 
 /** What of a contract's instalments is still to be paid — the amount a reschedule spreads out again. */
@@ -36,9 +37,9 @@ export async function rescheduleContract(params: {
   const startDate = params.startDate ?? new Date();
   if (Number.isNaN(startDate.getTime())) throw new ContractError('The start date is not a valid date');
 
-  return prisma.$transaction(async (tx) => {
+  const rescheduled = await prisma.$transaction(async (tx) => {
     const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
-    if (contract.contractType !== 'DEPOSIT_INSTALMENT') throw new ContractError('Only a deposit and instalment contract has a schedule to change');
+    if (!isInstalmentSale(contract.contractType)) throw new ContractError('Only a deposit and instalment contract has a schedule to change');
     if (!['ACTIVE', 'DEFAULTED'].includes(contract.status)) {
       throw new ContractError(`Cannot reschedule a contract in status ${contract.status}`);
     }
@@ -90,4 +91,6 @@ export async function rescheduleContract(params: {
       schedule: schedule.map((s) => ({ instalmentNo: lastNo + s.instalmentNo, dueDate: s.dueDate, amountDueMinor: s.amountDueMinor })),
     };
   });
+  notifyPayTrigger(rescheduled.contract.id, 'CONTRACT_CHANGED', rescheduled.contract.contractType);
+  return rescheduled;
 }

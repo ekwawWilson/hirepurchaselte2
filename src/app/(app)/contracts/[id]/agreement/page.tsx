@@ -7,6 +7,7 @@ import { useContractDocument } from '@/lib/useContractDocument';
 import { customerPhone } from '@/lib/contractDocuments';
 import { unitTitle } from '@/lib/unitLabel';
 import { AGREEMENT_TERMS, AGREEMENT_TITLES } from '@/lib/constants/agreementTerms';
+import { isInstalmentSale } from '@/lib/constants/contracts';
 
 /** Basis points as a percentage: 250 -> "2.5%". */
 const percent = (bps: number) => `${(bps / 100).toFixed(2).replace(/\.?0+$/, '')}%`;
@@ -23,7 +24,7 @@ export default function ContractAgreementPage({ params }: { params: Promise<{ id
   if (error) return <p className="text-sm text-red-600">{error}</p>;
   if (!c) return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>;
 
-  const isInstalment = c.contractType === 'DEPOSIT_INSTALMENT';
+  const isInstalment = isInstalmentSale(c.contractType);
   const isLoan = c.contractType === 'DEVICE_LOAN';
   const first = c.instalments[0];
   const last = c.instalments[c.instalments.length - 1];

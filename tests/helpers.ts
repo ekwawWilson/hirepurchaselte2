@@ -61,9 +61,9 @@ const BASE = 'http://localhost:3000';
 export function makeRequest(
   method: string,
   path: string,
-  opts: { token?: string; body?: unknown } = {},
+  opts: { token?: string; body?: unknown; headers?: Record<string, string> } = {},
 ): NextRequest {
-  const headers = new Headers({ 'Content-Type': 'application/json' });
+  const headers = new Headers({ 'Content-Type': 'application/json', ...opts.headers });
   if (opts.token) headers.set('Authorization', `Bearer ${opts.token}`);
   return new NextRequest(new URL(BASE + path), {
     method,

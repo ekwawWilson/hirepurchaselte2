@@ -1,5 +1,6 @@
 import { prisma } from '../db/prisma';
-import { defaultCutoffDate } from '../constants/contracts';
+import { defaultCutoffDate, INSTALMENT_SALE_TYPES } from '../constants/contracts';
+import { notifyPayTrigger } from '../paytrigger/notify';
 
 /**
  * Flips PENDING/PARTIAL instalments past their due date to OVERDUE. A direct
@@ -38,7 +39,7 @@ export async function markDefaultedContracts() {
       status: 'ACTIVE',
       OR: [
         {
-          contractType: { in: ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] },
+          contractType: { in: [...INSTALMENT_SALE_TYPES, 'DEVICE_LOAN'] },
           instalments: { some: { status: 'OVERDUE', dueDate: { lt: cutoff } } },
         },
         {
@@ -47,7 +48,7 @@ export async function markDefaultedContracts() {
         },
       ],
     },
-    select: { id: true },
+    select: { id: true, contractType: true },
   });
 
   if (candidates.length === 0) return 0;
@@ -56,6 +57,7 @@ export async function markDefaultedContracts() {
     where: { id: { in: candidates.map((c) => c.id) } },
     data: { status: 'DEFAULTED', defaultedAt: new Date() },
   });
+  for (const c of candidates) notifyPayTrigger(c.id, 'CONTRACT_CHANGED', c.contractType);
   return result.count;
 }
 
@@ -72,7 +74,7 @@ export async function markDefaultedContracts() {
 export async function applyLatePenalties() {
   const now = new Date();
   const overdue = await prisma.instalment.findMany({
-    where: { status: 'OVERDUE', contract: { contractType: { in: ['DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] }, penaltyRateBps: { gt: 0 } } },
+    where: { status: 'OVERDUE', contract: { contractType: { in: [...INSTALMENT_SALE_TYPES, 'DEVICE_LOAN'] }, penaltyRateBps: { gt: 0 } } },
     include: { contract: true, penalties: true },
   });
 

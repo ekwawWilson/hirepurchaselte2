@@ -8,7 +8,7 @@ import {
 import { logAudit } from './auditService';
 import { isOwnPhoneNumber } from './customerPortalService';
 import { networkForPhone } from '../constants/customers';
-import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES } from '../constants/contracts';
+import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES, isInstalmentSale } from '../constants/contracts';
 import { paymentAmountProblem, waitingPromptProblem } from './paymentLimitsService';
 
 /**
@@ -313,7 +313,7 @@ async function postHubtelCharge(
     return result.payment.id;
   }
 
-  const entryType = contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT'
+  const entryType = isInstalmentSale(contract.contractType) && contract.status === 'PENDING_DEPOSIT'
     ? 'DEPOSIT'
     : 'INSTALMENT_PAYMENT';
   const result = await postPayment({

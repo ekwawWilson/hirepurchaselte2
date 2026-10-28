@@ -18,6 +18,7 @@ import {
   PhoneCall,
   Undo2,
   Wallet,
+  Lock,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from './authStore';
@@ -79,6 +80,8 @@ export const navGroups: NavGroup[] = [
       { name: 'Products', href: '/products', icon: Package, perms: ['inventory.view'] },
       { name: 'Inventory', href: '/inventory', icon: Warehouse, perms: ['inventory.view'] },
       { name: 'Price Chart', href: '/price-chart', icon: Tags, perms: ['pricechart.view'] },
+      // Device Financing phone locks: enrolling TECNO/Infinix/itel stock, and what needs a person.
+      { name: 'PayTrigger', href: '/paytrigger', icon: Lock, perms: ['paytrigger.view'] },
     ],
   },
   {

@@ -72,6 +72,7 @@ export function contractTypeLabel(type: string): string {
   const labels: Record<string, string> = {
     SAVE_TO_OWN: "Save to Own",
     DEPOSIT_INSTALMENT: "Deposit + Instalment",
+    DEVICE_FINANCING: "Device Financing",
     DEVICE_LOAN: "Device Loan",
   };
   return labels[type] ?? type;

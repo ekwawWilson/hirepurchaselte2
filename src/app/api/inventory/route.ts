@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rbac';
 import { receiveInventoryItem } from '@/lib/services/inventoryService';
 import { inventorySearchWhere } from '@/lib/utils/search';
+import { saleTypeInventoryWhere } from '@/lib/paytrigger/saleGuard';
 
 /**
  * Stock, to whoever may view inventory. Someone who can only create contracts
@@ -30,7 +31,10 @@ export async function GET(req: NextRequest) {
   if (status) where.status = status;
   if (sellableOnly) where.status = 'AVAILABLE';
   const q = searchParams.get('q');
-  if (q) where.AND = inventorySearchWhere(q);
+  // ?saleType=: only what that instalment sale may sell (PayTrigger phones
+  // go on Device Financing alone) — the new-contract wizard's unit picker.
+  const saleWhere = await saleTypeInventoryWhere(searchParams.get('saleType'));
+  where.AND = [...(q ? inventorySearchWhere(q) : []), ...(saleWhere ? [saleWhere] : [])];
 
   const items = await prisma.inventoryItem.findMany({
     where, include: { product: { include: { category: true } }, branch: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 200,

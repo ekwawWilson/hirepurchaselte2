@@ -1,6 +1,6 @@
 import { prisma } from '../db/prisma';
 import { generateTransactionRef } from '../utils/idGenerators';
-import { DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, type ContractTypeName } from '../constants/contracts';
+import { DIRECT_DEBIT_NETWORKS, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, isInstalmentSale, type ContractTypeName } from '../constants/contracts';
 import { recordSuccessfulHubtelCharge, claimableStatuses } from './hubtelPaymentService';
 import { appendWebhookToken } from '../auth/webhookSecurity';
 import {
@@ -304,7 +304,7 @@ export async function reactivatePreapproval(params: { preapprovalId: string }) {
  * is never eligible — it's free-form savings with no due schedule to
  * auto-collect against (contractService.ts).
  *
- * ACTIVE or (for DEPOSIT_INSTALMENT only) still PENDING_DEPOSIT qualify — the
+ * ACTIVE or (for an instalment sale only) still PENDING_DEPOSIT qualify — the
  * latter so the mandate can be requested at contract creation, the moment
  * staff have the customer at the counter, rather than only after the deposit
  * clears and the customer may already be gone. Attaching it this early is
@@ -325,7 +325,7 @@ export async function enableDirectDebit(params: { contractId: string; preapprova
     throw new PreapprovalError(`${contract.contractType} contracts have no due schedule — direct debit isn't available for them`);
   }
   const statusEligible = contract.status === 'ACTIVE'
-    || (contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT');
+    || (isInstalmentSale(contract.contractType) && contract.status === 'PENDING_DEPOSIT');
   if (!statusEligible) {
     throw new PreapprovalError(`Direct debit can only be enabled on an ACTIVE contract (currently ${contract.status})`);
   }

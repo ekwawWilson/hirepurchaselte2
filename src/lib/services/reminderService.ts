@@ -3,6 +3,7 @@ import { formatMoney } from '../utils/money';
 import { isWorkingDay } from '../workingDays';
 import { getWorkingDays } from './operatingSettingsService';
 import { queueSms, deliverQueuedSms } from './smsService';
+import { INSTALMENT_SALE_TYPES } from '../constants/contracts';
 
 /**
  * Daily payment reminders to customers — the legacy app's
@@ -13,7 +14,7 @@ import { queueSms, deliverQueuedSms } from './smsService';
  *              OVERDUE_REMINDER_INTERVAL_DAYS so a customer is reminded,
  *              not harassed
  *
- * Only DEPOSIT_INSTALMENT contracts have a schedule to remind about; Save to
+ * Only the instalment sales (INSTALMENT_SALE_TYPES) have a schedule to remind about; Save to
  * Own has nothing due and a Device Loan has no instalments. Nothing is sent
  * on a day the business is closed. Each sweep is safe to run twice: a
  * contract already reminded is skipped, which also makes a server restart or
@@ -63,7 +64,7 @@ export async function sendDueTodayReminders(now: Date = new Date()): Promise<Rem
     where: {
       dueDate: { gte: today, lt: tomorrow },
       status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] },
-      contract: { contractType: 'DEPOSIT_INSTALMENT', status: { in: REMINDABLE_STATUSES } },
+      contract: { contractType: { in: INSTALMENT_SALE_TYPES }, status: { in: REMINDABLE_STATUSES } },
     },
     select: { contractId: true, amountDueMinor: true, amountPaidMinor: true },
   });
@@ -91,7 +92,7 @@ export async function sendOverdueReminders(now: Date = new Date()): Promise<Remi
     where: {
       dueDate: { lt: today },
       status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] },
-      contract: { contractType: 'DEPOSIT_INSTALMENT', status: { in: REMINDABLE_STATUSES } },
+      contract: { contractType: { in: INSTALMENT_SALE_TYPES }, status: { in: REMINDABLE_STATUSES } },
     },
     select: { contractId: true, dueDate: true, amountDueMinor: true, amountPaidMinor: true },
   });

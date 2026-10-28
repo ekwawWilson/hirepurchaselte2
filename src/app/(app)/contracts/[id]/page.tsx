@@ -25,7 +25,7 @@ import {
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
 } from '@/components/ui/alert-dialog';
-import { isMoneyOut } from '@/lib/constants/contracts';
+import { isMoneyOut, isInstalmentSale, INSTALMENT_SALE_TYPES } from '@/lib/constants/contracts';
 
 interface Instalment { id: string; instalmentNo: number; dueDate: string; amountDueMinor: number; principalPortionMinor: number; interestPortionMinor: number; amountPaidMinor: number; status: string; daysPastDue?: number }
 interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; notes: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
@@ -71,7 +71,7 @@ interface ContractDetail {
 
 // DEVICE_LOAN's self-directed two-option payment model has no "auto-charge the
 // due amount" equivalent, so it's no longer direct-debit eligible (constants/contracts.ts).
-const DIRECT_DEBIT_ELIGIBLE_TYPES = ['DEPOSIT_INSTALMENT'];
+const DIRECT_DEBIT_ELIGIBLE_TYPES = INSTALMENT_SALE_TYPES as string[];
 const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'];
 
 export default function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -210,7 +210,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     setResubmitSaving(true);
     try {
       const body: Record<string, unknown> = {};
-      if (contract.contractType === 'DEPOSIT_INSTALMENT') {
+      if (isInstalmentSale(contract.contractType)) {
         body.totalPayableMinor = Math.round(parseFloat(resubmitForm.totalPayable) * 100);
         body.depositAmountMinor = Math.round(parseFloat(resubmitForm.deposit) * 100);
         body.termWeeks = parseInt(resubmitForm.termWeeks, 10);
@@ -513,7 +513,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const canRecordRefund = hasPermission('payment.reverse', 'contract.cancel');
   const canLogContact = hasPermission('customer.create', 'payment.cash.record');
   const scheduleOutstandingMinor = contract.instalments.reduce((s, i) => s + Math.max(0, i.amountDueMinor - i.amountPaidMinor), 0);
-  const canReschedule = canManageMandate && contract.contractType === 'DEPOSIT_INSTALMENT'
+  const canReschedule = canManageMandate && isInstalmentSale(contract.contractType)
     && ['ACTIVE', 'DEFAULTED'].includes(contract.status) && scheduleOutstandingMinor > 0;
   const inArrears = contract.status === 'DEFAULTED' || contract.instalments.some((i) => i.status === 'OVERDUE');
   // Cash on a contract an agent brought in may have been taken by the agent in
@@ -696,7 +696,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           <CardHeader><CardTitle>Record a cash payment</CardTitle></CardHeader>
           <CardContent>
             <form className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3" onSubmit={recordPayment}>
-              {contract.contractType === 'DEPOSIT_INSTALMENT' && contract.status === 'PENDING_DEPOSIT' && (
+              {isInstalmentSale(contract.contractType) && contract.status === 'PENDING_DEPOSIT' && (
                 <div>
                   <Label>Type</Label>
                   <select
@@ -1242,7 +1242,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         <DialogContent>
           <DialogHeader><DialogTitle>Edit terms &amp; resubmit</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-4">
-            {contract.contractType === 'DEPOSIT_INSTALMENT' && (
+            {isInstalmentSale(contract.contractType) && (
               <>
                 <div>
                   <Label>Total price (GHS)</Label>

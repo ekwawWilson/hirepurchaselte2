@@ -11,7 +11,7 @@ import { useToast } from '@/hooks/useToast';
 import { formatCurrency, contractTypeLabel, getStatusColor } from '@/lib/utils';
 import {
   DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
-  DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, DIRECT_DEBIT_NETWORKS, type PaymentFrequencyName,
+  DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, DIRECT_DEBIT_NETWORKS, isInstalmentSale, type PaymentFrequencyName,
 } from '@/lib/constants/contracts';
 import { generateStraightLineSchedule, type GeneratedInstalment } from '@/lib/services/scheduleService';
 import { DEFAULT_WORKING_DAYS, type WorkingDays } from '@/lib/workingDays';
@@ -46,6 +46,7 @@ interface Contract {
 const CONTRACT_TYPE_OPTIONS = [
   { value: 'SAVE_TO_OWN', label: 'Save to Own' },
   { value: 'DEPOSIT_INSTALMENT', label: 'Deposit + Instalment' },
+  { value: 'DEVICE_FINANCING', label: 'Device Financing' },
   { value: 'DEVICE_LOAN', label: 'Device Loan' },
 ];
 
@@ -60,7 +61,7 @@ export default function ContractsPage() {
   const [saving, setSaving] = useState(false);
 
   // Three-step wizard — Select Customer, Select Type & Unit, Configure Payment Terms.
-  // Only DEPOSIT_INSTALMENT reserves an inventory unit in step 2; SAVE_TO_OWN and
+  // Only the instalment sales reserve an inventory unit in step 2; SAVE_TO_OWN and
   // DEVICE_LOAN are both open-ended/not linked to a product at all (contractService.ts),
   // so step 2 is skipped straight to a confirmation for those two types.
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -117,15 +118,15 @@ export default function ContractsPage() {
   const [listPage, setListPage] = useState(1);
   const isSaveToOwn = contractType === 'SAVE_TO_OWN';
   const isDeviceLoan = contractType === 'DEVICE_LOAN';
-  const isDepositInstalment = contractType === 'DEPOSIT_INSTALMENT';
+  const isInstalment = isInstalmentSale(contractType);
   const directDebitEligible = (DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES as string[]).includes(contractType);
 
   const parsedTotalPrice = Math.round(parseFloat(totalPrice || '0') * 100);
   const parsedDeposit = Math.round(parseFloat(depositAmount || '0') * 100);
   const parsedTermWeeks = parseInt(termWeeks, 10);
   const parsedLoanAmount = Math.round(parseFloat(loanAmount || '0') * 100);
-  const financeAmountMinor = isDepositInstalment && parsedTotalPrice > parsedDeposit ? parsedTotalPrice - parsedDeposit : 0;
-  const instalmentCount = isDepositInstalment && Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
+  const financeAmountMinor = isInstalment && parsedTotalPrice > parsedDeposit ? parsedTotalPrice - parsedDeposit : 0;
+  const instalmentCount = isInstalment && Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
     ? (paymentFrequency === 'DAILY' ? parsedTermWeeks * 7 : parsedTermWeeks)
     : 0;
   const instalmentAmountMinor = instalmentCount > 0 ? Math.ceil(financeAmountMinor / instalmentCount) : 0;
@@ -138,7 +139,7 @@ export default function ContractsPage() {
     : enabledLabels[0]} contracts`;
 
   const step1Valid = !!customerId;
-  const step2Valid = isDepositInstalment ? !!inventoryItemId : true;
+  const step2Valid = isInstalment ? !!inventoryItemId : true;
   const depositTermsValid = Number.isFinite(parsedTotalPrice) && parsedTotalPrice > 0
     && Number.isFinite(parsedDeposit) && parsedDeposit >= 0 && parsedDeposit < parsedTotalPrice
     && Number.isInteger(parsedTermWeeks) && parsedTermWeeks >= DEPOSIT_INSTALMENT_MIN_TERM_WEEKS && parsedTermWeeks <= DEPOSIT_INSTALMENT_MAX_TERM_WEEKS
@@ -164,7 +165,7 @@ export default function ContractsPage() {
   }
 
   function previewSchedule(): GeneratedInstalment[] {
-    if (!isDepositInstalment || !depositTermsValid) return [];
+    if (!isInstalment || !depositTermsValid) return [];
     return generateStraightLineSchedule(financeAmountMinor, 1, new Date(startDate), paymentFrequency, instalmentCount, workingDays);
   }
 
@@ -335,7 +336,9 @@ export default function ContractsPage() {
   useEffect(() => {
     if (!selectedCustomer) { setItems([]); return; }
     const timer = setTimeout(() => {
-      const params = new URLSearchParams({ status: 'AVAILABLE', branchId: selectedCustomer.branchId, ...(itemSearch.trim() && { q: itemSearch.trim() }) });
+      // Only what this type may sell: enrolled PayTrigger phones for Device
+      // Financing, everything else for Deposit + Instalment (inventory route).
+      const params = new URLSearchParams({ status: 'AVAILABLE', branchId: selectedCustomer.branchId, saleType: contractType, ...(itemSearch.trim() && { q: itemSearch.trim() }) });
       api.get<{ items: InventoryItem[] }>(`/inventory?${params}`)
         .then((r) => setItems(r.items))
         .catch((e) => {
@@ -345,7 +348,7 @@ export default function ContractsPage() {
     }, 250);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCustomer?.id, itemSearch]);
+  }, [selectedCustomer?.id, itemSearch, contractType]);
 
   const filteredCustomers = customers;
   const filteredItems = items;
@@ -377,7 +380,7 @@ export default function ContractsPage() {
               ))}
             </div>
             <p className="text-xs text-gray-500 mt-1.5">
-              Step {step} of 3 — {step === 1 ? 'Select Customer' : step === 2 ? (isDepositInstalment ? 'Select Type & Unit' : 'Select Type') : 'Configure Payment Terms'}
+              Step {step} of 3 — {step === 1 ? 'Select Customer' : step === 2 ? (isInstalment ? 'Select Type & Unit' : 'Select Type') : 'Configure Payment Terms'}
             </p>
           </CardHeader>
           <CardContent>
@@ -429,7 +432,7 @@ export default function ContractsPage() {
               <div className="space-y-4">
                 <div>
                   <Label>Contract type</Label>
-                  <Select value={contractType} onValueChange={setContractType}>
+                  <Select value={contractType} onValueChange={(v) => { setContractType(v); setInventoryItemId(''); setSelectedItem(null); }}>
                     <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {contractTypeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
@@ -447,12 +450,18 @@ export default function ContractsPage() {
                   {isSaveToOwn && (
                     <p className="text-xs text-gray-400 mt-1">Open-ended savings — not linked to any product. The customer deposits any amount, any time, until they withdraw or the saved amount goes toward a purchase.</p>
                   )}
-                  {isDepositInstalment && (
+                  {isInstalment && (
                     <p className="text-xs text-gray-400 mt-1">Reserves a serialized unit from stock — the total price, deposit, and installment period are entered on the next step.</p>
+                  )}
+                  {contractType === 'DEVICE_FINANCING' && (
+                    <p className="text-xs text-gray-400 mt-1">For TECNO, Infinix and itel phones enrolled with PayTrigger: the phone locks itself when an instalment is still unpaid after the grace period, and opens again once it is paid. Only enrolled phones are listed.</p>
+                  )}
+                  {contractType === 'DEPOSIT_INSTALMENT' && (
+                    <p className="text-xs text-gray-400 mt-1">PayTrigger phones (TECNO, Infinix, itel) are sold on Device Financing and are not listed here.</p>
                   )}
                 </div>
 
-                {!isDepositInstalment ? (
+                {!isInstalment ? (
                   <div className="bg-blue-50 p-3 text-sm text-blue-900">
                     {isDeviceLoan
                       ? 'No product or unit to select for a Device Loan — continue to enter the loan amount.'
@@ -546,7 +555,7 @@ export default function ContractsPage() {
                   </>
                 )}
 
-                {isDepositInstalment && (
+                {isInstalment && (
                 <>
                 <div className="bg-green-50 p-3">
                   <p className="text-xs font-medium text-green-900">Product & Unit</p>

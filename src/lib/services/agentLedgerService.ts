@@ -2,7 +2,8 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { commissionForContract } from './commissionSettingsService';
 import { AGENT_CASH_HOLD_ALERT_DAYS } from '../constants/agents';
-import { isMoneyOut } from '../constants/contracts';
+import { isMoneyOut, isInstalmentSale } from '../constants/contracts';
+import { notifyPayTrigger } from '../paytrigger/notify';
 
 export class AgentLedgerError extends Error {}
 
@@ -42,7 +43,7 @@ export async function syncAgentLedger(tx: Db, contractId: string): Promise<void>
     .filter((p) => p.channel === 'CASH' && p.collectedByAgentId === contract.createdById && !isMoneyOut(p.entryType))
     .reduce((sum, p) => sum + p.amountMinor, 0);
   const depositPaid = payments.filter((p) => p.entryType === 'DEPOSIT').reduce((sum, p) => sum + p.amountMinor, 0);
-  const earned = contract.contractType === 'DEPOSIT_INSTALMENT' && contract.activatedAt !== null && depositPaid >= contract.depositAmountMinor;
+  const earned = isInstalmentSale(contract.contractType) && contract.activatedAt !== null && depositPaid >= contract.depositAmountMinor;
 
   const existing = await tx.agentDepositLedger.findUnique({ where: { contractId } });
   if (!existing && cashCollected === 0 && !earned) return;
@@ -156,7 +157,8 @@ async function assertSameBranch(db: Db, agentId: string, userBranchId: string | 
  * Limited to agents in the approver's own branch.
  */
 export async function confirmRemittance(params: { remittanceId: string; confirmedById: string; confirmerBranchId: string | null }) {
-  return prisma.$transaction(async (tx) => {
+  let contractId: string | null = null;
+  const confirmed = await prisma.$transaction(async (tx) => {
     const remittance = await tx.agentRemittance.findUniqueOrThrow({ where: { id: params.remittanceId } });
     await assertSameBranch(tx, remittance.agentId, params.confirmerBranchId);
     // Claimed on its PENDING status, so two approvers cannot both apply it.
@@ -172,8 +174,12 @@ export async function confirmRemittance(params: { remittanceId: string; confirme
     });
     const ledger = await tx.agentDepositLedger.findUniqueOrThrow({ where: { id: remittance.ledgerId } });
     await syncAgentLedger(tx, ledger.contractId);
+    contractId = ledger.contractId;
     return tx.agentRemittance.findUniqueOrThrow({ where: { id: remittance.id } });
   });
+  // A Device Financing phone held for the agent's deposit can open now.
+  notifyPayTrigger(contractId, 'DEPOSIT_REMITTED');
+  return confirmed;
 }
 
 export async function rejectRemittance(params: { remittanceId: string; confirmedById: string; confirmerBranchId: string | null; reason: string }) {
@@ -213,6 +219,9 @@ export async function payCommission(params: {
     });
     await tx.agentDepositLedger.update({ where: { id: ledger.id }, data: { commissionPaidMinor: { increment: params.amountMinor } } });
     await syncAgentLedger(tx, ledger.contractId);
+    return { payout, contractId: ledger.contractId };
+  }).then(({ payout, contractId }) => {
+    notifyPayTrigger(contractId, 'DEPOSIT_REMITTED');
     return payout;
   });
 }

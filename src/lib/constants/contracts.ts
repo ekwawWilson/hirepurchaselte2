@@ -1,5 +1,16 @@
-export const CONTRACT_TYPES = ['SAVE_TO_OWN', 'DEPOSIT_INSTALMENT', 'DEVICE_LOAN'] as const;
+export const CONTRACT_TYPES = ['SAVE_TO_OWN', 'DEPOSIT_INSTALMENT', 'DEVICE_FINANCING', 'DEVICE_LOAN'] as const;
 export type ContractTypeName = (typeof CONTRACT_TYPES)[number];
+
+/**
+ * The two ways a phone is sold on credit: a deposit, then daily or weekly
+ * instalments over a term in weeks, the unit reserved at creation and issued
+ * once the deposit clears. DEVICE_FINANCING is the same deal for a TECNO,
+ * Infinix or itel phone enrolled with Transsion's PayTrigger, which locks the
+ * phone when payments stop (src/lib/paytrigger). Everywhere the rules of the
+ * deal apply, test with isInstalmentSale rather than naming either type.
+ */
+export const INSTALMENT_SALE_TYPES: ContractTypeName[] = ['DEPOSIT_INSTALMENT', 'DEVICE_FINANCING'];
+export const isInstalmentSale = (contractType: string) => (INSTALMENT_SALE_TYPES as string[]).includes(contractType);
 
 /** All three contract types collect payments on one of these cadences (mission requirement). */
 export const PAYMENT_FREQUENCIES = ['DAILY', 'WEEKLY', 'MONTHLY'] as const;
@@ -69,6 +80,7 @@ export const PRE_APPROVAL_STATUSES = ['PENDING_APPROVAL', 'REVISION_REQUESTED'];
 export const CONTRACT_STATUSES_BY_TYPE: Record<ContractTypeName, string[]> = {
   SAVE_TO_OWN: [...PRE_APPROVAL_STATUSES, 'ACTIVE', 'COMPLETED', 'RELEASED', 'CANCELLED'],
   DEPOSIT_INSTALMENT: [...PRE_APPROVAL_STATUSES, 'PENDING_DEPOSIT', 'ACTIVE', 'COMPLETED', 'DEFAULTED', 'CANCELLED'],
+  DEVICE_FINANCING: [...PRE_APPROVAL_STATUSES, 'PENDING_DEPOSIT', 'ACTIVE', 'COMPLETED', 'DEFAULTED', 'CANCELLED'],
   DEVICE_LOAN: [...PRE_APPROVAL_STATUSES, 'ACTIVE', 'COMPLETED', 'DEFAULTED', 'WRITTEN_OFF'],
 };
 
@@ -80,6 +92,7 @@ export const CONTRACT_STATUSES_BY_TYPE: Record<ContractTypeName, string[]> = {
 export const INITIAL_STATUS_BY_TYPE: Record<ContractTypeName, string> = {
   SAVE_TO_OWN: 'ACTIVE',
   DEPOSIT_INSTALMENT: 'PENDING_DEPOSIT',
+  DEVICE_FINANCING: 'PENDING_DEPOSIT',
   DEVICE_LOAN: 'ACTIVE',
 };
 
@@ -91,10 +104,10 @@ export const INITIAL_STATUS_BY_TYPE: Record<ContractTypeName, string> = {
  * (contractService.ts). DEVICE_LOAN no longer has one either under its new
  * daily-interest model — the customer self-directs which of two payments
  * (accrued interest, or the full loan amount) to make via USSD/staff, which
- * has no natural "auto-charge the due amount" equivalent — so DEPOSIT_INSTALMENT
- * is the only type left eligible.
+ * has no natural "auto-charge the due amount" equivalent — so the instalment
+ * sales (INSTALMENT_SALE_TYPES) are the only types left eligible.
  */
-export const DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES: ContractTypeName[] = ['DEPOSIT_INSTALMENT'];
+export const DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES: ContractTypeName[] = INSTALMENT_SALE_TYPES;
 
 /** AirtelTigo has no Hubtel direct-debit product — regular USSD collection only. */
 export const DIRECT_DEBIT_NETWORKS = ['MTN', 'VODAFONE', 'TELECEL'] as const;

@@ -10,10 +10,12 @@ import { getLoanSettings } from './loanSettingsService';
 import { getWorkingDays } from './operatingSettingsService';
 import { getContractTypeSettings, isContractTypeEnabled } from './contractTypeSettingsService';
 import { contractTypeLabel } from '../utils';
+import { payTriggerSaleProblem } from '../paytrigger/saleGuard';
+import { notifyPayTrigger } from '../paytrigger/notify';
 import {
   CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
   DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
-  PRE_APPROVAL_STATUSES, INITIAL_STATUS_BY_TYPE,
+  PRE_APPROVAL_STATUSES, INITIAL_STATUS_BY_TYPE, INSTALMENT_SALE_TYPES, isInstalmentSale,
   type ContractTypeName, type PaymentFrequencyName, type PaymentMethodName,
 } from '../constants/contracts';
 
@@ -165,12 +167,15 @@ export async function createContract(params: CreateContractParams) {
     throw new ContractError('Could not create contract after multiple attempts, please retry');
   }
 
-  // DEPOSIT_INSTALMENT — the one type still linked to a specific reserved unit.
+  // DEPOSIT_INSTALMENT or DEVICE_FINANCING — the instalment sales, the types
+  // linked to a specific reserved unit.
   if (!params.inventoryItemId) throw new ContractError('inventoryItemId is required for this contract type');
   const item = await prisma.inventoryItem.findUnique({ where: { id: params.inventoryItemId } });
   if (!item) throw new ContractError('Inventory item not found');
   if (item.status !== 'AVAILABLE') throw new ContractError(`Inventory item is not available (status: ${item.status})`);
   if (item.branchId !== params.branchId) throw new ContractError('Inventory item does not belong to this branch');
+  const saleProblem = await payTriggerSaleProblem(params.contractType, item);
+  if (saleProblem) throw new ContractError(saleProblem);
 
   if (params.totalPayableMinor === undefined || !Number.isInteger(params.totalPayableMinor) || params.totalPayableMinor <= 0) {
     throw new ContractError('totalPayableMinor must be a positive integer');
@@ -194,7 +199,10 @@ export async function createContract(params: CreateContractParams) {
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      return await runDepositInstalmentTransaction(params, item, startDate, paymentMethod);
+      const contract = await runDepositInstalmentTransaction(params, item, startDate, paymentMethod);
+      // A Device Financing contract is linked to its enrolled phone straight away.
+      notifyPayTrigger(contract.id, 'CONTRACT_ACTIVE', contract.contractType);
+      return contract;
     } catch (e) {
       if (isContractNumberCollision(e) && attempt < MAX_ATTEMPTS) continue;
       throw e;
@@ -315,7 +323,7 @@ async function runDepositInstalmentTransaction(
     const contract = await tx.contract.create({
       data: {
         contractNumber,
-        contractType: 'DEPOSIT_INSTALMENT',
+        contractType: params.contractType,
         customerId: params.customerId,
         productId: item.productId,
         inventoryItemId: item.id,
@@ -419,7 +427,7 @@ export function cancelProblem(contract: { contractType: string; status: string }
 }
 
 export async function cancelContract(params: { contractId: string; reason: string; userId: string }) {
-  return prisma.$transaction(async (tx) => {
+  const cancelled = await prisma.$transaction(async (tx) => {
     const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
     const problem = cancelProblem(contract);
     if (problem) throw new ContractError(problem);
@@ -474,6 +482,8 @@ export async function cancelContract(params: { contractId: string; reason: strin
     // or is left as a figure for staff to act on (device already issued).
     return { ...updated, refundDueMinor: contract.totalPaidMinor };
   });
+  notifyPayTrigger(cancelled.id, 'CONTRACT_CHANGED', cancelled.contractType);
+  return cancelled;
 }
 
 /** Null if this contract can be written off as it stands, else why not. */
@@ -493,10 +503,12 @@ export async function writeOffContract(params: { contractId: string; reason: str
   const contract = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId } });
   const problem = writeOffProblem(contract);
   if (problem) throw new ContractError(problem);
-  return prisma.contract.update({
+  const writtenOff = await prisma.contract.update({
     where: { id: contract.id },
     data: { status: 'WRITTEN_OFF', writtenOffAt: new Date(), writeOffReason: params.reason, updatedById: params.userId },
   });
+  notifyPayTrigger(writtenOff.id, 'CONTRACT_CHANGED', writtenOff.contractType);
+  return writtenOff;
 }
 
 /** Explicit, staff-triggered hand-over of the device once a SAVE_TO_OWN contract is fully paid. */
@@ -537,6 +549,13 @@ export async function releaseContract(params: { contractId: string; userId: stri
  * waits for its deposit (PENDING_DEPOSIT), same as always.
  */
 export async function approveContract(params: { contractId: string; approvedById: string }) {
+  // The phone's enrolment may have lapsed while the deal waited for approval.
+  const pending = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId }, select: { contractType: true, productId: true, inventoryItemId: true } });
+  if (pending.contractType === 'DEVICE_FINANCING' && pending.inventoryItemId && pending.productId) {
+    const saleProblem = await payTriggerSaleProblem(pending.contractType, { id: pending.inventoryItemId, productId: pending.productId });
+    if (saleProblem) throw new ContractError(saleProblem);
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
     if (contract.status !== 'PENDING_APPROVAL') {
@@ -565,6 +584,7 @@ export async function approveContract(params: { contractId: string; approvedById
   if (result.queuedSmsId) {
     void deliverQueuedSms(result.queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
   }
+  notifyPayTrigger(result.contract.id, 'CONTRACT_ACTIVE', result.contract.contractType);
 
   // Same "try the mandate the moment it's actually usable" as a non-agent
   // contract's own creation — only ever reachable for DEPOSIT_INSTALMENT,
@@ -622,7 +642,7 @@ export interface ResubmitContractUpdates {
  * preserve.
  */
 export async function resubmitContract(params: { contractId: string; updates: ResubmitContractUpdates }) {
-  return prisma.$transaction(async (tx) => {
+  const resubmitted = await prisma.$transaction(async (tx) => {
     const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
     if (contract.status !== 'REVISION_REQUESTED') {
       throw new ContractError(`Only a contract sent back for revision can be resubmitted (this one is ${contract.status})`);
@@ -639,7 +659,7 @@ export async function resubmitContract(params: { contractId: string; updates: Re
       data.principalMinor = params.updates.loanAmountMinor;
     }
 
-    if (contract.contractType === 'DEPOSIT_INSTALMENT') {
+    if (isInstalmentSale(contract.contractType)) {
       const totalPayableMinor = params.updates.totalPayableMinor ?? contract.totalPayableMinor!;
       const depositAmountMinor = params.updates.depositAmountMinor ?? contract.depositAmountMinor;
       const termWeeks = params.updates.termWeeks ?? contract.termWeeks!;
@@ -692,6 +712,8 @@ export async function resubmitContract(params: { contractId: string; updates: Re
 
     return tx.contract.update({ where: { id: contract.id }, data });
   });
+  notifyPayTrigger(resubmitted.id, 'CONTRACT_CHANGED', resubmitted.contractType);
+  return resubmitted;
 }
 
 /** How long an agent's unapproved Deposit + Instalment contract may hold its unit. */
@@ -708,7 +730,7 @@ export async function expireStaleSubmissions(days = SUBMISSION_EXPIRY_DAYS): Pro
   const stale = await prisma.contract.findMany({
     where: {
       status: { in: PRE_APPROVAL_STATUSES },
-      contractType: 'DEPOSIT_INSTALMENT',
+      contractType: { in: INSTALMENT_SALE_TYPES },
       inventoryItemId: { not: null },
       updatedAt: { lt: new Date(Date.now() - days * 24 * 60 * 60 * 1000) },
     },
