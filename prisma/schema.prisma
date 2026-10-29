@@ -1220,3 +1220,20 @@ model PayTriggerSettings {
 
   @@map("paytrigger_settings")
 }
+
+// A customer resetting a forgotten portal/app password: a 6-digit code sent
+// by SMS to one of their registered numbers (passwordResetService.ts). Only
+// a hash of the code is kept; a code expires, allows a few attempts, and is
+// used once.
+model CustomerPasswordReset {
+  id         String    @id @default(uuid())
+  customerId String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([customerId, createdAt])
+  @@map("customer_password_resets")
+}

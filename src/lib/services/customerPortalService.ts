@@ -66,19 +66,21 @@ export function isOwnPhoneNumber(customer: { phone: string | null; phone2: strin
   return phoneVariants(candidate).some((v) => own.has(v));
 }
 
+/** Why a customer may not choose this password, or null. Shared by changing it and resetting it. */
+export function newPasswordProblem(customer: { phone: string | null; phone2: string | null; phone3: string | null }, newPassword: string): string | null {
+  if (newPassword.length < MIN_PORTAL_PASSWORD_LENGTH) return `Your new password must be at least ${MIN_PORTAL_PASSWORD_LENGTH} characters`;
+  if (isOwnPhoneNumber(customer, newPassword)) return 'Choose a password that is not your phone number';
+  return null;
+}
+
 export async function setCustomerPassword(params: { customerId: string; currentPassword: string; newPassword: string }) {
   const customer = await prisma.customer.findUniqueOrThrow({ where: { id: params.customerId } });
 
   const currentOk = !!customer.passwordHash && await bcrypt.compare(params.currentPassword, customer.passwordHash);
   if (!currentOk) throw new PortalError('Your current password is not correct');
   if (params.newPassword === params.currentPassword) throw new PortalError('Choose a password different from your current one');
-
-  if (params.newPassword.length < MIN_PORTAL_PASSWORD_LENGTH) {
-    throw new PortalError(`Your new password must be at least ${MIN_PORTAL_PASSWORD_LENGTH} characters`);
-  }
-  if (isOwnPhoneNumber(customer, params.newPassword)) {
-    throw new PortalError('Choose a password that is not your phone number');
-  }
+  const problem = newPasswordProblem(customer, params.newPassword);
+  if (problem) throw new PortalError(problem);
 
   await prisma.customer.update({
     where: { id: customer.id },
@@ -129,20 +131,76 @@ export async function portalContract(customerId: string, contractId: string) {
   if (!contract) return null;
 
   const deviceLoanState = contract.contractType === 'DEVICE_LOAN' ? await getDeviceLoanState(contract.id) : null;
-  return { ...contract, deviceLoanState };
+  const charges = await unpaidChargesByContract([contract.id]);
+  return { ...contract, deviceLoanState, due: dueSummary(contract, contract.instalments, charges.get(contract.id) ?? 0, deviceLoanState) };
 }
 
 export async function portalContracts(customerId: string) {
   const contracts = await prisma.contract.findMany({
     where: { customerId, status: { notIn: PRE_APPROVAL_STATUSES } },
-    include: { product: { select: { name: true } } },
+    include: {
+      product: { select: { name: true } },
+      instalments: { where: { status: { not: 'PAID' } }, select: { instalmentNo: true, dueDate: true, amountDueMinor: true, amountPaidMinor: true, status: true } },
+    },
     orderBy: { createdAt: 'desc' },
   });
+  const charges = await unpaidChargesByContract(contracts.map((c) => c.id));
 
-  return Promise.all(contracts.map(async (c) => ({
-    ...c,
-    deviceLoanState: c.contractType === 'DEVICE_LOAN' ? await getDeviceLoanState(c.id) : null,
-  })));
+  return Promise.all(contracts.map(async ({ instalments, ...c }) => {
+    const deviceLoanState = c.contractType === 'DEVICE_LOAN' ? await getDeviceLoanState(c.id) : null;
+    return { ...c, deviceLoanState, due: dueSummary(c, instalments, charges.get(c.id) ?? 0, deviceLoanState) };
+  }));
+}
+
+/**
+ * What a customer owes on a contract right now, as the mobile app shows it:
+ * the most one payment can be (totalDueMinor, null for open-ended savings),
+ * late charges, what is overdue and what falls due next. The same figures
+ * the server checks a payment against (paymentService.amountOwedNow), so the
+ * app never offers an amount the server would refuse.
+ */
+export interface DueSummary {
+  totalDueMinor: number | null;
+  penaltyOutstandingMinor: number;
+  overdueMinor: number;
+  overdueCount: number;
+  nextDueMinor: number;
+  nextDueDate: Date | null;
+  unpaidCount: number;
+}
+
+async function unpaidChargesByContract(contractIds: string[]): Promise<Map<string, number>> {
+  if (contractIds.length === 0) return new Map();
+  const rows = await prisma.penalty.groupBy({ by: ['contractId'], where: { contractId: { in: contractIds }, isPaid: false }, _sum: { amountMinor: true } });
+  return new Map(rows.map((r) => [r.contractId, r._sum.amountMinor ?? 0]));
+}
+
+function dueSummary(
+  contract: { contractType: string; status: string; balanceMinor: number | null },
+  instalments: Array<{ instalmentNo: number; dueDate: Date; amountDueMinor: number; amountPaidMinor: number; status: string }>,
+  chargesMinor: number,
+  deviceLoanState: { totalOwedMinor: number } | null,
+): DueSummary {
+  const startOfToday = new Date();
+  startOfToday.setUTCHours(0, 0, 0, 0);
+  const unpaid = instalments
+    .filter((i) => i.status !== 'PAID' && i.amountDueMinor - i.amountPaidMinor > 0)
+    .sort((a, b) => a.instalmentNo - b.instalmentNo);
+  const overdue = unpaid.filter((i) => i.status === 'OVERDUE' || i.dueDate < startOfToday);
+  const next = unpaid.find((i) => !overdue.includes(i)) ?? null;
+  const left = (i: { amountDueMinor: number; amountPaidMinor: number }) => i.amountDueMinor - i.amountPaidMinor;
+  const totalDueMinor = contract.contractType === 'SAVE_TO_OWN' ? null
+    : contract.contractType === 'DEVICE_LOAN' ? deviceLoanState?.totalOwedMinor ?? 0
+      : Math.max(0, contract.balanceMinor ?? 0) + chargesMinor;
+  return {
+    totalDueMinor,
+    penaltyOutstandingMinor: contract.contractType === 'DEVICE_LOAN' ? 0 : chargesMinor,
+    overdueMinor: overdue.reduce((s, i) => s + left(i), 0),
+    overdueCount: overdue.length,
+    nextDueMinor: next ? left(next) : 0,
+    nextDueDate: next?.dueDate ?? null,
+    unpaidCount: unpaid.length,
+  };
 }
 
 /** The instalments a customer still owes, soonest first, across every contract. */
