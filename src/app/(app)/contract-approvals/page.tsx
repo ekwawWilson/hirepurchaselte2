@@ -29,14 +29,29 @@ interface PendingContract {
   createdBy: { firstName: string; lastName: string } | null;
   customer: { firstName: string; lastName: string; membershipId: string };
   product: { name: string } | null;
+  checks: {
+    priority: 'HIGH' | 'MEDIUM' | 'LOW'; riskScore: number; suggestedSlaHours: number;
+    blockers: { code: string; message: string }[]; warnings: { code: string; message: string }[];
+  };
+  waitingHours: number;
+  overdue: boolean;
+  ownSale: boolean;
 }
+
+const PRIORITY_STYLE = {
+  HIGH: 'bg-red-50 text-red-700 ring-1 ring-red-200/60',
+  MEDIUM: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/60',
+  LOW: 'bg-gray-50 text-gray-600 ring-1 ring-gray-200/60',
+};
+const waited = (hours: number) => (hours < 1 ? 'under an hour' : hours < 48 ? `${Math.round(hours)}h` : `${Math.round(hours / 24)} days`);
 
 /**
  * The Agent module: every contract an AGENT has submitted, waiting for a
  * BRANCH_MANAGER/ADMIN/SUPER_ADMIN (contract.approve) to approve it or send
- * it back for revision. GET /api/contracts?status=PENDING_APPROVAL already
- * scopes to the approver's own branch (or all branches for an all-branch
- * user) — the same query the ordinary Contracts page uses, just filtered.
+ * it back for revision, most urgent first: each with its checks worked out
+ * again (saleChecksService), how long it has waited, and whether that is past
+ * the time suggested for its priority (GET /api/contracts/approvals, scoped to
+ * the approver's own branch, or all branches for an all-branch user).
  */
 export default function ContractApprovalsPage() {
   const canApprove = useAuthStore((s) => s.hasPermission('contract.approve'));
@@ -50,7 +65,7 @@ export default function ContractApprovalsPage() {
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const { contracts } = await api.get<{ contracts: PendingContract[] }>('/contracts?status=PENDING_APPROVAL');
+      const { contracts } = await api.get<{ contracts: PendingContract[] }>('/contracts/approvals');
       setContracts(contracts);
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load approvals', variant: 'destructive' });
@@ -136,6 +151,10 @@ export default function ContractApprovalsPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-xs text-blue-700 group-hover:underline">{c.contractNumber}</span>
                       <Badge className="bg-amber-50 text-amber-700 ring-1 ring-amber-200/60">{contractTypeLabel(c.contractType)}</Badge>
+                      <Badge className={PRIORITY_STYLE[c.checks.priority]}>{c.checks.priority.toLowerCase()} priority</Badge>
+                      <span className={`text-xs ${c.overdue ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
+                        waiting {waited(c.waitingHours)}{c.overdue ? ` (decide within ${c.checks.suggestedSlaHours}h)` : ''}
+                      </span>
                     </div>
                     <p className="text-sm font-medium text-gray-900 mt-1 truncate">
                       {c.customer.firstName} {c.customer.lastName} &middot; {c.customer.membershipId}
@@ -145,13 +164,19 @@ export default function ContractApprovalsPage() {
                       Submitted by {c.createdBy ? `${c.createdBy.firstName} ${c.createdBy.lastName}` : 'an agent'} on {formatDate(c.submittedForApprovalAt ?? c.createdAt)}
                       {value !== null && <> &middot; {formatCurrency(value)}</>}
                     </p>
+                    {(c.checks.blockers.length > 0 || c.checks.warnings.length > 0) && (
+                      <ul className="mt-2 space-y-0.5 text-xs">
+                        {c.checks.blockers.map((b) => <li key={b.code} className="text-red-700">✕ {b.message}</li>)}
+                        {c.checks.warnings.map((w) => <li key={w.code} className="text-amber-700">! {w.message}</li>)}
+                      </ul>
+                    )}
                   </Link>
                   <div className="flex gap-2 shrink-0">
                     <Button size="sm" variant="outline" disabled={busyId === c.id} onClick={() => { setRevisionTarget(c); setReason(''); }}>
                       Request revision
                     </Button>
-                    <Button size="sm" disabled={busyId === c.id} onClick={() => approve(c)}>
-                      {busyId === c.id ? 'Approving...' : 'Approve'}
+                    <Button size="sm" disabled={busyId === c.id || c.ownSale} onClick={() => approve(c)} title={c.ownSale ? 'Another approver must review your own sale' : undefined}>
+                      {busyId === c.id ? 'Approving...' : c.ownSale ? 'Your own sale' : 'Approve'}
                     </Button>
                     <Link href={`/contracts/${c.id}`} className="hidden sm:flex items-center text-gray-300">
                       <ChevronRight className="h-4 w-4" />

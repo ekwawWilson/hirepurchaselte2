@@ -11,7 +11,7 @@ import { getWorkingDays } from './operatingSettingsService';
 import { getContractTypeSettings, isContractTypeEnabled } from './contractTypeSettingsService';
 import { contractTypeLabel } from '../utils';
 import { payTriggerSaleProblem } from '../paytrigger/saleGuard';
-import { evaluateSaleChecks } from './saleChecksService';
+import { evaluateSaleChecks, type SaleDraft } from './saleChecksService';
 import { agentSaleProblem } from './stockAssignmentService';
 import { notifyPayTrigger } from '../paytrigger/notify';
 import {
@@ -95,7 +95,14 @@ export async function createContract(params: CreateContractParams) {
     throw new ContractError(`${contractTypeLabel(params.contractType)} is not activated — an admin can turn it on in Settings > Contract types`);
   }
 
-  await assertSaleAllowed(params.createdById);
+  const saleItem = params.inventoryItemId
+    ? await prisma.inventoryItem.findUnique({ where: { id: params.inventoryItemId }, select: { productId: true } })
+    : null;
+  await assertSaleAllowed({
+    createdById: params.createdById, contractType: params.contractType, customerId: params.customerId, productId: saleItem?.productId ?? null,
+    totalPayableMinor: params.totalPayableMinor, depositAmountMinor: params.depositAmountMinor, termWeeks: params.termWeeks,
+    paymentMethod: params.paymentMethod, directDebitMsisdn: params.directDebitMsisdn, startDate: params.startDate,
+  });
 
   const customer = await prisma.customer.findUnique({ where: { id: params.customerId } });
   if (!customer) throw new ContractError('Customer not found');
@@ -222,9 +229,9 @@ export async function createContract(params: CreateContractParams) {
 }
 
 /** Refuses a sale the checks block (saleChecksService.ts), with every reason at once. */
-async function assertSaleAllowed(createdById: string) {
-  const creator = await prisma.user.findUnique({ where: { id: createdById }, select: { role: { select: { name: true } } } });
-  const { blockers } = await evaluateSaleChecks({ createdById, creatorRole: creator?.role.name ?? '' });
+async function assertSaleAllowed(draft: Omit<SaleDraft, 'creatorRole'>) {
+  const creator = await prisma.user.findUnique({ where: { id: draft.createdById }, select: { role: { select: { name: true } } } });
+  const { blockers } = await evaluateSaleChecks({ ...draft, creatorRole: creator?.role.name ?? '' });
   if (blockers.length > 0) throw new ContractError(blockers.map((b) => b.message).join(' '));
 }
 
@@ -664,8 +671,13 @@ export interface ResubmitContractUpdates {
  * preserve.
  */
 export async function resubmitContract(params: { contractId: string; updates: ResubmitContractUpdates }) {
-  const submitter = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId }, select: { createdById: true } });
-  await assertSaleAllowed(submitter.createdById);
+  const submitted = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+  await assertSaleAllowed({
+    createdById: submitted.createdById, contractType: submitted.contractType, customerId: submitted.customerId, productId: submitted.productId,
+    totalPayableMinor: params.updates.totalPayableMinor ?? submitted.totalPayableMinor, depositAmountMinor: params.updates.depositAmountMinor ?? submitted.depositAmountMinor,
+    termWeeks: params.updates.termWeeks ?? submitted.termWeeks, paymentMethod: submitted.paymentMethod, directDebitMsisdn: submitted.pendingDirectDebitMsisdn,
+    contractId: submitted.id,
+  });
   const resubmitted = await prisma.$transaction(async (tx) => {
     const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
     if (contract.status !== 'REVISION_REQUESTED') {

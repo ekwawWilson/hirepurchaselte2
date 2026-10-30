@@ -43,6 +43,7 @@ const REPORTS: ReportLink[] = [
   { href: '/reports/loan-book', label: 'Loan book', desc: 'Device Loan: principal/interest outstanding and earned.', icon: Landmark, color: 'blue' },
   { href: '/reports/audit-trail', label: 'User activity / audit trail', desc: 'Who did what, when.', icon: History, color: 'gray', perms: ['audit.view'] },
   { href: '/reports/agent-performance', label: 'Agent performance', desc: 'Per agent: contracts brought in, cash, commission and arrears.', icon: Users, color: 'blue' },
+  { href: '/reports/portfolio-risk', label: 'Portfolio at risk', desc: 'Per agent: the share of their book more than 30 days behind (PAR30).', icon: AlertTriangle, color: 'red' },
   { href: '/reports/customer-registrations', label: 'Customer registrations', desc: 'New customers in range, by user.', icon: UserPlus, color: 'emerald' },
 ];
 

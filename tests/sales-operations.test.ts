@@ -14,6 +14,9 @@ import { applyStockMovement } from '@/lib/services/inventoryService';
 import { makeRequest } from './helpers';
 import { GET as inventoryGET } from '@/app/api/inventory/route';
 import { POST as loginPOST } from '@/app/api/auth/login/route';
+import { GET as approvalsGET } from '@/app/api/contracts/approvals/route';
+import { evaluateSaleChecks } from '@/lib/services/saleChecksService';
+import { getAgentPortfolioRisk } from '@/lib/services/portfolioRiskService';
 
 const runId = Date.now().toString().slice(-7) + Math.floor(Math.random() * 100);
 let counter = 0;
@@ -41,13 +44,19 @@ describe('Sales operations', () => {
     const product = await prisma.product.create({ data: { sku: `SO-${runId}-${++counter}`, name: 'Samsung A06', cashPriceMinor: 60000 } });
     return prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `SO-SN-${runId}-${counter}` } });
   }
+  /** A new agent in the main branch, with nothing sold yet. */
+  async function newAgent() {
+    const role = await prisma.role.findUniqueOrThrow({ where: { name: 'AGENT' } });
+    return prisma.user.create({ data: { email: `so-agent-${runId}-${++counter}@example.test`, passwordHash: 'x', firstName: 'Ama', lastName: `Field${counter}`, roleId: role.id, branchId } });
+  }
   /** GHS 600, GHS 120 deposit, twelve weekly GHS 40 instalments, started three weeks ago. An agent's unit is assigned to them. */
   async function sale(opts: { createdById?: string; requiresApproval?: boolean; startDaysAgo?: number; inventoryItemId?: string } = {}) {
     const createdById = opts.createdById ?? adminId;
     let inventoryItemId = opts.inventoryItemId;
     if (!inventoryItemId) {
       inventoryItemId = (await unit()).id;
-      if (createdById === agentId) await assignStock({ inventoryItemIds: [inventoryItemId], agentId, actor: { id: adminId, branchId: null } });
+      const seller = await prisma.user.findUniqueOrThrow({ where: { id: createdById }, select: { role: { select: { name: true } } } });
+      if (seller.role.name === 'AGENT') await assignStock({ inventoryItemIds: [inventoryItemId], agentId: createdById, actor: { id: adminId, branchId: null } });
     }
     return createContract({
       contractType: 'DEPOSIT_INSTALMENT', customerId: (await customer(createdById)).id, inventoryItemId, branchId, createdById,
@@ -197,6 +206,67 @@ describe('Sales operations', () => {
       await applyStockMovement({ inventoryItemId: u.id, type: 'TRANSFER', toBranchId: otherBranch.id, createdById: adminId });
       expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: u.id } })).assignedAgentId).toBeNull();
       expect(await prisma.inventoryAssignment.findFirst({ where: { inventoryItemId: u.id, toAgentId: null, fromAgentId: agentId } })).not.toBeNull();
+    });
+  });
+
+  describe('checks before a sale, and in the approval queue', () => {
+    it('warns the approver of a low deposit and a large amount financed, and sets the priority and time to decide', async () => {
+      const low = await evaluateSaleChecks({ createdById: adminId, creatorRole: 'ADMIN', totalPayableMinor: 60000, depositAmountMinor: 5000, termWeeks: 12 });
+      expect(low.warnings.map((w) => w.code)).toEqual(['LOW_DEPOSIT_RATIO']);
+      expect(low).toMatchObject({ priority: 'MEDIUM', riskScore: 12, suggestedSlaHours: 12, blockers: [] });
+
+      const big = await evaluateSaleChecks({ createdById: adminId, creatorRole: 'ADMIN', totalPayableMinor: 900000, depositAmountMinor: 150000, termWeeks: 20 });
+      expect(big.warnings.map((w) => w.code)).toEqual(['HIGH_FINANCE_AMOUNT', 'LONG_TENOR']);
+      expect(big).toMatchObject({ priority: 'HIGH', riskScore: 26, suggestedSlaHours: 6 });
+    });
+
+    it('refuses a second sale of the same product to a customer while the first is under review', async () => {
+      const agent = await newAgent();
+      const first = await sale({ createdById: agent.id, requiresApproval: true });
+      const item = await prisma.inventoryItem.create({ data: { productId: first.productId!, branchId, serialNumber: `SO-SN-${runId}-${++counter}`, assignedAgentId: agent.id } });
+      await expect(createContract({
+        contractType: 'DEPOSIT_INSTALMENT', customerId: first.customerId, inventoryItemId: item.id, branchId, createdById: agent.id, requiresApproval: true,
+        totalPayableMinor: 60000, depositAmountMinor: 12000, termWeeks: 12, paymentFrequency: 'WEEKLY',
+      })).rejects.toThrow(/already has a sale of this product waiting for approval/);
+    });
+
+    it('the queue gives each pending sale its checks, and marks the approver\'s own sale', async () => {
+      const agent = await newAgent();
+      const theirs = await sale({ createdById: agent.id, requiresApproval: true });
+      const mine = await sale({ requiresApproval: true });
+      const token = (await (await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email: 'admin@example.test', password: 'Passw0rd!123' } }))).json()).token;
+      const rows = (await (await approvalsGET(makeRequest('GET', '/api/contracts/approvals', { token }))).json()).contracts as Array<{ id: string; ownSale: boolean; checks: { priority: string } }>;
+      expect(rows.find((r) => r.id === theirs.id)).toMatchObject({ ownSale: false, checks: { priority: expect.any(String) } });
+      expect(rows.find((r) => r.id === mine.id)).toMatchObject({ ownSale: true });
+    });
+  });
+
+  describe('portfolio at risk', () => {
+    it('counts what is owed on contracts more than 30 days behind, against the whole book', async () => {
+      const agent = await newAgent();
+      const behind = await sale({ createdById: agent.id, requiresApproval: true, startDaysAgo: 100 });
+      const current = await sale({ createdById: agent.id, requiresApproval: true, startDaysAgo: 3 });
+      for (const c of [behind, current]) {
+        await approveContract({ contractId: c.id, approvedById: adminId });
+        await pay(c.id, 12000);
+      }
+      const [risk] = await getAgentPortfolioRisk({ agentIds: [agent.id] });
+      expect(risk).toMatchObject({ contracts: 2, outstandingMinor: 96000, par30Contracts: 1, par30Minor: 48000, par30Percent: 50 });
+    });
+
+    it("stops an agent's sales over the PAR limit, and lifts once they collect", async () => {
+      const agent = await newAgent();
+      const behind = await sale({ createdById: agent.id, requiresApproval: true, startDaysAgo: 100 });
+      await approveContract({ contractId: behind.id, approvedById: adminId });
+      await pay(behind.id, 12000);
+      await setSaleRules({ parBlockEnabled: true, parBlockThresholdPercent: 20, parBlockMinContracts: 1 });
+      try {
+        await expect(sale({ createdById: agent.id, requiresApproval: true })).rejects.toThrow(/100% of what your customers owe .* is more than 30 days behind, over the 20% limit/);
+        await pay(behind.id, 48000); // collected in full
+        await expect(sale({ createdById: agent.id, requiresApproval: true })).resolves.toMatchObject({ status: 'PENDING_APPROVAL' });
+      } finally {
+        await setSaleRules({ parBlockEnabled: false });
+      }
     });
   });
 });

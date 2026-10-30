@@ -146,7 +146,25 @@ export default function ContractsPage() {
     && Number.isInteger(parsedTermWeeks) && parsedTermWeeks >= DEPOSIT_INSTALMENT_MIN_TERM_WEEKS && parsedTermWeeks <= DEPOSIT_INSTALMENT_MAX_TERM_WEEKS
     && (DEPOSIT_INSTALMENT_FREQUENCIES as readonly string[]).includes(paymentFrequency);
   const loanTermsValid = Number.isFinite(parsedLoanAmount) && parsedLoanAmount > 0;
-  const step3Valid = !saving && (
+  // What the sale will meet before it is submitted (POST /contracts/preflight):
+  // anything that refuses it, and what the approver will be shown.
+  const [preflight, setPreflight] = useState<{ blockers: { code: string; message: string }[]; warnings: { code: string; message: string }[]; priority: string } | null>(null);
+  useEffect(() => {
+    if (step !== 3 || !customerId) { setPreflight(null); return; }
+    const timer = setTimeout(() => {
+      api.post<{ checks: NonNullable<typeof preflight> }>('/contracts/preflight', {
+        contractType, customerId, inventoryItemId: inventoryItemId || undefined,
+        totalPayableMinor: isInstalment && parsedTotalPrice > 0 ? parsedTotalPrice : undefined,
+        depositAmountMinor: isInstalment ? parsedDeposit : undefined,
+        termWeeks: isInstalment && Number.isInteger(parsedTermWeeks) ? parsedTermWeeks : undefined,
+        paymentMethod, directDebitMsisdn: directDebitMsisdn.trim() || undefined, startDate,
+      }).then((r) => setPreflight(r.checks)).catch(() => setPreflight(null)); // the server checks again on submit
+    }, 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, customerId, contractType, inventoryItemId, parsedTotalPrice, parsedDeposit, parsedTermWeeks, paymentMethod, directDebitMsisdn, startDate]);
+
+  const step3Valid = !saving && !preflight?.blockers.length && (
     isSaveToOwn ? true
     : isDeviceLoan ? loanTermsValid
     : depositTermsValid && (paymentMethod === 'CUSTOMER_INITIATED' || (!!directDebitNetwork && !!directDebitMsisdn.trim()))
@@ -698,6 +716,17 @@ export default function ContractsPage() {
                   </div>
                 )}
                 </>
+                )}
+
+                {preflight && (preflight.blockers.length > 0 || preflight.warnings.length > 0) && (
+                  <div className={`rounded-lg border p-3 text-sm ${preflight.blockers.length ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+                    {preflight.blockers.length > 0 && <p className="font-semibold text-red-800 mb-1">This sale can&apos;t be made yet</p>}
+                    <ul className="space-y-0.5">
+                      {preflight.blockers.map((b) => <li key={b.code} className="text-red-700">✕ {b.message}</li>)}
+                      {preflight.warnings.map((w) => <li key={w.code} className="text-amber-800">! {w.message}</li>)}
+                    </ul>
+                    {preflight.blockers.length === 0 && <p className="text-xs text-amber-700 mt-1">The approver will see these ({preflight.priority.toLowerCase()} priority).</p>}
+                  </div>
                 )}
 
                 <div className="flex gap-2 pt-1">
