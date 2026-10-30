@@ -234,6 +234,7 @@ describe('Device Financing with PayTrigger', () => {
     const item = await phone();
     await withPayTrigger({}, async () => {
       await enrolPhones([item.id], adminId);
+      await prisma.inventoryItem.update({ where: { id: item.id }, data: { assignedAgentId: agentId } }); // the agent's to sell
       const contract = await sell(item.id, { createdById: agentId, requiresApproval: true });
       await approveContract({ contractId: contract.id, approvedById: adminId });
       await postPayment({ contractId: contract.id, amountMinor: 12000, entryType: 'DEPOSIT', channel: 'CASH', createdById: agentId, collectedByAgentId: agentId });

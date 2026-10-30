@@ -30,6 +30,10 @@ export async function GET(req: NextRequest) {
   if (productId) where.productId = productId;
   if (status) where.status = status;
   if (sellableOnly) where.status = 'AVAILABLE';
+  // An agent sees only the stock assigned to them: what they can sell, and what they sold.
+  if (user.roleName === 'AGENT') where.assignedAgentId = user.id;
+  const agentFilter = searchParams.get('agentId');
+  if (agentFilter && user.roleName !== 'AGENT') where.assignedAgentId = agentFilter === 'none' ? null : agentFilter;
   const q = searchParams.get('q');
   // ?saleType=: only what that instalment sale may sell (PayTrigger phones
   // go on Device Financing alone) — the new-contract wizard's unit picker.
@@ -37,7 +41,9 @@ export async function GET(req: NextRequest) {
   where.AND = [...(q ? inventorySearchWhere(q) : []), ...(saleWhere ? [saleWhere] : [])];
 
   const items = await prisma.inventoryItem.findMany({
-    where, include: { product: { include: { category: true } }, branch: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 200,
+    where,
+    include: { product: { include: { category: true } }, branch: { select: { name: true } }, assignedAgent: { select: { id: true, firstName: true, lastName: true } } },
+    orderBy: { createdAt: 'desc' }, take: 200,
   });
   return NextResponse.json({ items });
 }

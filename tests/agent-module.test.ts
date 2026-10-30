@@ -63,14 +63,15 @@ describe('Agent module', () => {
     return (await res.json()).customer as { id: string; branchId: string; createdById: string };
   }
 
-  async function makeDepositInstalmentUnit(categoryId?: string) {
+  /** A unit in the agent's branch, held by `holderId` when an agent is to sell it (stockAssignmentService.ts). */
+  async function makeDepositInstalmentUnit(categoryId?: string, holderId?: string) {
     const product = await prisma.product.create({ data: { sku: `AGENT-SKU-${unique()}`, name: 'Agent Test Phone', cashPriceMinor: 100000, categoryId } });
-    const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId: agentBranchId, serialNumber: `AGENT-SN-${unique()}` } });
+    const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId: agentBranchId, serialNumber: `AGENT-SN-${unique()}`, assignedAgentId: holderId } });
     return item.id;
   }
 
-  async function submitDepositInstalmentAsAgent(customerId: string, token: string = agentToken, categoryId?: string) {
-    const inventoryItemId = await makeDepositInstalmentUnit(categoryId);
+  async function submitDepositInstalmentAsAgent(customerId: string, token: string = agentToken, categoryId?: string, holderId: string = agentId) {
+    const inventoryItemId = await makeDepositInstalmentUnit(categoryId, holderId);
     const res = await contractsPOST(makeRequest('POST', '/api/contracts', {
       token,
       body: {
@@ -142,7 +143,7 @@ describe('Agent module', () => {
       });
       const secondToken = await login(secondAgent.email);
       const theirs = await registerCustomer(secondToken);
-      const theirContract = await submitDepositInstalmentAsAgent(theirs.id, secondToken);
+      const theirContract = await submitDepositInstalmentAsAgent(theirs.id, secondToken, undefined, secondAgent.id);
 
       // The second agent cannot see the first agent's customer or contract...
       const customerForbidden = await customerGET(makeRequest('GET', `/api/customers/${own.id}`, { token: secondToken }), makeParams({ id: own.id }));

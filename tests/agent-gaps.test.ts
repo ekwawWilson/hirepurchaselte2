@@ -63,7 +63,7 @@ describe('Agents: ledger, commission and controls', () => {
   /** An approved Deposit + Instalment contract the agent brought in: GHS 600, GHS 120 deposit. */
   async function agentContract(agentId: string) {
     const product = await prisma.product.create({ data: { sku: `GAP-${unique()}`, name: 'Gap Phone', cashPriceMinor: 100000 } });
-    const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `GAP-SN-${unique()}` } });
+    const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `GAP-SN-${unique()}`, assignedAgentId: agentId } });
     const customer = await prisma.customer.create({
       data: { membershipId: `GAP-${unique()}`, firstName: 'Gap', lastName: 'Customer', phone: await freshPhone(), branchId, createdById: agentId },
     });
@@ -103,7 +103,7 @@ describe('Agents: ledger, commission and controls', () => {
     it('cancelling before the device is handed over unwinds the agent\'s ledger with the deposit', async () => {
       const { user } = await makeAgent();
       const product = await prisma.product.create({ data: { sku: `GAP-${unique()}`, name: 'Gap Phone', cashPriceMinor: 100000 } });
-      const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `GAP-SN-${unique()}` } });
+      const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `GAP-SN-${unique()}`, assignedAgentId: user.id } });
       const customer = await prisma.customer.create({ data: { membershipId: `GAP-${unique()}`, firstName: 'Gap', lastName: 'Withdrew', phone: await freshPhone(), branchId, createdById: user.id } });
       const contract = await createContract({
         contractType: 'DEPOSIT_INSTALMENT', customerId: customer.id, inventoryItemId: item.id, branchId, createdById: user.id, requiresApproval: true,
@@ -218,7 +218,7 @@ describe('Agents: ledger, commission and controls', () => {
     it('an unapproved submission left untouched for 14 days is cancelled, and its unit goes back on the shelf', async () => {
       const { user } = await makeAgent();
       const product = await prisma.product.create({ data: { sku: `GAP-${unique()}`, name: 'Gap Phone', cashPriceMinor: 100000 } });
-      const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `GAP-SN-${unique()}` } });
+      const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `GAP-SN-${unique()}`, assignedAgentId: user.id } });
       const customer = await prisma.customer.create({ data: { membershipId: `GAP-${unique()}`, firstName: 'Gap', lastName: 'Stale', phone: await freshPhone(), branchId, createdById: user.id } });
       const make = () => createContract({
         contractType: 'DEPOSIT_INSTALMENT', customerId: customer.id, inventoryItemId: item.id, branchId, createdById: user.id, requiresApproval: true,

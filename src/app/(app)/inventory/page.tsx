@@ -28,7 +28,10 @@ interface InventoryItem {
   status: string;
   product: Product;
   branch?: { name: string } | null;
+  assignedAgent?: { id: string; firstName: string; lastName: string } | null;
 }
+interface AgentStock { id: string; firstName: string; lastName: string; branch: { name: string } | null; available: number; reserved: number; issued: number }
+interface Handover { id: string; createdAt: string; fromAgentName: string | null; toAgentName: string | null; assignedByName: string | null; reason: string | null }
 
 const ALL = '__all__';
 const NO_CATEGORY = '__none__';
@@ -43,6 +46,9 @@ export default function InventoryPage() {
   const canView = useAuthStore((s) => s.hasPermission('inventory.view'));
   const canReceive = useAuthStore((s) => s.hasPermission('inventory.receive'));
   const canEdit = useAuthStore((s) => s.hasPermission('inventory.receive', 'inventory.adjust'));
+  // Handing stock to agents (stockAssignmentService.ts); an agent sees only their own.
+  const canAssign = useAuthStore((s) => s.hasPermission('inventory.transfer'));
+  const isAgent = useAuthStore((s) => s.user?.role === 'AGENT');
   const isAllBranch = useAuthStore((s) => s.user?.branchId === null);
   const { toast } = useToast();
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -59,25 +65,38 @@ export default function InventoryPage() {
   const [saving, setSaving] = useState(false);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [editForm, setEditForm] = useState({ name: '', description: '' });
+  const [agents, setAgents] = useState<AgentStock[]>([]);
+  const [agentFilter, setAgentFilter] = useState(ALL);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignTo, setAssignTo] = useState('');
+  const [assignReason, setAssignReason] = useState('');
+  const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
+  const [history, setHistory] = useState<Handover[] | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const params = new URLSearchParams({ ...(search && { q: search }), ...(statusFilter !== ALL && { status: statusFilter }) });
-      const [{ items }, { products }, { categories }] = await Promise.all([
+      const params = new URLSearchParams({
+        ...(search && { q: search }), ...(statusFilter !== ALL && { status: statusFilter }), ...(agentFilter !== ALL && { agentId: agentFilter }),
+      });
+      const [{ items }, { products }, { categories }, agentList] = await Promise.all([
         api.get<{ items: InventoryItem[] }>(`/inventory?${params}`),
         api.get<{ products: Product[] }>('/products'),
         api.get<{ categories: Category[] }>('/products/categories'),
+        canAssign ? api.get<{ agents: AgentStock[] }>('/inventory/agents') : Promise.resolve({ agents: [] as AgentStock[] }),
       ]);
       setItems(items);
       setProducts(products);
       setCategories(categories);
+      setAgents(agentList.agents);
+      setSelected(new Set());
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load inventory', variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
-  }, [search, statusFilter, toast]);
+  }, [search, statusFilter, agentFilter, canAssign, toast]);
 
   useEffect(() => {
     if (!canView) { setIsLoading(false); return; }
@@ -120,6 +139,31 @@ export default function InventoryPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function onAssign() {
+    setSaving(true);
+    try {
+      const r = await api.post<{ moved: number; alreadyThere: number }>('/inventory/assign', {
+        inventoryItemIds: [...selected], agentId: assignTo === 'none' ? null : assignTo, reason: assignReason,
+      });
+      const agent = agents.find((a) => a.id === assignTo);
+      toast({ title: `${r.moved} unit${r.moved === 1 ? '' : 's'} ${agent ? `assigned to ${agent.firstName} ${agent.lastName}` : 'taken back to the shop'}`, description: r.alreadyThere ? `${r.alreadyThere} already there.` : undefined });
+      setAssignOpen(false);
+      setAssignTo('');
+      setAssignReason('');
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to assign stock', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openHistory(item: InventoryItem) {
+    setHistoryItem(item);
+    setHistory(null);
+    api.get<{ history: Handover[] }>(`/inventory/${item.id}/assignments`).then((r) => setHistory(r.history)).catch(() => setHistory([]));
   }
 
   async function onSaveEdit() {
@@ -227,8 +271,8 @@ export default function InventoryPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Inventory</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Every unit by category, product and model, across the branches you can see</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">{isAgent ? 'My stock' : 'Inventory'}</h1>
+          <p className="text-sm text-gray-500 mt-0.5">{isAgent ? 'The units assigned to you to sell, and the ones you have sold' : 'Every unit by category, product and model, across the branches you can see'}</p>
         </div>
         {canReceive && (
           <Button onClick={() => setShowForm(true)} size="sm" className="shrink-0">
@@ -239,8 +283,23 @@ export default function InventoryPage() {
         )}
       </div>
 
+      {canAssign && agents.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Stock with agents</CardTitle></CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            {agents.map((a) => (
+              <button key={a.id} type="button" onClick={() => setAgentFilter(agentFilter === a.id ? ALL : a.id)}
+                className={`rounded-lg border px-3 py-2 text-left text-sm ${agentFilter === a.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}>
+                <span className="block font-medium text-gray-900">{a.firstName} {a.lastName}</span>
+                <span className="block text-xs text-gray-500">{a.available} to sell · {a.reserved} reserved · {a.issued} sold{isAllBranch && a.branch ? ` · ${a.branch.name}` : ''}</span>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
-        <CardContent className="p-4 grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2">
+        <CardContent className={`p-4 grid grid-cols-1 gap-2 ${canAssign ? 'sm:grid-cols-[1fr_auto_auto_auto]' : 'sm:grid-cols-[1fr_auto_auto]'}`}>
           <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); setSearch(query.trim()); }}>
             <div className="relative flex-1">
               <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
@@ -263,8 +322,26 @@ export default function InventoryPage() {
               {['AVAILABLE', 'RESERVED', 'ISSUED', 'RETURNED', 'WRITTEN_OFF'].map((s) => <SelectItem key={s} value={s}>{s.replace('_', ' ')}</SelectItem>)}
             </SelectContent>
           </Select>
+          {canAssign && (
+            <Select value={agentFilter} onValueChange={setAgentFilter}>
+              <SelectTrigger className="sm:w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>Any holder</SelectItem>
+                <SelectItem value="none">In the shop</SelectItem>
+                {agents.map((a) => <SelectItem key={a.id} value={a.id}>{a.firstName} {a.lastName}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
         </CardContent>
       </Card>
+
+      {canAssign && selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+          <span className="text-sm font-medium text-blue-900">{selected.size} unit{selected.size === 1 ? '' : 's'} selected</span>
+          <Button size="sm" onClick={() => setAssignOpen(true)}>Assign to agent</Button>
+          <Button size="sm" variant="outline" onClick={() => setSelected(new Set())}>Clear</Button>
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -280,17 +357,27 @@ export default function InventoryPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  {canAssign && <TableHead className="w-8" />}
                   <TableHead>Category</TableHead>
                   <TableHead>Product &amp; model</TableHead>
                   <TableHead>Serial / IMEI</TableHead>
                   {isAllBranch && <TableHead>Branch</TableHead>}
                   <TableHead>Status</TableHead>
-                  {canEdit && <TableHead />}
+                  {!isAgent && <TableHead>Agent</TableHead>}
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {shown.map((i) => (
                   <TableRow key={i.id}>
+                    {canAssign && (
+                      <TableCell>
+                        {i.status === 'AVAILABLE' && (
+                          <input type="checkbox" aria-label={`Select ${i.serialNumber}`} checked={selected.has(i.id)}
+                            onChange={(e) => { const next = new Set(selected); if (e.target.checked) next.add(i.id); else next.delete(i.id); setSelected(next); }} />
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell className="text-gray-600">{i.product.category?.name ?? '—'}</TableCell>
                     <TableCell>
                       <div className="font-medium text-gray-900">{unitTitle(i.product.name, i.name)}</div>
@@ -299,11 +386,11 @@ export default function InventoryPage() {
                     <TableCell className="font-mono text-xs">{i.serialNumber}</TableCell>
                     {isAllBranch && <TableCell className="text-gray-600">{i.branch?.name ?? '—'}</TableCell>}
                     <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(i.status)}`}>{i.status}</span></TableCell>
-                    {canEdit && (
-                      <TableCell>
-                        <button className="text-xs text-blue-700 hover:underline" onClick={() => { setEditItem(i); setEditForm({ name: i.name ?? '', description: i.description ?? '' }); }}>Edit</button>
-                      </TableCell>
-                    )}
+                    {!isAgent && <TableCell className="text-gray-600">{i.assignedAgent ? `${i.assignedAgent.firstName} ${i.assignedAgent.lastName}` : <span className="text-gray-400">In the shop</span>}</TableCell>}
+                    <TableCell className="whitespace-nowrap space-x-3">
+                      <button className="text-xs text-blue-700 hover:underline" onClick={() => openHistory(i)}>History</button>
+                      {canEdit && <button className="text-xs text-blue-700 hover:underline" onClick={() => { setEditItem(i); setEditForm({ name: i.name ?? '', description: i.description ?? '' }); }}>Edit</button>}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -311,6 +398,51 @@ export default function InventoryPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Assign {selected.size} unit{selected.size === 1 ? '' : 's'}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>To</Label>
+              <Select value={assignTo} onValueChange={setAssignTo}>
+                <SelectTrigger className="mt-1.5"><SelectValue placeholder="Choose an agent..." /></SelectTrigger>
+                <SelectContent>
+                  {agents.map((a) => <SelectItem key={a.id} value={a.id}>{a.firstName} {a.lastName}{isAllBranch && a.branch ? ` (${a.branch.name})` : ''}</SelectItem>)}
+                  <SelectItem value="none">Take back to the shop</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-400 mt-1">Only that agent can then sell these units. Units on a customer&apos;s contract can&apos;t be moved.</p>
+            </div>
+            <div>
+              <Label htmlFor="assign-reason">Reason (optional)</Label>
+              <Input id="assign-reason" className="mt-1.5" placeholder="e.g. Stock for the Kasoa market" value={assignReason} onChange={(e) => setAssignReason(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignOpen(false)}>Cancel</Button>
+            <Button onClick={onAssign} disabled={saving || !assignTo}>{saving ? 'Saving...' : 'Assign'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!historyItem} onOpenChange={(open) => { if (!open) setHistoryItem(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{historyItem && `Who held ${historyItem.serialNumber}`}</DialogTitle></DialogHeader>
+          {!history ? <p className="text-sm text-gray-500">Loading...</p> : history.length === 0 ? (
+            <p className="text-sm text-gray-500">It has never been assigned to an agent.</p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {history.map((h) => (
+                <li key={h.id} className="border-b last:border-0 pb-2">
+                  <span className="font-medium text-gray-900">{h.fromAgentName ?? 'The shop'} → {h.toAgentName ?? 'the shop'}</span>
+                  <span className="block text-xs text-gray-500">{new Date(h.createdAt).toLocaleString('en-GB')} · by {h.assignedByName ?? 'unknown'}{h.reason ? ` · ${h.reason}` : ''}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!editItem} onOpenChange={(open) => { if (!open) setEditItem(null); }}>
         <DialogContent>

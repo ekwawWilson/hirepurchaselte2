@@ -119,6 +119,7 @@ model User {
   commissionPayoutsReceived   AgentCommissionPayout[] @relation("AgentPayoutAgent")
   commissionPayoutsMade       AgentCommissionPayout[] @relation("AgentPayoutPaidBy")
   paymentsCollectedAsAgent    Payment[]               @relation("PaymentCollectedByAgent")
+  inventoryHeld               InventoryItem[]         @relation("InventoryAssignedAgent")
 
   @@map("users")
 }
@@ -223,23 +224,48 @@ model Product {
 // (15" screen, 200 GB HDD, 6 GB RAM, kept in `description`), told apart by
 // its serial number / IMEI.
 model InventoryItem {
-  id           String   @id @default(uuid())
-  productId    String
-  branchId     String
-  serialNumber String   @unique
-  name         String?
-  description  String?
-  status       String   @default("AVAILABLE")
-  createdAt    DateTime @default(now())
+  id              String   @id @default(uuid())
+  productId       String
+  branchId        String
+  serialNumber    String   @unique
+  name            String?
+  description     String?
+  status          String   @default("AVAILABLE")
+  // The agent holding this unit to sell: the only AGENT who may sell it
+  // (stockAssignmentService.ts). Null: in the shop, for any other staff.
+  assignedAgentId String?
+  createdAt       DateTime @default(now())
 
-  product Product @relation(fields: [productId], references: [id])
-  branch  Branch  @relation(fields: [branchId], references: [id])
+  product       Product @relation(fields: [productId], references: [id])
+  branch        Branch  @relation(fields: [branchId], references: [id])
+  assignedAgent User?   @relation("InventoryAssignedAgent", fields: [assignedAgentId], references: [id])
 
   stockMovements StockMovement[]
   contracts      Contract[]
+  assignments    InventoryAssignment[]
 
   @@index([productId, branchId, status])
+  @@index([assignedAgentId, status])
   @@map("inventory_items")
+}
+
+// Every time a unit is handed to an agent, taken back, or passed between
+// agents: who held this phone when is a routine question.
+model InventoryAssignment {
+  id              String   @id @default(uuid())
+  inventoryItemId String
+  fromAgentId     String?
+  toAgentId       String?
+  assignedById    String
+  reason          String?
+  createdAt       DateTime @default(now())
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@index([inventoryItemId, createdAt])
+  @@index([toAgentId, createdAt])
+  @@index([fromAgentId, createdAt])
+  @@map("inventory_assignments")
 }
 
 // type: RECEIPT | RESERVE | ISSUE | RETURN | TRANSFER | ADJUSTMENT
@@ -1060,26 +1086,26 @@ model SystemAlert {
 
 // Controls and notifications an owner switches on or off (Settings > Controls).
 model ControlSettings {
-  id                        String   @id @default("singleton")
+  id                                String   @id @default("singleton")
   // A reversal or write-off needs a second, different person to approve it.
-  requireSecondApproval     Boolean  @default(true)
+  requireSecondApproval             Boolean  @default(true)
   // Where the daily summary and system alerts are texted.
-  ownerPhone                String?
-  dailySummaryEnabled       Boolean  @default(true)
+  ownerPhone                        String?
+  dailySummaryEnabled               Boolean  @default(true)
   // Text the customer the day before a direct debit is due.
-  directDebitNoticeEnabled  Boolean  @default(true)
+  directDebitNoticeEnabled          Boolean  @default(true)
   // When a full direct debit bounces, try half before waiting for the next retry day.
-  partialDirectDebitEnabled Boolean  @default(true)
+  partialDirectDebitEnabled         Boolean  @default(true)
   // Sales rules (saleChecksService.ts). An agent holding deposit cash they
   // have not remitted cannot make another sale until they do.
-  blockSalesWhileDepositsUnremitted Boolean @default(true)
+  blockSalesWhileDepositsUnremitted Boolean  @default(true)
   // An agent whose portfolio at risk (PAR30) is above the threshold cannot
   // make another sale, once their book has at least the minimum contracts.
-  parBlockEnabled           Boolean  @default(false)
-  parBlockThresholdPercent  Int      @default(20)
-  parBlockMinContracts      Int      @default(10)
-  updatedAt                 DateTime @updatedAt
-  updatedById               String?
+  parBlockEnabled                   Boolean  @default(false)
+  parBlockThresholdPercent          Int      @default(20)
+  parBlockMinContracts              Int      @default(10)
+  updatedAt                         DateTime @updatedAt
+  updatedById                       String?
 
   @@map("control_settings")
 }

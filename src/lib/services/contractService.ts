@@ -12,6 +12,7 @@ import { getContractTypeSettings, isContractTypeEnabled } from './contractTypeSe
 import { contractTypeLabel } from '../utils';
 import { payTriggerSaleProblem } from '../paytrigger/saleGuard';
 import { evaluateSaleChecks } from './saleChecksService';
+import { agentSaleProblem } from './stockAssignmentService';
 import { notifyPayTrigger } from '../paytrigger/notify';
 import {
   CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
@@ -177,6 +178,12 @@ export async function createContract(params: CreateContractParams) {
   if (!item) throw new ContractError('Inventory item not found');
   if (item.status !== 'AVAILABLE') throw new ContractError(`Inventory item is not available (status: ${item.status})`);
   if (item.branchId !== params.branchId) throw new ContractError('Inventory item does not belong to this branch');
+  // An agent sells only the stock assigned to them; other staff, anything in their branch.
+  const seller = await prisma.user.findUnique({ where: { id: params.createdById }, select: { role: { select: { name: true } } } });
+  if (seller?.role.name === 'AGENT') {
+    const notTheirs = agentSaleProblem(item, params.createdById);
+    if (notTheirs) throw new ContractError(notTheirs);
+  }
   const saleProblem = await payTriggerSaleProblem(params.contractType, item);
   if (saleProblem) throw new ContractError(saleProblem);
 

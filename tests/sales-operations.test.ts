@@ -9,6 +9,11 @@ import { prisma } from '@/lib/db/prisma';
 import { createContract, approveContract } from '@/lib/services/contractService';
 import { postPayment, amountOwedNow } from '@/lib/services/paymentService';
 import { fileRemittance, confirmRemittance, ledgerBalance } from '@/lib/services/agentLedgerService';
+import { assignStock } from '@/lib/services/stockAssignmentService';
+import { applyStockMovement } from '@/lib/services/inventoryService';
+import { makeRequest } from './helpers';
+import { GET as inventoryGET } from '@/app/api/inventory/route';
+import { POST as loginPOST } from '@/app/api/auth/login/route';
 
 const runId = Date.now().toString().slice(-7) + Math.floor(Math.random() * 100);
 let counter = 0;
@@ -36,11 +41,16 @@ describe('Sales operations', () => {
     const product = await prisma.product.create({ data: { sku: `SO-${runId}-${++counter}`, name: 'Samsung A06', cashPriceMinor: 60000 } });
     return prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `SO-SN-${runId}-${counter}` } });
   }
-  /** GHS 600, GHS 120 deposit, twelve weekly GHS 40 instalments, started three weeks ago. */
-  async function sale(opts: { createdById?: string; requiresApproval?: boolean; startDaysAgo?: number } = {}) {
+  /** GHS 600, GHS 120 deposit, twelve weekly GHS 40 instalments, started three weeks ago. An agent's unit is assigned to them. */
+  async function sale(opts: { createdById?: string; requiresApproval?: boolean; startDaysAgo?: number; inventoryItemId?: string } = {}) {
     const createdById = opts.createdById ?? adminId;
+    let inventoryItemId = opts.inventoryItemId;
+    if (!inventoryItemId) {
+      inventoryItemId = (await unit()).id;
+      if (createdById === agentId) await assignStock({ inventoryItemIds: [inventoryItemId], agentId, actor: { id: adminId, branchId: null } });
+    }
     return createContract({
-      contractType: 'DEPOSIT_INSTALMENT', customerId: (await customer(createdById)).id, inventoryItemId: (await unit()).id, branchId, createdById,
+      contractType: 'DEPOSIT_INSTALMENT', customerId: (await customer(createdById)).id, inventoryItemId, branchId, createdById,
       requiresApproval: opts.requiresApproval, totalPayableMinor: 60000, depositAmountMinor: 12000, termWeeks: 12, paymentFrequency: 'WEEKLY',
       startDate: new Date(Date.now() - (opts.startDaysAgo ?? 22) * DAY),
     });
@@ -142,6 +152,51 @@ describe('Sales operations', () => {
       await approveContract({ contractId: first.id, approvedById: adminId });
       await pay(first.id, 12000, { createdById: agentId, collectedByAgentId: agentId });
       await expect(sale({ createdById: agentId, requiresApproval: true })).resolves.toMatchObject({ status: 'PENDING_APPROVAL' });
+    });
+  });
+
+  describe('stock held by agents', () => {
+    it('an agent sells only the units assigned to them; other staff may sell any unit in the branch', async () => {
+      const mine = await unit();
+      const shop = await unit();
+      await assignStock({ inventoryItemIds: [mine.id], agentId, reason: 'Market day', actor: { id: adminId, branchId: null } });
+
+      await expect(sale({ createdById: agentId, requiresApproval: true, inventoryItemId: shop.id })).rejects.toThrow(/not assigned to you/);
+      await expect(sale({ createdById: agentId, requiresApproval: true, inventoryItemId: mine.id })).resolves.toMatchObject({ status: 'PENDING_APPROVAL' });
+      await expect(sale({ inventoryItemId: shop.id })).resolves.toMatchObject({ status: 'PENDING_DEPOSIT' });
+
+      const history = await prisma.inventoryAssignment.findMany({ where: { inventoryItemId: mine.id } });
+      expect(history).toMatchObject([{ fromAgentId: null, toAgentId: agentId, assignedById: adminId, reason: 'Market day' }]);
+    });
+
+    it('an agent sees only their own stock in the inventory list', async () => {
+      const mine = await unit();
+      const other = await unit();
+      await assignStock({ inventoryItemIds: [mine.id], agentId, actor: { id: adminId, branchId: null } });
+      const token = (await (await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email: 'agent@example.test', password: 'Passw0rd!123' } }))).json()).token;
+      const ids = ((await (await inventoryGET(makeRequest('GET', '/api/inventory?status=AVAILABLE', { token }))).json()).items as { id: string }[]).map((i) => i.id);
+      expect(ids).toContain(mine.id);
+      expect(ids).not.toContain(other.id);
+    });
+
+    it("a unit on a customer's contract can't be moved, nor given to an agent in another branch", async () => {
+      const reserved = await unit();
+      await sale({ inventoryItemId: reserved.id });
+      await expect(assignStock({ inventoryItemIds: [reserved.id], agentId, actor: { id: adminId, branchId: null } })).rejects.toThrow(/on a customer's contract/);
+
+      const otherBranch = await prisma.branch.create({ data: { name: `zz Other ${runId}-${++counter}`, code: `O${runId}${counter}`.slice(0, 10) } });
+      const far = await unit();
+      await prisma.inventoryItem.update({ where: { id: far.id }, data: { branchId: otherBranch.id } });
+      await expect(assignStock({ inventoryItemIds: [far.id], agentId, actor: { id: adminId, branchId: null } })).rejects.toThrow(/another branch/);
+    });
+
+    it('moving a unit to another branch takes it back from its agent', async () => {
+      const u = await unit();
+      await assignStock({ inventoryItemIds: [u.id], agentId, actor: { id: adminId, branchId: null } });
+      const otherBranch = await prisma.branch.create({ data: { name: `zz Far ${runId}-${++counter}`, code: `F${runId}${counter}`.slice(0, 10) } });
+      await applyStockMovement({ inventoryItemId: u.id, type: 'TRANSFER', toBranchId: otherBranch.id, createdById: adminId });
+      expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: u.id } })).assignedAgentId).toBeNull();
+      expect(await prisma.inventoryAssignment.findFirst({ where: { inventoryItemId: u.id, toAgentId: null, fromAgentId: agentId } })).not.toBeNull();
     });
   });
 });

@@ -53,6 +53,7 @@ const CONTRACT_TYPE_OPTIONS = [
 export default function ContractsPage() {
   const canView = useAuthStore((s) => s.hasPermission('contract.view'));
   const canCreate = useAuthStore((s) => s.hasPermission('contract.create'));
+  const isAgent = useAuthStore((s) => s.user?.role === 'AGENT');
   const { toast } = useToast();
   const router = useRouter();
   const [contracts, setContracts] = useState<Contract[]>([]);
@@ -501,7 +502,7 @@ export default function ContractsPage() {
                     </div>
                   ))}
                   {filteredItems.length === 0 && (
-                    <p className="text-center text-sm text-gray-400 py-8">No available units found for this customer&apos;s branch</p>
+                    <p className="text-center text-sm text-gray-400 py-8">{isAgent ? 'No units are assigned to you to sell. Ask your branch manager to assign you stock.' : 'No available units found for this customer\'s branch'}</p>
                   )}
                 </div>
                 </>

@@ -87,9 +87,15 @@ export async function applyStockMovement(params: {
     where: { id: item.id },
     data: {
       ...(toStatus && { status: toStatus }),
-      ...(params.type === 'TRANSFER' && { branchId: params.toBranchId }),
+      // An agent holds stock only in their own branch: a unit leaving it is taken back.
+      ...(params.type === 'TRANSFER' && { branchId: params.toBranchId, assignedAgentId: null }),
     },
   });
+  if (params.type === 'TRANSFER' && item.assignedAgentId) {
+    await db.inventoryAssignment.create({
+      data: { inventoryItemId: item.id, fromAgentId: item.assignedAgentId, toAgentId: null, assignedById: params.createdById, reason: 'Transferred to another branch' },
+    });
+  }
 
   await db.stockMovement.create({
     data: {
