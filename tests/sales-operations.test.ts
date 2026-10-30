@@ -17,6 +17,9 @@ import { POST as loginPOST } from '@/app/api/auth/login/route';
 import { GET as approvalsGET } from '@/app/api/contracts/approvals/route';
 import { evaluateSaleChecks } from '@/lib/services/saleChecksService';
 import { getAgentPortfolioRisk } from '@/lib/services/portfolioRiskService';
+import { getCommissionSettings, updateCommissionSettings } from '@/lib/services/commissionSettingsService';
+import { listCompletionCommissions, markCompletionCommissionPaid, undoCompletionCommissionPaid, agentCompletionSummary } from '@/lib/services/completionCommissionService';
+import { cancelContract } from '@/lib/services/contractService';
 
 const runId = Date.now().toString().slice(-7) + Math.floor(Math.random() * 100);
 let counter = 0;
@@ -266,6 +269,77 @@ describe('Sales operations', () => {
         await expect(sale({ createdById: agent.id, requiresApproval: true })).resolves.toMatchObject({ status: 'PENDING_APPROVAL' });
       } finally {
         await setSaleRules({ parBlockEnabled: false });
+      }
+    });
+  });
+
+  describe('commission paid on completion', () => {
+    let saved: Awaited<ReturnType<typeof getCommissionSettings>>;
+    beforeAll(async () => {
+      saved = await getCommissionSettings();
+      await updateCommissionSettings({ fixedCommissionMinor: saved.fixedCommissionMinor, deferredCommissionMinor: 1500, completionBonusMinor: 1000, updatedById: adminId });
+    });
+    afterAll(() => updateCommissionSettings({ fixedCommissionMinor: saved.fixedCommissionMinor, deferredCommissionMinor: saved.deferredCommissionMinor, completionBonusMinor: saved.completionBonusMinor, updatedById: adminId }));
+
+    async function approvedAgentSale(agent: { id: string }) {
+      const c = await sale({ createdById: agent.id, requiresApproval: true });
+      await approveContract({ contractId: c.id, approvedById: adminId });
+      return c;
+    }
+    const rowFor = async (agentId: string, contractId: string) =>
+      (await listCompletionCommissions({ agentId })).rows.find((r) => r.contractId === contractId)!;
+
+    it('is fixed on the sale at approval, and payable only once the customer completes', async () => {
+      const agent = await newAgent();
+      const c = await approvedAgentSale(agent);
+      let row = await rowFor(agent.id, c.id);
+      expect(row).toMatchObject({ deferredMinor: 1500, bonusMinor: 1000, totalMinor: 2500, status: 'PENDING' });
+      await expect(markCompletionCommissionPaid(row.id, 'MM-1', adminId)).rejects.toThrow(/Only a payable commission/);
+
+      // A rate change later re-prices nothing already approved.
+      await updateCommissionSettings({ fixedCommissionMinor: saved.fixedCommissionMinor, deferredCommissionMinor: 9900, completionBonusMinor: 1000, updatedById: adminId });
+      try {
+        await pay(c.id, 60000);
+        expect((await fresh(c.id)).status).toBe('COMPLETED');
+        row = await rowFor(agent.id, c.id);
+        expect(row).toMatchObject({ totalMinor: 2500, status: 'PAYABLE' });
+        expect(await agentCompletionSummary(agent.id)).toMatchObject({ payable: { count: 1, totalMinor: 2500 }, dueOnCompletion: { count: 0 } });
+      } finally {
+        await updateCommissionSettings({ fixedCommissionMinor: saved.fixedCommissionMinor, deferredCommissionMinor: 1500, completionBonusMinor: 1000, updatedById: adminId });
+      }
+
+      await expect(markCompletionCommissionPaid(row.id, '  ', adminId)).rejects.toThrow(/payment reference/);
+      await markCompletionCommissionPaid(row.id, 'MM-123', adminId);
+      expect(await rowFor(agent.id, c.id)).toMatchObject({ status: 'PAID', reference: 'MM-123', needsReview: false });
+      await expect(markCompletionCommissionPaid(row.id, 'MM-124', adminId)).rejects.toThrow(/this one is paid/);
+
+      await undoCompletionCommissionPaid(row.id, adminId);
+      expect(await rowFor(agent.id, c.id)).toMatchObject({ status: 'PAYABLE', reference: null });
+    });
+
+    it('is held while the contract is defaulted, and lost if the sale is cancelled', async () => {
+      const agent = await newAgent();
+      const defaulted = await approvedAgentSale(agent);
+      await prisma.contract.update({ where: { id: defaulted.id }, data: { status: 'DEFAULTED' } });
+      expect((await rowFor(agent.id, defaulted.id)).status).toBe('ON_HOLD');
+
+      const cancelled = await approvedAgentSale(agent);
+      await cancelContract({ contractId: cancelled.id, reason: 'Customer changed their mind', userId: adminId });
+      expect((await rowFor(agent.id, cancelled.id)).status).toBe('FORFEITED');
+      expect(await agentCompletionSummary(agent.id)).toMatchObject({ dueOnCompletion: { count: 1, totalMinor: 2500 } });
+    });
+
+    it("is not recorded for staff sales, or when nothing is held back", async () => {
+      const staff = await sale({ requiresApproval: true });
+      await approveContract({ contractId: staff.id, approvedById: adminId, allowOwnSale: true });
+      expect(await prisma.agentCompletionCommission.count({ where: { contractId: staff.id } })).toBe(0);
+
+      await updateCommissionSettings({ fixedCommissionMinor: saved.fixedCommissionMinor, deferredCommissionMinor: 0, completionBonusMinor: 0, updatedById: adminId });
+      try {
+        const c = await approvedAgentSale(await newAgent());
+        expect(await prisma.agentCompletionCommission.count({ where: { contractId: c.id } })).toBe(0);
+      } finally {
+        await updateCommissionSettings({ fixedCommissionMinor: saved.fixedCommissionMinor, deferredCommissionMinor: 1500, completionBonusMinor: 1000, updatedById: adminId });
       }
     });
   });

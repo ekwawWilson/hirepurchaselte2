@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 interface CategoryCommission { categoryId: string; name: string; commissionMinor: number | null }
-interface CommissionSettings { fixedCommissionMinor: number; categories: CategoryCommission[] }
+interface CommissionSettings { fixedCommissionMinor: number; deferredCommissionMinor: number; completionBonusMinor: number; categories: CategoryCommission[] }
 
 const toGhs = (minor: number | null) => (minor === null ? '' : (minor / 100).toString());
 const toMinor = (ghs: string) => Math.round(parseFloat(ghs) * 100);
@@ -22,6 +22,8 @@ const toMinor = (ghs: string) => Math.round(parseFloat(ghs) * 100);
 export function AgentCommissionCard() {
   const { toast } = useToast();
   const [defaultGhs, setDefaultGhs] = useState('0');
+  const [deferredGhs, setDeferredGhs] = useState('0');
+  const [bonusGhs, setBonusGhs] = useState('0');
   const [categories, setCategories] = useState<CategoryCommission[]>([]);
   const [rates, setRates] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
@@ -29,6 +31,8 @@ export function AgentCommissionCard() {
 
   function show(settings: CommissionSettings) {
     setDefaultGhs(toGhs(settings.fixedCommissionMinor));
+    setDeferredGhs(toGhs(settings.deferredCommissionMinor));
+    setBonusGhs(toGhs(settings.completionBonusMinor));
     setCategories(settings.categories);
     setRates(Object.fromEntries(settings.categories.map((c) => [c.categoryId, toGhs(c.commissionMinor)])));
     setLoaded(true);
@@ -46,6 +50,8 @@ export function AgentCommissionCard() {
     try {
       const { settings } = await api.patch<{ settings: CommissionSettings }>('/settings/commission', {
         fixedCommissionMinor: toMinor(defaultGhs || '0'),
+        deferredCommissionMinor: toMinor(deferredGhs || '0'),
+        completionBonusMinor: toMinor(bonusGhs || '0'),
         categoryRates: categories.map((c) => ({
           categoryId: c.categoryId,
           commissionMinor: rates[c.categoryId]?.trim() ? toMinor(rates[c.categoryId]) : null,
@@ -105,6 +111,34 @@ export function AgentCommissionCard() {
               <p className="text-xs text-gray-400 mt-1">
                 For a category with no amount of its own{categories.length === 0 ? ' — add product categories on the Products page to set amounts per category' : ''}, and for any product with no category.
               </p>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 p-3 space-y-3">
+              <div>
+                <p className="text-sm font-medium text-gray-900">Paid when the customer completes</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Optional. Hold part of the commission back, and add a bonus, both paid once the customer has paid everything,
+                  so agents earn more for sales that are paid off. Fixed on each sale when it is approved; mark them paid under Agent Ledger.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 max-w-md">
+                <div>
+                  <Label htmlFor="commission-deferred">Held back (GHS per sale)</Label>
+                  <Input id="commission-deferred" type="number" step="0.01" min="0" className="mt-1.5" value={deferredGhs} onChange={(e) => setDeferredGhs(e.target.value)} />
+                </div>
+                <div>
+                  <Label htmlFor="commission-bonus">Completion bonus (GHS)</Label>
+                  <Input id="commission-bonus" type="number" step="0.01" min="0" className="mt-1.5" value={bonusGhs} onChange={(e) => setBonusGhs(e.target.value)} />
+                </div>
+              </div>
+              {(Number(deferredGhs) > 0 || Number(bonusGhs) > 0) && (
+                <p className="text-xs text-gray-600">
+                  With the default above: an agent keeps GHS {Number(defaultGhs || 0).toFixed(2)} from the deposit at sale, and is paid
+                  GHS {(Number(deferredGhs || 0) + Number(bonusGhs || 0)).toFixed(2)} more when the customer completes:
+                  GHS {(Number(defaultGhs || 0) + Number(deferredGhs || 0) + Number(bonusGhs || 0)).toFixed(2)} per completed sale.
+                  The amount held back is in addition to what they keep at sale; set the default lower to split the same total.
+                </p>
+              )}
             </div>
 
             <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save commission'}</Button>

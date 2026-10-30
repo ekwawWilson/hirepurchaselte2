@@ -13,6 +13,7 @@ import { contractTypeLabel } from '../utils';
 import { payTriggerSaleProblem } from '../paytrigger/saleGuard';
 import { evaluateSaleChecks, type SaleDraft } from './saleChecksService';
 import { agentSaleProblem } from './stockAssignmentService';
+import { accrueCompletionCommission } from './completionCommissionService';
 import { notifyPayTrigger } from '../paytrigger/notify';
 import {
   CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
@@ -614,6 +615,8 @@ export async function approveContract(params: { contractId: string; approvedById
     void deliverQueuedSms(result.queuedSmsId).catch((e) => console.error('SMS delivery failed (non-blocking):', e));
   }
   notifyPayTrigger(result.contract.id, 'CONTRACT_ACTIVE', result.contract.contractType);
+  // An agent's instalment sale: what they are owed once the customer completes.
+  if (isInstalmentSale(result.contract.contractType)) await accrueCompletionCommission(result.contract.id);
 
   // Same "try the mandate the moment it's actually usable" as a non-agent
   // contract's own creation — only ever reachable for DEPOSIT_INSTALMENT,

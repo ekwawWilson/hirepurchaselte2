@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { AGENT_CASH_HOLD_ALERT_DAYS } from '@/lib/constants/agents';
+import { CompletionCommissions } from '@/components/agents/CompletionCommissions';
 
 interface Remittance {
   id: string;
@@ -257,6 +258,8 @@ export default function AgentLedgerPage() {
               </div>
             )}
           </div>
+
+          <CompletionCommissions canPay={canPay} />
         </>
       )}
 

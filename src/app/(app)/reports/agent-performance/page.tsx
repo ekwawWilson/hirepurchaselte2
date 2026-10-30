@@ -17,10 +17,11 @@ interface Row {
   submitted: number; approved: number; sentBack: number; cancelled: number; awaitingDecision: number;
   cashCollectedMinor: number; commissionEarnedMinor: number; agentOwesMinor: number; owedToAgentMinor: number;
   longestHeldDays: number | null; liveContracts: number; contractsInArrears: number; overdueMinor: number;
+  completed: number; avgHoursToApproval: number | null; par30Percent: number;
 }
 interface Report {
   rows: Row[];
-  totals: { submitted: number; approved: number; cashCollectedMinor: number; commissionEarnedMinor: number; agentOwesMinor: number; owedToAgentMinor: number; overdueMinor: number };
+  totals: { submitted: number; approved: number; completed: number; cashCollectedMinor: number; commissionEarnedMinor: number; agentOwesMinor: number; owedToAgentMinor: number; overdueMinor: number };
 }
 
 const firstOfMonth = () => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10); };
@@ -73,13 +74,16 @@ export default function AgentPerformanceReportPage() {
                       <TableHead>Agent</TableHead>
                       <TableHead className="text-right">Submitted</TableHead>
                       <TableHead className="text-right">Approved</TableHead>
+                      <TableHead className="text-right">Hours to approve</TableHead>
                       <TableHead className="text-right">Sent back</TableHead>
                       <TableHead className="text-right">Cancelled</TableHead>
+                      <TableHead className="text-right">Completed</TableHead>
                       <TableHead className="text-right">Cash collected</TableHead>
                       <TableHead className="text-right">Commission</TableHead>
                       <TableHead className="text-right">Holding now</TableHead>
                       <TableHead className="text-right">Owed to agent</TableHead>
                       <TableHead className="text-right">In arrears</TableHead>
+                      <TableHead className="text-right">PAR30</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -91,8 +95,10 @@ export default function AgentPerformanceReportPage() {
                         </TableCell>
                         <TableCell className="text-right">{r.submitted}</TableCell>
                         <TableCell className="text-right">{r.approved}</TableCell>
+                        <TableCell className="text-right">{r.avgHoursToApproval ?? '—'}</TableCell>
                         <TableCell className="text-right">{r.sentBack}</TableCell>
                         <TableCell className="text-right">{r.cancelled}</TableCell>
+                        <TableCell className="text-right">{r.completed}</TableCell>
                         <TableCell className="text-right">{formatCurrency(r.cashCollectedMinor)}</TableCell>
                         <TableCell className="text-right">{formatCurrency(r.commissionEarnedMinor)}</TableCell>
                         <TableCell className={cn('text-right', r.longestHeldDays !== null && r.longestHeldDays >= AGENT_CASH_HOLD_ALERT_DAYS && 'text-red-600 font-semibold')}>
@@ -104,6 +110,7 @@ export default function AgentPerformanceReportPage() {
                           {r.contractsInArrears} of {r.liveContracts}
                           {r.overdueMinor > 0 && <span className="block text-xs text-red-600">{formatCurrency(r.overdueMinor)}</span>}
                         </TableCell>
+                        <TableCell className={cn('text-right', r.par30Percent > 0 && 'text-red-600')}>{r.par30Percent}%</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -112,8 +119,8 @@ export default function AgentPerformanceReportPage() {
             </CardContent>
           </Card>
           <p className="text-xs text-gray-500">
-            Submitted, approved, sent back, cancelled, cash collected and commission are for the dates chosen. Holding now, owed to the
-            agent and arrears are as of today. Cash held {AGENT_CASH_HOLD_ALERT_DAYS} days or more is shown in red.
+            Submitted, approved, hours to approve, sent back, cancelled, completed, cash collected and commission are for the dates chosen.
+            Holding now, owed to the agent, arrears and PAR30 (share of what customers owe that is over 30 days behind) are as of today. Cash held {AGENT_CASH_HOLD_ALERT_DAYS} days or more is shown in red.
           </p>
         </>
       )}

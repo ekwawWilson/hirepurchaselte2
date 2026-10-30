@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ settings: await getCommissionSettingsView() });
 }
 
-/** Body: { fixedCommissionMinor, categoryRates?: [{ categoryId, commissionMinor | null }] } — null puts a category back on the default. */
+/** Body: { fixedCommissionMinor, deferredCommissionMinor?, completionBonusMinor?, categoryRates?: [{ categoryId, commissionMinor | null }] } — null puts a category back on the default. */
 export async function PATCH(req: NextRequest) {
   const auth = await requireAuth(req);
   if ('error' in auth) return auth.error;
@@ -27,6 +27,8 @@ export async function PATCH(req: NextRequest) {
   const before = await getCommissionSettingsView();
   await updateCommissionSettings({
     fixedCommissionMinor: body.fixedCommissionMinor as number,
+    deferredCommissionMinor: body.deferredCommissionMinor as number | undefined,
+    completionBonusMinor: body.completionBonusMinor as number | undefined,
     categoryRates: body.categoryRates as { categoryId: string; commissionMinor: number | null }[] | undefined,
     updatedById: auth.user.id,
   });

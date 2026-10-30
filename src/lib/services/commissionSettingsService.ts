@@ -21,13 +21,17 @@ export interface CategoryCommission {
 
 export interface CommissionSettingsData {
   fixedCommissionMinor: number;
+  /** Held back from each agent sale, paid when the customer completes (completionCommissionService). */
+  deferredCommissionMinor: number;
+  /** Added on top, paid when the customer completes. */
+  completionBonusMinor: number;
 }
 
 export interface CommissionSettingsView extends CommissionSettingsData {
   categories: CategoryCommission[];
 }
 
-const DEFAULTS: CommissionSettingsData = { fixedCommissionMinor: 0 };
+const DEFAULTS: CommissionSettingsData = { fixedCommissionMinor: 0, deferredCommissionMinor: 0, completionBonusMinor: 0 };
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -35,7 +39,7 @@ type Db = Prisma.TransactionClient | typeof prisma;
 export async function getCommissionSettings(db: Db = prisma): Promise<CommissionSettingsData> {
   const row = await db.commissionSettings.findUnique({ where: { id: SINGLETON_ID } });
   if (!row) return DEFAULTS;
-  return { fixedCommissionMinor: row.fixedCommissionMinor };
+  return { fixedCommissionMinor: row.fixedCommissionMinor, deferredCommissionMinor: row.deferredCommissionMinor, completionBonusMinor: row.completionBonusMinor };
 }
 
 /** The default amount and every product category's own amount, for the Settings screen. */
@@ -66,7 +70,7 @@ export async function commissionForContract(db: Db, contractId: string): Promise
   return { commissionMinor: (await getCommissionSettings(db)).fixedCommissionMinor, categoryName: null };
 }
 
-export async function updateCommissionSettings(params: CommissionSettingsData & {
+export async function updateCommissionSettings(params: Pick<CommissionSettingsData, 'fixedCommissionMinor'> & Partial<CommissionSettingsData> & {
   updatedById: string;
   /** Only the categories listed are changed; null puts one back on the default. */
   categoryRates?: { categoryId: string; commissionMinor: number | null }[];
@@ -88,6 +92,10 @@ const isAmount = (v: unknown): v is number => typeof v === 'number' && Number.is
 
 export async function validateCommissionSettingsBody(body: Record<string, unknown>): Promise<string | null> {
   if (!isAmount(body.fixedCommissionMinor)) return 'fixedCommissionMinor must be a non-negative integer';
+  // Optional: a screen that does not show the split leaves it as it is.
+  for (const key of ['deferredCommissionMinor', 'completionBonusMinor'] as const) {
+    if (body[key] !== undefined && !isAmount(body[key])) return `${key} must be a non-negative integer`;
+  }
   if (body.categoryRates === undefined) return null;
   if (!Array.isArray(body.categoryRates)) return 'categoryRates must be a list';
   const ids = new Set<string>();

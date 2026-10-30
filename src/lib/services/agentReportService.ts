@@ -1,5 +1,6 @@
 import { prisma } from '../db/prisma';
 import { ledgerEntriesWithBalances } from './agentLedgerService';
+import { getAgentPortfolioRisk } from './portfolioRiskService';
 
 type Scope = { branchId?: string };
 
@@ -13,7 +14,8 @@ function dayRange(from?: string, to?: string) {
  * One row per agent: what they brought in during the range (submitted,
  * approved, sent back, cancelled), the cash they collected and commission
  * they earned in it, what stands between them and the office now, and how
- * the customers they brought in are paying.
+ * the customers they brought in are paying: completed in the range, and
+ * PAR30 now (portfolioRiskService, the same figure the sale block uses).
  */
 export async function agentPerformanceReport(scope: Scope, from?: string, to?: string) {
   const { start, end } = dayRange(from, to);
@@ -23,8 +25,13 @@ export async function agentPerformanceReport(scope: Scope, from?: string, to?: s
     orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
   });
 
+  const risk = new Map((await getAgentPortfolioRisk({ agentIds: agents.map((a) => a.id) })).map((r) => [r.agentId, r]));
+  const HOUR = 60 * 60 * 1000;
+
   const rows = await Promise.all(agents.map(async (agent) => {
-    const [submitted, approved, sentBack, cancelled, pending, collections, earned, ledger, portfolio] = await Promise.all([
+    const [approvedSales, completed, submitted, approved, sentBack, cancelled, pending, collections, earned, ledger, portfolio] = await Promise.all([
+      prisma.contract.findMany({ where: { createdById: agent.id, approvedAt: { gte: start, lte: end } }, select: { createdAt: true, approvedAt: true } }),
+      prisma.contract.count({ where: { createdById: agent.id, status: 'COMPLETED', completedAt: { gte: start, lte: end } } }),
       prisma.contract.count({ where: { createdById: agent.id, createdAt: { gte: start, lte: end } } }),
       prisma.contract.count({ where: { createdById: agent.id, approvedAt: { gte: start, lte: end } } }),
       prisma.auditLog.count({ where: { action: 'CONTRACT_REQUEST_REVISION', createdAt: { gte: start, lte: end }, entityId: { in: (await prisma.contract.findMany({ where: { createdById: agent.id }, select: { id: true } })).map((c) => c.id) } } }),
@@ -45,6 +52,7 @@ export async function agentPerformanceReport(scope: Scope, from?: string, to?: s
       }),
     ]);
     const balances = await ledgerEntriesWithBalances(ledger);
+    const waits = approvedSales.map((c) => (c.approvedAt!.getTime() - c.createdAt.getTime()) / HOUR);
     const overdueMinor = portfolio.reduce((s, c) => s + c.instalments.reduce((t, i) => t + i.amountDueMinor - i.amountPaidMinor, 0), 0);
     return {
       agentId: agent.id,
@@ -60,16 +68,20 @@ export async function agentPerformanceReport(scope: Scope, from?: string, to?: s
       liveContracts: portfolio.length,
       contractsInArrears: portfolio.filter((c) => c.status === 'DEFAULTED' || c.instalments.length > 0).length,
       overdueMinor,
+      completed,
+      /** From the sale being made to its approval, for sales approved in the range. */
+      avgHoursToApproval: waits.length > 0 ? Math.round((waits.reduce((a, b) => a + b, 0) / waits.length) * 10) / 10 : null,
+      par30Percent: risk.get(agent.id)?.par30Percent ?? 0,
     };
   }));
 
-  const sum = (key: 'submitted' | 'approved' | 'cashCollectedMinor' | 'commissionEarnedMinor' | 'agentOwesMinor' | 'owedToAgentMinor' | 'overdueMinor') =>
+  const sum = (key: 'submitted' | 'approved' | 'completed' | 'cashCollectedMinor' | 'commissionEarnedMinor' | 'agentOwesMinor' | 'owedToAgentMinor' | 'overdueMinor') =>
     rows.reduce((s, r) => s + r[key], 0);
   return {
     range: { start, end },
     rows,
     totals: {
-      submitted: sum('submitted'), approved: sum('approved'), cashCollectedMinor: sum('cashCollectedMinor'),
+      submitted: sum('submitted'), approved: sum('approved'), completed: sum('completed'), cashCollectedMinor: sum('cashCollectedMinor'),
       commissionEarnedMinor: sum('commissionEarnedMinor'), agentOwesMinor: sum('agentOwesMinor'),
       owedToAgentMinor: sum('owedToAgentMinor'), overdueMinor: sum('overdueMinor'),
     },

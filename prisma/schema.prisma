@@ -901,6 +901,11 @@ model ContractTypeSettings {
 model CommissionSettings {
   id                   String   @id @default("singleton")
   fixedCommissionMinor Int      @default(0)
+  // Split commission (completionCommissionService.ts): held back from each
+  // sale, and a bonus on top, both paid once the customer completes. Copied
+  // onto the sale when it is approved, so a later change re-prices nothing.
+  deferredCommissionMinor Int   @default(0)
+  completionBonusMinor    Int   @default(0)
   updatedAt            DateTime @updatedAt
   updatedById          String?
 
@@ -1270,4 +1275,27 @@ model CustomerPasswordReset {
 
   @@index([customerId, createdAt])
   @@map("customer_password_resets")
+}
+
+// The part of an agent's commission paid when their customer completes: the
+// amount held back and the completion bonus, as they stood when the sale was
+// approved. Pending, payable, on hold or forfeited follow the contract
+// (completionCommissionService.completionStatus); only "paid" is stored.
+model AgentCompletionCommission {
+  id            String    @id @default(uuid())
+  contractId    String    @unique
+  agentId       String
+  // Kept out of the deposit at sale, for the record.
+  upfrontMinor  Int
+  deferredMinor Int
+  bonusMinor    Int
+  totalMinor    Int
+  status        String    @default("ACCRUED") // ACCRUED | PAID
+  paidAt        DateTime?
+  paidById      String?
+  reference     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([agentId, status])
+  @@map("agent_completion_commissions")
 }

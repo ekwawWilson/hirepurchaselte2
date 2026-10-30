@@ -57,6 +57,12 @@ const STATUS_TONE: Record<string, string> = {
   REJECTED: 'bg-red-50 text-red-700 ring-1 ring-red-200/60',
 };
 
+interface CompletionSummary {
+  dueOnCompletion: { count: number; totalMinor: number };
+  payable: { count: number; totalMinor: number };
+  paid: { count: number; totalMinor: number };
+}
+
 /**
  * The Agent module: the cash an agent has collected on the company's behalf,
  * the commission they have earned, what they owe the office (or the office
@@ -74,6 +80,7 @@ export default function MyDepositsPage() {
   const [method, setMethod] = useState('CASH');
   const [reference, setReference] = useState('');
   const [saving, setSaving] = useState(false);
+  const [completion, setCompletion] = useState<CompletionSummary | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -81,6 +88,8 @@ export default function MyDepositsPage() {
       const data = await api.get<{ entries: LedgerEntry[]; totals: Totals }>('/agent/ledger');
       setEntries(data.entries);
       setTotals(data.totals);
+      // Commission paid when customers complete: a bonus to the ledger, never a reason to fail the page.
+      api.get<{ summary: CompletionSummary }>('/agent/completion-commissions').then((c) => setCompletion(c.summary)).catch(() => {});
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load your ledger', variant: 'destructive' });
     } finally {
@@ -156,6 +165,20 @@ export default function MyDepositsPage() {
             <CardContent className="p-4"><p className="text-xs text-gray-500">Commission owed to you</p><p className="text-lg font-semibold text-emerald-600">{formatCurrency(totals.owedToAgentMinor)}</p></CardContent>
           </Card>
         </div>
+      )}
+
+      {completion && completion.dueOnCompletion.count + completion.payable.count + completion.paid.count > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-sm font-medium text-gray-900">Paid when your customers complete</p>
+            <p className="text-xs text-gray-500 mt-0.5">Commission held back, and any completion bonus, is paid once a customer has paid everything. A sale that defaults is held; one cancelled is lost.</p>
+            <div className="grid grid-cols-3 gap-3 mt-3">
+              <div><p className="text-xs text-gray-500">Still to come</p><p className="text-base font-semibold text-gray-900">{formatCurrency(completion.dueOnCompletion.totalMinor)}</p><p className="text-xs text-gray-500">{completion.dueOnCompletion.count} sale{completion.dueOnCompletion.count === 1 ? '' : 's'}</p></div>
+              <div><p className="text-xs text-gray-500">Ready to be paid</p><p className="text-base font-semibold text-blue-700">{formatCurrency(completion.payable.totalMinor)}</p><p className="text-xs text-gray-500">{completion.payable.count} sale{completion.payable.count === 1 ? '' : 's'}</p></div>
+              <div><p className="text-xs text-gray-500">Paid to you</p><p className="text-base font-semibold text-emerald-600">{formatCurrency(completion.paid.totalMinor)}</p><p className="text-xs text-gray-500">{completion.paid.count} sale{completion.paid.count === 1 ? '' : 's'}</p></div>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {isLoading ? (
