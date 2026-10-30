@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
 import { generateProductSku } from '@/lib/utils/idGenerators';
+import { withDeviceFinancingBrand, financingProductIds, parseFinancingFilter, setDeviceFinancingFromForm } from '@/lib/paytrigger/products';
+import { isDeviceFinancingBrand } from '@/lib/constants/deviceFinancing';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -16,9 +18,12 @@ export async function GET(req: NextRequest) {
   if (q) where.OR = [{ name: { contains: q } }, { sku: { contains: q } }, { brand: { contains: q } }, { model: { contains: q } }];
   if (categoryId) where.categoryId = categoryId;
   if (isActiveParam !== null) where.isActive = isActiveParam === 'true';
+  // ?financing=device|regular: Device Financing phones, or every other product.
+  const financing = await financingProductIds(parseFinancingFilter(searchParams.get('financing')));
+  if (financing) where.id = financing;
 
   const products = await prisma.product.findMany({ where, include: { category: true }, orderBy: { name: 'asc' } });
-  return NextResponse.json({ products });
+  return NextResponse.json({ products: await withDeviceFinancingBrand(products) });
 }
 
 export async function POST(req: NextRequest) {
@@ -31,10 +36,14 @@ export async function POST(req: NextRequest) {
   // at creation time. DEPOSIT_INSTALMENT's total/deposit/term and DEVICE_LOAN's
   // loan amount are entered directly at contract creation now, not looked up
   // from a price chart (contractService.ts).
-  const { sku: skuInput, name, description, categoryId, brand, model, cashPriceMinor, imageUrl } =
+  const { sku: skuInput, name, description, categoryId, brand, model, cashPriceMinor, imageUrl, deviceFinancingBrand } =
     (await req.json()) as Record<string, unknown>;
   if (!name || typeof cashPriceMinor !== 'number' || cashPriceMinor <= 0) {
     return NextResponse.json({ error: 'name and a positive cashPriceMinor are required' }, { status: 400 });
+  }
+  // A Device Financing phone (TECNO, Infinix, itel): sold only on Device Financing, locked by PayTrigger.
+  if (deviceFinancingBrand != null && !isDeviceFinancingBrand(deviceFinancingBrand)) {
+    return NextResponse.json({ error: 'deviceFinancingBrand must be TECNO, INFINIX, ITEL or null' }, { status: 400 });
   }
 
   const skuValue = typeof skuInput === 'string' && skuInput.trim() ? skuInput.trim() : null;
@@ -56,6 +65,7 @@ export async function POST(req: NextRequest) {
       imageUrl: (imageUrl as string) || null,
     },
   });
+  if (deviceFinancingBrand != null) await setDeviceFinancingFromForm(product.id, deviceFinancingBrand, { id: auth.user.id, canChangeMarks: false });
 
-  return NextResponse.json({ product }, { status: 201 });
+  return NextResponse.json({ product: { ...product, deviceFinancingBrand: deviceFinancingBrand ?? null } }, { status: 201 });
 }

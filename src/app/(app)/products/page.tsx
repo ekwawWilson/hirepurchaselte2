@@ -14,6 +14,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { DeviceFinancingBadge, DeviceFinancingField, FinancingFilterSelect, matchesFinancing, ALL_FINANCING, NOT_DEVICE_FINANCING } from '@/components/DeviceFinancing';
 
 interface Product {
   id: string;
@@ -25,6 +26,7 @@ interface Product {
   isActive: boolean;
   categoryId: string | null;
   category: { name: string } | null;
+  deviceFinancingBrand: string | null;
 }
 interface Category { id: string; name: string }
 
@@ -36,9 +38,10 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryFilter, setCategoryFilter] = useState('__all__');
+  const [financingFilter, setFinancingFilter] = useState(ALL_FINANCING);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '', categoryId: '', cashPrice: '' });
+  const [form, setForm] = useState({ name: '', description: '', categoryId: '', cashPrice: '', deviceFinancing: NOT_DEVICE_FINANCING });
   const [newCategoryName, setNewCategoryName] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -65,7 +68,7 @@ export default function ProductsPage() {
   }, [showForm]);
 
   function resetForm() {
-    setForm({ name: '', description: '', categoryId: '', cashPrice: '' });
+    setForm({ name: '', description: '', categoryId: '', cashPrice: '', deviceFinancing: NOT_DEVICE_FINANCING });
     setNewCategoryName('');
   }
 
@@ -89,7 +92,10 @@ export default function ProductsPage() {
       }
 
       const cashPriceMinor = Math.round(parseFloat(form.cashPrice) * 100);
-      await api.post('/products', { name: form.name, description: form.description, categoryId, cashPriceMinor });
+      await api.post('/products', {
+        name: form.name, description: form.description, categoryId, cashPriceMinor,
+        deviceFinancingBrand: form.deviceFinancing === NOT_DEVICE_FINANCING ? null : form.deviceFinancing,
+      });
       toast({ title: 'Product created', description: `${form.name} was added to the catalogue.` });
       resetForm();
       setShowForm(false);
@@ -148,6 +154,8 @@ export default function ProductsPage() {
                 </div>
               </div>
 
+              <DeviceFinancingField value={form.deviceFinancing} onChange={(v) => setForm({ ...form, deviceFinancing: v })} nameHint={`${form.name} ${form.description}`} />
+
               <div className="flex gap-2 pt-2">
                 <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Create product'}</Button>
                 <Button type="button" variant="outline" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</Button>
@@ -174,6 +182,8 @@ export default function ProductsPage() {
           </Button>
         )}
       </div>
+
+      <FinancingFilterSelect value={financingFilter} onChange={setFinancingFilter} className="w-full sm:w-56" />
 
       {categories.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -211,11 +221,14 @@ export default function ProductsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {products.filter((p) => categoryFilter === '__all__' || p.categoryId === categoryFilter).map((p) => (
+                {products.filter((p) => (categoryFilter === '__all__' || p.categoryId === categoryFilter) && matchesFinancing(financingFilter, p.deviceFinancingBrand)).map((p) => (
                   <TableRow key={p.id}>
                     <TableCell><Link href={`/products/${p.id}`} className="font-mono text-xs text-blue-700 hover:underline">{p.sku}</Link></TableCell>
                     <TableCell className="text-gray-600">{p.category?.name ?? '—'}</TableCell>
-                    <TableCell className="font-medium text-gray-900"><Link href={`/products/${p.id}`} className="hover:underline">{p.name}</Link></TableCell>
+                    <TableCell className="font-medium text-gray-900">
+                      <Link href={`/products/${p.id}`} className="hover:underline">{p.name}</Link>
+                      <DeviceFinancingBadge brand={p.deviceFinancingBrand} className="ml-2 align-middle" />
+                    </TableCell>
                     <TableCell>{[p.brand, p.model].filter(Boolean).join(' ') || '—'}</TableCell>
                     <TableCell>{formatCurrency(p.cashPriceMinor)}</TableCell>
                     <TableCell><Badge variant={p.isActive ? 'success' : 'secondary'}>{p.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>

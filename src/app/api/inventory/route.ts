@@ -4,6 +4,7 @@ import { requireAuth, requirePermission, branchScopeWhere } from '@/lib/auth/rba
 import { receiveInventoryItem } from '@/lib/services/inventoryService';
 import { inventorySearchWhere } from '@/lib/utils/search';
 import { saleTypeInventoryWhere } from '@/lib/paytrigger/saleGuard';
+import { withDeviceFinancingBrand, financingProductIds, parseFinancingFilter } from '@/lib/paytrigger/products';
 
 /**
  * Stock, to whoever may view inventory. Someone who can only create contracts
@@ -38,14 +39,18 @@ export async function GET(req: NextRequest) {
   // ?saleType=: only what that instalment sale may sell (PayTrigger phones
   // go on Device Financing alone) — the new-contract wizard's unit picker.
   const saleWhere = await saleTypeInventoryWhere(searchParams.get('saleType'));
-  where.AND = [...(q ? inventorySearchWhere(q) : []), ...(saleWhere ? [saleWhere] : [])];
+  // ?financing=device|regular: Device Financing phones, or every other unit.
+  const financing = await financingProductIds(parseFinancingFilter(searchParams.get('financing')));
+  where.AND = [...(q ? inventorySearchWhere(q) : []), ...(saleWhere ? [saleWhere] : []), ...(financing ? [{ productId: financing }] : [])];
 
   const items = await prisma.inventoryItem.findMany({
     where,
     include: { product: { include: { category: true } }, branch: { select: { name: true } }, assignedAgent: { select: { id: true, firstName: true, lastName: true } } },
     orderBy: { createdAt: 'desc' }, take: 200,
   });
-  return NextResponse.json({ items });
+  const products = await withDeviceFinancingBrand([...new Map(items.map((i) => [i.product.id, i.product])).values()]);
+  const byId = new Map(products.map((p) => [p.id, p]));
+  return NextResponse.json({ items: items.map((i) => ({ ...i, product: byId.get(i.product.id)! })) });
 }
 
 export async function POST(req: NextRequest) {

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
+import { withDeviceFinancingBrand, setDeviceFinancingFromForm } from '@/lib/paytrigger/products';
+import { PayTriggerError } from '@/lib/paytrigger/admin';
 import { createPriceChartEntryInTx, parseTermPricingBundle, type ParsedTermPricingEntry, type ContractTypeName, type Tx } from '@/lib/services/priceChartService';
 
 /**
@@ -39,7 +41,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id } = await params;
   const product = await prisma.product.findUnique({ where: { id }, include: { category: true, priceChartEntries: true } });
   if (!product) return NextResponse.json({ error: 'Product not found' }, { status: 404 });
-  return NextResponse.json({ product });
+  const [withBrand] = await withDeviceFinancingBrand([product]);
+  return NextResponse.json({ product: withBrand });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -52,8 +55,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) return NextResponse.json({ error: 'Product not found' }, { status: 404 });
 
-  const { name, description, categoryId, brand, model, cashPriceMinor, imageUrl, isActive, termPricing, deviceLoanPricing } =
-    (await req.json()) as Record<string, unknown>;
+  const body = (await req.json()) as Record<string, unknown>;
+  const { name, description, categoryId, brand, model, cashPriceMinor, imageUrl, isActive, termPricing, deviceLoanPricing } = body;
+
+  // Marking it a Device Financing phone, or changing or removing the mark (paytrigger/products.ts).
+  if ('deviceFinancingBrand' in body) {
+    try {
+      await setDeviceFinancingFromForm(existing.id, body.deviceFinancingBrand, {
+        id: auth.user.id, canChangeMarks: requirePermission(auth.user, 'settings.manage').authorized,
+      });
+    } catch (e) {
+      if (e instanceof PayTriggerError) return NextResponse.json({ error: e.message }, { status: 400 });
+      throw e;
+    }
+  }
 
   // Lets an admin close a "Missing: Deposit + Instalment / Device Loan" coverage gap
   // right from the edit screen instead of a separate trip to the Price Chart page —

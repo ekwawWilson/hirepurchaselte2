@@ -4,6 +4,7 @@ import { requireAuth, requirePermission } from '@/lib/auth/rbac';
 import { createPriceChartEntry, validateEntryBody, ContractTypeName } from '@/lib/services/priceChartService';
 import type { PaymentFrequencyName } from '@/lib/constants/contracts';
 import { logAudit } from '@/lib/services/auditService';
+import { withDeviceFinancingBrand, financingProductIds, parseFinancingFilter } from '@/lib/paytrigger/products';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -20,13 +21,17 @@ export async function GET(req: NextRequest) {
   if (productId) where.productId = productId;
   if (contractType) where.contractType = contractType;
   if (activeOnly === 'true') where.effectiveTo = null;
+  const financing = await financingProductIds(parseFinancingFilter(searchParams.get('financing')));
+  if (financing) where.productId = productId ? { ...financing, equals: productId } : financing;
 
   const entries = await prisma.priceChartEntry.findMany({
     where,
     include: { product: true },
     orderBy: [{ productId: 'asc' }, { contractType: 'asc' }, { termMonths: 'asc' }, { effectiveFrom: 'desc' }],
   });
-  return NextResponse.json({ entries });
+  const products = await withDeviceFinancingBrand([...new Map(entries.map((e) => [e.product.id, e.product])).values()]);
+  const byId = new Map(products.map((p) => [p.id, p]));
+  return NextResponse.json({ entries: entries.map((e) => ({ ...e, product: byId.get(e.product.id)! })) });
 }
 
 export async function POST(req: NextRequest) {

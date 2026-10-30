@@ -13,6 +13,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { DeviceFinancingBadge, DeviceFinancingField, NOT_DEVICE_FINANCING } from '@/components/DeviceFinancing';
 
 interface PriceChartEntry {
   id: string; contractType: string; termMonths: number; paymentFrequency: string;
@@ -22,6 +23,7 @@ interface Category { id: string; name: string }
 interface Product {
   id: string; sku: string; name: string; description: string | null; brand: string | null; model: string | null;
   cashPriceMinor: number; isActive: boolean; category: Category | null; priceChartEntries: PriceChartEntry[];
+  deviceFinancingBrand: string | null;
 }
 
 const frequencyLabel = (f: string) => f.charAt(0) + f.slice(1).toLowerCase();
@@ -38,11 +40,12 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const canUpdate = useAuthStore((s) => s.hasPermission('inventory.receive'));
   const canEditPricing = useAuthStore((s) => s.hasPermission('pricechart.edit'));
+  const canChangeMarks = useAuthStore((s) => s.hasPermission('settings.manage'));
   const { toast } = useToast();
   const [product, setProduct] = useState<Product | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '', categoryId: '', brand: '', model: '', cashPrice: '', isActive: true });
+  const [form, setForm] = useState({ name: '', description: '', categoryId: '', brand: '', model: '', cashPrice: '', isActive: true, deviceFinancing: NOT_DEVICE_FINANCING });
   const [saving, setSaving] = useState(false);
   const [showTermPricingForm, setShowTermPricingForm] = useState(false);
   const [termPricing, setTermPricing] = useState(emptyTermPricing);
@@ -62,6 +65,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
         name: product.name, description: product.description ?? '', categoryId: product.category?.id ?? '',
         brand: product.brand ?? '', model: product.model ?? '',
         cashPrice: (product.cashPriceMinor / 100).toFixed(2), isActive: product.isActive,
+        deviceFinancing: product.deviceFinancingBrand ?? NOT_DEVICE_FINANCING,
       });
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load product', variant: 'destructive' });
@@ -85,6 +89,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       await api.patch(`/products/${id}`, {
         name: form.name, description: form.description, categoryId: form.categoryId || null, brand: form.brand, model: form.model,
         cashPriceMinor: Math.round(parseFloat(form.cashPrice) * 100), isActive: form.isActive,
+        ...(form.deviceFinancing !== (product?.deviceFinancingBrand ?? NOT_DEVICE_FINANCING) && {
+          deviceFinancingBrand: form.deviceFinancing === NOT_DEVICE_FINANCING ? null : form.deviceFinancing,
+        }),
       });
       toast({ title: 'Product updated' });
       setEditing(false);
@@ -198,6 +205,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{product.name}</h1>
+          <DeviceFinancingBadge brand={product.deviceFinancingBrand} className="mt-1" />
           <p className="text-sm text-gray-500 mt-0.5 font-mono">{product.sku}</p>
         </div>
         {canUpdate && !editing && <Button variant="outline" onClick={() => setEditing(true)}>Edit</Button>}
@@ -243,6 +251,12 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                   Active in catalogue
                 </label>
               </div>
+              <div className="col-span-2">
+                <DeviceFinancingField
+                  value={form.deviceFinancing} onChange={(v) => setForm({ ...form, deviceFinancing: v })}
+                  nameHint={`${form.brand} ${form.name} ${form.model}`} locked={!!product.deviceFinancingBrand && !canChangeMarks}
+                />
+              </div>
               <div className="col-span-2 flex gap-2">
                 <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save changes'}</Button>
                 <Button type="button" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
@@ -254,6 +268,10 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               <div><p className="text-xs text-gray-500">Brand/Model</p><p className="text-gray-900">{[product.brand, product.model].filter(Boolean).join(' ') || '—'}</p></div>
               <div><p className="text-xs text-gray-500">Cash price</p><p className="text-gray-900">{formatCurrency(product.cashPriceMinor)}</p></div>
               <div><p className="text-xs text-gray-500">Status</p><Badge variant={product.isActive ? 'success' : 'secondary'}>{product.isActive ? 'Active' : 'Inactive'}</Badge></div>
+              <div className="col-span-2">
+                <p className="text-xs text-gray-500">Sold on</p>
+                <p className="text-gray-900">{product.deviceFinancingBrand ? 'Device Financing only: enrol each unit with PayTrigger before selling it' : 'Any sale type except Device Financing'}</p>
+              </div>
               <div className="col-span-2"><p className="text-xs text-gray-500">Description</p><p className="text-gray-900">{product.description ?? '—'}</p></div>
             </div>
           )}

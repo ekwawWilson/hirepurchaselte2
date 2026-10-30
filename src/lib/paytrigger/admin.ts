@@ -6,6 +6,7 @@ import { getPayTriggerSettings } from './settings';
 import { registryRemove } from './notify';
 import { applyReportedState, logAction, reconcileContract, syncLockText, ENFORCED_STATES } from './reconcile';
 import { devicesEnrolledLive } from './saleGuard';
+import { DEVICE_FINANCING_BRANDS, suggestDeviceFinancingBrand } from '../constants/deviceFinancing';
 
 /**
  * What staff do by hand (PayTrigger pages): mark which products are
@@ -15,8 +16,7 @@ import { devicesEnrolledLive } from './saleGuard';
 
 export class PayTriggerError extends Error {}
 
-export const TRANSSION_BRANDS = ['TECNO', 'INFINIX', 'ITEL'] as const;
-const TRANSSION_NAME = /\b(tecno|infinix|itel)\b/i;
+export const TRANSSION_BRANDS = DEVICE_FINANCING_BRANDS;
 const IMEI = /^\d{15,18}$/;
 /** PayTrigger's own limit on offline PIN unlocks per phone (Introduction Manual 6.1). */
 export const MAX_PIN_UNLOCKS = 4;
@@ -39,11 +39,11 @@ export async function listProducts() {
   ]);
   const byProduct = new Map(marked.map((m) => [m.productId, m]));
   return products.map((p) => {
-    const match = `${p.brand ?? ''} ${p.name} ${p.model ?? ''}`.match(TRANSSION_NAME);
+    const suggested = suggestDeviceFinancingBrand(`${p.brand ?? ''} ${p.name} ${p.model ?? ''}`);
     return {
       ...p,
       payTriggerBrand: byProduct.get(p.id)?.brand ?? null,
-      suggestedBrand: !byProduct.has(p.id) && match ? match[1].toUpperCase() : null,
+      suggestedBrand: !byProduct.has(p.id) ? suggested : null,
     };
   });
 }

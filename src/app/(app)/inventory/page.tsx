@@ -14,11 +14,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { DeviceFinancingBadge, FinancingFilterSelect, ALL_FINANCING } from '@/components/DeviceFinancing';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AccessDenied } from '@/components/AccessDenied';
 
 interface Category { id: string; name: string }
-interface Product { id: string; name: string; sku: string; categoryId: string | null; category: Category | null; isActive?: boolean }
+interface Product { id: string; name: string; sku: string; categoryId: string | null; category: Category | null; isActive?: boolean; deviceFinancingBrand?: string | null }
 interface Branch { id: string; name: string; code: string }
 interface InventoryItem {
   id: string;
@@ -67,6 +68,7 @@ export default function InventoryPage() {
   const [editForm, setEditForm] = useState({ name: '', description: '' });
   const [agents, setAgents] = useState<AgentStock[]>([]);
   const [agentFilter, setAgentFilter] = useState(ALL);
+  const [financingFilter, setFinancingFilter] = useState(ALL_FINANCING);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignTo, setAssignTo] = useState('');
@@ -79,6 +81,7 @@ export default function InventoryPage() {
     try {
       const params = new URLSearchParams({
         ...(search && { q: search }), ...(statusFilter !== ALL && { status: statusFilter }), ...(agentFilter !== ALL && { agentId: agentFilter }),
+        ...(financingFilter !== ALL_FINANCING && { financing: financingFilter }),
       });
       const [{ items }, { products }, { categories }, agentList] = await Promise.all([
         api.get<{ items: InventoryItem[] }>(`/inventory?${params}`),
@@ -96,7 +99,7 @@ export default function InventoryPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [search, statusFilter, agentFilter, canAssign, toast]);
+  }, [search, statusFilter, agentFilter, financingFilter, canAssign, toast]);
 
   useEffect(() => {
     if (!canView) { setIsLoading(false); return; }
@@ -208,7 +211,7 @@ export default function InventoryPage() {
                   <Select required value={form.productId} onValueChange={(v) => setForm({ ...form, productId: v })} disabled={!form.categoryId}>
                     <SelectTrigger className="mt-1.5"><SelectValue placeholder={form.categoryId ? 'e.g. HP Laptop' : 'Choose a category first'} /></SelectTrigger>
                     <SelectContent>
-                      {productsInCategory.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                      {productsInCategory.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}{p.deviceFinancingBrand ? ' (Device Financing)' : ''}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   {form.categoryId && productsInCategory.length === 0 && (
@@ -299,7 +302,7 @@ export default function InventoryPage() {
       )}
 
       <Card>
-        <CardContent className={`p-4 grid grid-cols-1 gap-2 ${canAssign ? 'sm:grid-cols-[1fr_auto_auto_auto]' : 'sm:grid-cols-[1fr_auto_auto]'}`}>
+        <CardContent className={`p-4 grid grid-cols-1 gap-2 ${canAssign ? 'sm:grid-cols-[1fr_auto_auto_auto_auto]' : 'sm:grid-cols-[1fr_auto_auto_auto]'}`}>
           <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); setSearch(query.trim()); }}>
             <div className="relative flex-1">
               <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
@@ -315,6 +318,7 @@ export default function InventoryPage() {
               {uncategorised && <SelectItem value={NO_CATEGORY}>No category</SelectItem>}
             </SelectContent>
           </Select>
+          <FinancingFilterSelect value={financingFilter} onChange={setFinancingFilter} className="sm:w-48" />
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="sm:w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -381,6 +385,7 @@ export default function InventoryPage() {
                     <TableCell className="text-gray-600">{i.product.category?.name ?? '—'}</TableCell>
                     <TableCell>
                       <div className="font-medium text-gray-900">{unitTitle(i.product.name, i.name)}</div>
+                      <DeviceFinancingBadge brand={i.product.deviceFinancingBrand} className="mt-1" />
                       {i.description && <div className="text-xs text-gray-500 mt-0.5 whitespace-pre-line">{i.description}</div>}
                     </TableCell>
                     <TableCell className="font-mono text-xs">{i.serialNumber}</TableCell>

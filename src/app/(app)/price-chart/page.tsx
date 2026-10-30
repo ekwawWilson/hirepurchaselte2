@@ -13,10 +13,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { DeviceFinancingBadge, FinancingFilterSelect, matchesFinancing, ALL_FINANCING } from '@/components/DeviceFinancing';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AccessDenied } from '@/components/AccessDenied';
 
-interface Product { id: string; name: string; sku: string }
+interface Product { id: string; name: string; sku: string; deviceFinancingBrand?: string | null }
 interface PriceChartEntry {
   id: string;
   product: Product;
@@ -68,6 +69,7 @@ export default function PriceChartPage() {
   const [editTarget, setEditTarget] = useState<PriceChartEntry | null>(null);
   const [editForm, setEditForm] = useState({ totalPayable: '', depositAmount: '', interestRateBps: '' });
   const [editSaving, setEditSaving] = useState(false);
+  const [financingFilter, setFinancingFilter] = useState(ALL_FINANCING);
 
   // Which contract types already have an active entry for the exact combo
   // currently selected — a product's price chart must satisfy all three
@@ -190,7 +192,7 @@ export default function PriceChartPage() {
                 <Select required value={productId} onValueChange={setProductId}>
                   <SelectTrigger className="mt-1.5"><SelectValue placeholder="Select a product..." /></SelectTrigger>
                   <SelectContent>
-                    {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}
+                    {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku}){p.deviceFinancingBrand ? ' · Device Financing' : ''}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -300,6 +302,8 @@ export default function PriceChartPage() {
         )}
       </div>
 
+      <FinancingFilterSelect value={financingFilter} onChange={setFinancingFilter} className="w-full sm:w-56" />
+
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -326,9 +330,12 @@ export default function PriceChartPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {entries.map((e) => (
+                {entries.filter((e) => matchesFinancing(financingFilter, e.product.deviceFinancingBrand)).map((e) => (
                   <TableRow key={e.id}>
-                    <TableCell className="font-medium text-gray-900">{e.product.name}</TableCell>
+                    <TableCell className="font-medium text-gray-900">
+                      {e.product.name}
+                      <DeviceFinancingBadge brand={e.product.deviceFinancingBrand} className="ml-2 align-middle" />
+                    </TableCell>
                     <TableCell>{contractTypeLabel(e.contractType)}</TableCell>
                     <TableCell>{e.termMonths}mo</TableCell>
                     <TableCell>{frequencyLabel(e.paymentFrequency)}</TableCell>
