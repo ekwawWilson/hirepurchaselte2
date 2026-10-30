@@ -90,12 +90,14 @@ const shortDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { d
 
 /**
  * What a typed amount pays off, in the order the server applies it
- * (paymentService.allocatePayment): the deposit while it is owed, then late
- * charges, then instalments oldest first. Late charges are each paid whole or
- * not at all, so a part of them is described as "goes to", never "covers".
- * `instalments` is the contract's schedule (the contract page loads it).
+ * (paymentService.allocatePayment): the deposit while it is owed, then
+ * overdue instalments oldest first, then late charges, then instalments not
+ * yet due. A late charge is paid whole or not at all: an amount too small
+ * for it carries on to the upcoming instalments instead. `instalments` is
+ * the contract's schedule (the contract page loads it); `today` is the start
+ * of today (UTC), passed in to keep this pure.
  */
-export function coverageText(c: Contract, instalments: Instalment[] | null, amountMinor: number): string | null {
+export function coverageText(c: Contract, instalments: Instalment[] | null, amountMinor: number, today: Date = startOfTodayUtc()): string | null {
   if (!Number.isFinite(amountMinor) || amountMinor <= 0) return null;
   if (isSavings(c)) return 'Added to your savings';
   if (isLoan(c)) {
@@ -111,40 +113,47 @@ export function coverageText(c: Contract, instalments: Instalment[] | null, amou
     parts.push(left >= deposit ? 'your deposit' : 'part of your deposit');
     left -= Math.min(left, deposit);
   }
-  const charges = c.due.penaltyOutstandingMinor;
-  if (left > 0 && charges > 0) {
-    if (left >= charges) {
-      parts.push('late charges');
-      left -= charges;
-    } else {
-      return `${parts.length ? `Covers ${parts.join(', ')}, then g` : 'G'}oes to your late charges first`;
-    }
+  if (!instalments) {
+    if (left > 0) parts.push('overdue instalments first, then late charges and upcoming instalments');
+    return parts.length ? `Covers ${parts.join(', ')}` : null;
   }
-  if (left > 0 && instalments) {
-    const unpaid = instalments
-      .filter((i) => i.status !== 'PAID' && i.amountDueMinor - i.amountPaidMinor > 0)
-      .sort((a, b) => a.instalmentNo - b.instalmentNo);
+  const unpaid = instalments
+    .filter((i) => i.status !== 'PAID' && i.amountDueMinor - i.amountPaidMinor > 0)
+    .sort((a, b) => a.instalmentNo - b.instalmentNo);
+  const isLate = (i: Instalment) => i.status === 'OVERDUE' || new Date(i.dueDate) < today;
+  const pay = (rows: Instalment[], what: string) => {
     let whole = 0;
     let lastDue: string | null = null;
     let partial = false;
-    for (const i of unpaid) {
+    for (const i of rows) {
+      if (left <= 0) break;
       const owed = i.amountDueMinor - i.amountPaidMinor;
       if (left >= owed) {
         whole += 1;
         lastDue = i.dueDate;
         left -= owed;
       } else {
-        if (left > 0) partial = true;
+        partial = true;
         left = 0;
-        break;
       }
     }
-    if (whole > 0) parts.push(`${whole} instalment${whole === 1 ? '' : 's'} (to ${shortDate(lastDue!)})`);
-    if (partial) parts.push(whole > 0 ? 'part of the next' : 'part of your next instalment');
-  } else if (left > 0) {
-    parts.push('your instalments, oldest first');
+    if (whole > 0) parts.push(`${whole} ${what}instalment${whole === 1 ? '' : 's'} (to ${shortDate(lastDue!)})`);
+    if (partial) parts.push(whole > 0 ? 'part of the next' : `part of your next ${what}instalment`);
+  };
+  pay(unpaid.filter(isLate), 'overdue ');
+  const charges = c.due.penaltyOutstandingMinor;
+  if (left > 0 && charges > 0 && left >= charges) {
+    parts.push('late charges');
+    left -= charges;
   }
+  pay(unpaid.filter((i) => !isLate(i)), '');
   return parts.length ? `Covers ${parts.join(', ')}` : null;
+}
+
+function startOfTodayUtc(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
 }
 
 /** The network a Ghana number is on, from its prefix (for preselecting the chip). */

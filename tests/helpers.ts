@@ -28,6 +28,15 @@ export async function setSecondApproval(required: boolean) {
 }
 
 /**
+ * The sales rules (Settings > Controls; saleChecksService.ts). Every test file
+ * starts with them off, so tests that make several sales with one agent are
+ * not stopped by the cash that agent holds; tests of the rules turn them on.
+ */
+export async function setSaleRules(rules: { blockSalesWhileDepositsUnremitted?: boolean; parBlockEnabled?: boolean; parBlockThresholdPercent?: number; parBlockMinContracts?: number }) {
+  await prisma.controlSettings.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', ...rules }, update: rules });
+}
+
+/**
  * A portal token for a customer who has already chosen their own password —
  * for tests of what the portal does, not of how a customer gets into it.
  */

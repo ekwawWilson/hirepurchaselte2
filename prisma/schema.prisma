@@ -1070,6 +1070,14 @@ model ControlSettings {
   directDebitNoticeEnabled  Boolean  @default(true)
   // When a full direct debit bounces, try half before waiting for the next retry day.
   partialDirectDebitEnabled Boolean  @default(true)
+  // Sales rules (saleChecksService.ts). An agent holding deposit cash they
+  // have not remitted cannot make another sale until they do.
+  blockSalesWhileDepositsUnremitted Boolean @default(true)
+  // An agent whose portfolio at risk (PAR30) is above the threshold cannot
+  // make another sale, once their book has at least the minimum contracts.
+  parBlockEnabled           Boolean  @default(false)
+  parBlockThresholdPercent  Int      @default(20)
+  parBlockMinContracts      Int      @default(10)
   updatedAt                 DateTime @updatedAt
   updatedById               String?
 

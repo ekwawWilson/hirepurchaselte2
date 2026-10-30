@@ -24,7 +24,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!assertBranchAccess(auth.user, existing.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
-    const contract = await approveContract({ contractId: id, approvedById: auth.user.id });
+    const contract = await approveContract({ contractId: id, approvedById: auth.user.id, allowOwnSale: auth.user.roleName === 'SUPER_ADMIN' });
     await logAudit({ userId: auth.user.id, action: 'CONTRACT_APPROVE', entityType: 'Contract', entityId: id, oldValues: existing, newValues: contract });
     // Same reasoning as the ordinary contract-creation route: DEVICE_LOAN
     // disbursement is only real, and only auditable as such, once approved.

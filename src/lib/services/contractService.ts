@@ -11,6 +11,7 @@ import { getWorkingDays } from './operatingSettingsService';
 import { getContractTypeSettings, isContractTypeEnabled } from './contractTypeSettingsService';
 import { contractTypeLabel } from '../utils';
 import { payTriggerSaleProblem } from '../paytrigger/saleGuard';
+import { evaluateSaleChecks } from './saleChecksService';
 import { notifyPayTrigger } from '../paytrigger/notify';
 import {
   CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
@@ -92,6 +93,8 @@ export async function createContract(params: CreateContractParams) {
   if (!isContractTypeEnabled(await getContractTypeSettings(), params.contractType)) {
     throw new ContractError(`${contractTypeLabel(params.contractType)} is not activated — an admin can turn it on in Settings > Contract types`);
   }
+
+  await assertSaleAllowed(params.createdById);
 
   const customer = await prisma.customer.findUnique({ where: { id: params.customerId } });
   if (!customer) throw new ContractError('Customer not found');
@@ -209,6 +212,13 @@ export async function createContract(params: CreateContractParams) {
     }
   }
   throw new ContractError('Could not create contract after multiple attempts, please retry');
+}
+
+/** Refuses a sale the checks block (saleChecksService.ts), with every reason at once. */
+async function assertSaleAllowed(createdById: string) {
+  const creator = await prisma.user.findUnique({ where: { id: createdById }, select: { role: { select: { name: true } } } });
+  const { blockers } = await evaluateSaleChecks({ createdById, creatorRole: creator?.role.name ?? '' });
+  if (blockers.length > 0) throw new ContractError(blockers.map((b) => b.message).join(' '));
 }
 
 /**
@@ -548,9 +558,14 @@ export async function releaseContract(params: { contractId: string; userId: stri
  * contract.activated SMS withheld at creation); DEPOSIT_INSTALMENT still
  * waits for its deposit (PENDING_DEPOSIT), same as always.
  */
-export async function approveContract(params: { contractId: string; approvedById: string }) {
+export async function approveContract(params: { contractId: string; approvedById: string; allowOwnSale?: boolean }) {
   // The phone's enrolment may have lapsed while the deal waited for approval.
-  const pending = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId }, select: { contractType: true, productId: true, inventoryItemId: true } });
+  const pending = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId }, select: { contractType: true, productId: true, inventoryItemId: true, createdById: true } });
+  // A second pair of eyes is the point of approval: nobody approves their own
+  // sale (a Super Admin may, the one person with nobody above them).
+  if (pending.createdById === params.approvedById && !params.allowOwnSale) {
+    throw new ContractError('You cannot approve a sale you made yourself. Another approver must review it.');
+  }
   if (pending.contractType === 'DEVICE_FINANCING' && pending.inventoryItemId && pending.productId) {
     const saleProblem = await payTriggerSaleProblem(pending.contractType, { id: pending.inventoryItemId, productId: pending.productId });
     if (saleProblem) throw new ContractError(saleProblem);
@@ -642,6 +657,8 @@ export interface ResubmitContractUpdates {
  * preserve.
  */
 export async function resubmitContract(params: { contractId: string; updates: ResubmitContractUpdates }) {
+  const submitter = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId }, select: { createdById: true } });
+  await assertSaleAllowed(submitter.createdById);
   const resubmitted = await prisma.$transaction(async (tx) => {
     const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
     if (contract.status !== 'REVISION_REQUESTED') {

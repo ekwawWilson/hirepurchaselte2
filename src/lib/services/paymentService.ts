@@ -50,22 +50,30 @@ async function recomputeContract(tx: Tx, contractId: string) {
   // adding to it. Reversing a withdrawal (the existing reversal mechanism,
   // unchanged) simply drops it from effectivePayments, restoring the amount —
   // no separate "undo a withdrawal" logic needed.
-  const totalPaidMinor = effectivePayments.reduce(
-    (sum, p) => sum + (isMoneyOut(p.entryType) ? -p.amountMinor : p.amountMinor),
-    0,
-  );
-
   const paidByInstalment = new Map<string, number>();
   const paidPenaltyIds = new Set<string>();
+  let paidToChargesMinor = 0;
   for (const p of effectivePayments) {
     for (const a of p.allocations) {
       if (a.targetType === 'INSTALMENT' && a.instalmentId) {
         paidByInstalment.set(a.instalmentId, (paidByInstalment.get(a.instalmentId) ?? 0) + a.amountMinor);
       } else if (a.targetType === 'PENALTY' && a.penaltyId) {
         paidPenaltyIds.add(a.penaltyId);
+        paidToChargesMinor += a.amountMinor;
       }
     }
   }
+
+  // On a contract with a price, totalPaidMinor is what has been paid towards
+  // that price: money that went to late charges paid the charges, not the
+  // phone, so it never reduces the balance (or the contract would complete
+  // with instalments unpaid and the charges in effect forgiven). A loan's
+  // interest is the loan's own business (getDeviceLoanState), so a contract
+  // without a price counts everything.
+  const totalPaidMinor = effectivePayments.reduce(
+    (sum, p) => sum + (isMoneyOut(p.entryType) ? -p.amountMinor : p.amountMinor),
+    0,
+  ) - (contract.totalPayableMinor !== null ? paidToChargesMinor : 0);
 
   const now = new Date();
   const instalments = await tx.instalment.findMany({ where: { contractId }, orderBy: { instalmentNo: 'asc' } });
@@ -203,8 +211,10 @@ async function advanceContractStatus(tx: Tx, contractId: string): Promise<Advanc
   // SAVE_TO_OWN never auto-completes — there's no savings target to reach
   // (balanceMinor is always null for it, see recomputeContract), so it just
   // stays ACTIVE until the customer withdraws or the balance is put toward a
-  // purchase, both handled entirely outside this status machine.
-  if (effectiveStatus === 'ACTIVE' && contract.contractType !== 'SAVE_TO_OWN' && contract.balanceMinor !== null && contract.balanceMinor <= 0) {
+  // purchase, both handled entirely outside this status machine. Unpaid late
+  // charges keep a contract open: completing it releases the phone.
+  if (effectiveStatus === 'ACTIVE' && contract.contractType !== 'SAVE_TO_OWN' && contract.balanceMinor !== null && contract.balanceMinor <= 0
+    && (await tx.penalty.count({ where: { contractId, isPaid: false } })) === 0) {
     await tx.contract.update({ where: { id: contractId }, data: { status: 'COMPLETED', completedAt: now } });
   }
   return { queuedSmsIds };
@@ -237,8 +247,32 @@ export interface PostPaymentParams {
   collectedByAgentId?: string;
 }
 
+/**
+ * Applies a payment: overdue instalments first (oldest first), then late
+ * charges, then instalments not yet due. Arrears come before charges because
+ * a Device Financing phone's lock follows its overdue instalments: a customer
+ * who pays exactly the arrears they were quoted must be unlocked, which
+ * paying a charge first would prevent. Charges are paid whole or not at all.
+ */
 async function allocatePayment(tx: Tx, paymentId: string, contractId: string, amountMinor: number) {
   let remaining = amountMinor;
+  const now = new Date();
+
+  const instalments = await tx.instalment.findMany({ where: { contractId }, orderBy: { instalmentNo: 'asc' } });
+  const payInstalments = async (which: typeof instalments) => {
+    for (const inst of which) {
+      if (remaining <= 0) break;
+      const outstanding = inst.amountDueMinor - inst.amountPaidMinor;
+      if (outstanding <= 0) continue;
+      const toApply = Math.min(remaining, outstanding);
+      await tx.paymentAllocation.create({
+        data: { paymentId, targetType: 'INSTALMENT', instalmentId: inst.id, amountMinor: toApply },
+      });
+      remaining -= toApply;
+    }
+  };
+
+  await payInstalments(instalments.filter((i) => i.dueDate < now));
 
   const penalties = await tx.penalty.findMany({ where: { contractId, isPaid: false }, orderBy: { appliedDate: 'asc' } });
   for (const penalty of penalties) {
@@ -250,17 +284,7 @@ async function allocatePayment(tx: Tx, paymentId: string, contractId: string, am
     remaining -= penalty.amountMinor;
   }
 
-  const instalments = await tx.instalment.findMany({ where: { contractId }, orderBy: { instalmentNo: 'asc' } });
-  for (const inst of instalments) {
-    if (remaining <= 0) break;
-    const outstanding = inst.amountDueMinor - inst.amountPaidMinor;
-    if (outstanding <= 0) continue;
-    const toApply = Math.min(remaining, outstanding);
-    await tx.paymentAllocation.create({
-      data: { paymentId, targetType: 'INSTALMENT', instalmentId: inst.id, amountMinor: toApply },
-    });
-    remaining -= toApply;
-  }
+  await payInstalments(instalments.filter((i) => i.dueDate >= now));
   // Anything still `remaining` here is deliberately left unallocated: it's overpayment/credit.
   // It still counts toward totalPaidMinor (the raw payment amount is never split), and is
   // surfaced as creditMinor = max(0, totalPaidMinor - totalPayableMinor) wherever needed —

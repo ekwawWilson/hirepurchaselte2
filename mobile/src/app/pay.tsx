@@ -198,7 +198,7 @@ export default function Pay() {
 
         <View style={styles.note}>
           <Ionicons name="information-circle-outline" size={18} color={colors.primary} />
-          <Text style={styles.noteText}>You will get a prompt on your phone. Enter your Mobile Money PIN to approve. Payments clear late charges and overdue instalments first.</Text>
+          <Text style={styles.noteText}>You will get a prompt on your phone. Enter your Mobile Money PIN to approve. Payments clear overdue instalments first, then late charges.</Text>
         </View>
         {error ? <Text style={styles.problem}>{error}</Text> : null}
       </ScrollView>

@@ -52,7 +52,7 @@ test('quick amounts never go above what is owed, and say "late charges" when tha
 test('a sale awaiting its deposit offers the deposit first', () => {
   const pending = contract({ status: 'PENDING_DEPOSIT', totalPaidMinor: 2000, due: { overdueMinor: 0, overdueCount: 0, penaltyOutstandingMinor: 0, totalDueMinor: 58000 } });
   assert.deepEqual(quickAmounts(pending)[0], { label: 'Deposit', amountMinor: 10000 });
-  assert.equal(coverageText(pending, schedule, 14000), 'Covers your deposit, 1 instalment (to 22 Oct)');
+  assert.equal(coverageText(pending, schedule, 14000, new Date('2026-10-20T00:00:00Z')), 'Covers your deposit, 1 instalment (to 22 Oct)');
 });
 
 test('a device loan takes exactly the interest or the full loan, nothing else', () => {
@@ -77,12 +77,14 @@ test('more than is owed is refused before the server is asked', () => {
   assert.equal(amountProblem(contract(), 36500, MIN, MAX_SAVINGS), null);
 });
 
-test('coverage follows the server: late charges first, then instalments oldest first', () => {
-  assert.equal(coverageText(contract(), schedule, 8500), 'Covers late charges, 2 instalments (to 29 Oct)');
-  assert.equal(coverageText(contract(), schedule, 10500), 'Covers late charges, 2 instalments (to 29 Oct), part of the next');
-  assert.equal(coverageText(contract(), schedule, 2500), 'Covers late charges, part of your next instalment');
-  // Late charges are paid whole or not at all: less than them is never promised to cover them.
-  assert.equal(coverageText(contract(), schedule, 300), 'Goes to your late charges first');
+test('coverage follows the server: overdue instalments first, then late charges, then upcoming instalments', () => {
+  const today = new Date('2026-10-30T00:00:00Z'); // instalments 2 and 3 (22 and 29 Oct) are overdue
+  assert.equal(coverageText(contract(), schedule, 8000, today), 'Covers 2 overdue instalments (to 29 Oct)');
+  assert.equal(coverageText(contract(), schedule, 8500, today), 'Covers 2 overdue instalments (to 29 Oct), late charges');
+  assert.equal(coverageText(contract(), schedule, 10500, today), 'Covers 2 overdue instalments (to 29 Oct), late charges, part of your next instalment');
+  assert.equal(coverageText(contract(), schedule, 2500, today), 'Covers part of your next overdue instalment');
+  // A late charge is paid whole or not at all: what is too small for it goes on to the upcoming instalments.
+  assert.equal(coverageText(contract(), schedule, 8300, today), 'Covers 2 overdue instalments (to 29 Oct), part of your next instalment');
 });
 
 test('a closed contract or one with nothing owed is not payable', () => {

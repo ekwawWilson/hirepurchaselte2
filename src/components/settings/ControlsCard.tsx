@@ -11,9 +11,13 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 interface Controls {
   requireSecondApproval: boolean; ownerPhone: string | null;
   dailySummaryEnabled: boolean; directDebitNoticeEnabled: boolean; partialDirectDebitEnabled: boolean;
+  blockSalesWhileDepositsUnremitted: boolean;
+  parBlockEnabled: boolean; parBlockThresholdPercent: number; parBlockMinContracts: number;
 }
 
-const SWITCHES: { key: Exclude<keyof Controls, 'ownerPhone'>; label: string; detail: string }[] = [
+type Switch = Exclude<keyof Controls, 'ownerPhone' | 'parBlockThresholdPercent' | 'parBlockMinContracts'>;
+
+const SWITCHES: { key: Switch; label: string; detail: string }[] = [
   {
     key: 'requireSecondApproval', label: 'A second person for reversals, write-offs and cancellations',
     detail: 'Reversing a payment, writing off a contract, or cancelling one that money has been paid on only happens once a different person approves it. Turn off only if one person runs the business alone.',
@@ -25,6 +29,14 @@ const SWITCHES: { key: Exclude<keyof Controls, 'ownerPhone'>; label: string; det
   {
     key: 'partialDirectDebitEnabled', label: 'Take part of an instalment when the whole of it fails',
     detail: 'After a direct debit is refused, the retry asks for half of it rather than the same amount again. What is left is collected later.',
+  },
+  {
+    key: 'blockSalesWhileDepositsUnremitted', label: 'Agents remit deposit cash before their next sale',
+    detail: 'An agent holding deposit cash they have not yet remitted cannot make another sale until the remittance is confirmed.',
+  },
+  {
+    key: 'parBlockEnabled', label: 'Stop sales by agents whose customers are badly behind',
+    detail: 'An agent whose portfolio at risk (the share of their book more than 30 days behind) is over the limit below cannot make another sale. It lifts by itself once they collect.',
   },
   {
     key: 'dailySummaryEnabled', label: "Text the owner a summary every evening",
@@ -79,6 +91,21 @@ export function ControlsCard() {
                 </span>
               </label>
             ))}
+            {controls.parBlockEnabled && (
+              <div className="grid grid-cols-2 gap-3 max-w-md pl-7">
+                <div>
+                  <Label htmlFor="par-limit">PAR limit (%)</Label>
+                  <Input id="par-limit" type="number" min={1} max={100} className="mt-1.5" value={controls.parBlockThresholdPercent}
+                    onChange={(e) => setControls({ ...controls, parBlockThresholdPercent: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <Label htmlFor="par-min">Only from this many contracts</Label>
+                  <Input id="par-min" type="number" min={0} className="mt-1.5" value={controls.parBlockMinContracts}
+                    onChange={(e) => setControls({ ...controls, parBlockMinContracts: Number(e.target.value) })} />
+                  <p className="text-xs text-gray-400 mt-1">So one bad sale cannot stop a new agent.</p>
+                </div>
+              </div>
+            )}
             <div className="max-w-xs">
               <Label htmlFor="owner-phone">Owner&apos;s mobile number</Label>
               <Input

@@ -36,6 +36,8 @@ globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
 // actions themselves see them happen at once; tests/security-controls.test.ts
 // turns it on to test the control.
 beforeAll(async () => {
-  const { setSecondApproval } = await import('./helpers');
+  const { setSecondApproval, setSaleRules } = await import('./helpers');
   await setSecondApproval(false);
+  // Likewise the sales rules (an agent's unremitted cash, PAR): tests/sales-operations.test.ts turns them on.
+  await setSaleRules({ blockSalesWhileDepositsUnremitted: false, parBlockEnabled: false });
 });
