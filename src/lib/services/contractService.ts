@@ -451,7 +451,47 @@ export function cancelProblem(contract: { contractType: string; status: string }
   return null;
 }
 
-export async function cancelContract(params: { contractId: string; reason: string; userId: string }) {
+/**
+ * A phone sale's unit that is with the customer (ISSUED) is taken back into
+ * stock as RETURNED, to be checked before it is sold again (a stock
+ * adjustment puts it back on sale), and back in the shop, not with the agent.
+ */
+async function takeBackUnit(tx: Prisma.TransactionClient, item: { id: string; assignedAgentId: string | null }, contract: { id: string; contractNumber: string }, userId: string, why: string) {
+  await applyStockMovement({
+    inventoryItemId: item.id, type: 'ADJUSTMENT', toStatus: 'RETURNED', referenceType: 'CONTRACT', referenceId: contract.id,
+    reason: `Taken back from the customer: contract ${contract.contractNumber} ${why}`, createdById: userId, tx,
+  });
+  if (item.assignedAgentId) {
+    await tx.inventoryItem.update({ where: { id: item.id }, data: { assignedAgentId: null } });
+    await tx.inventoryAssignment.create({ data: { inventoryItemId: item.id, fromAgentId: item.assignedAgentId, toAgentId: null, assignedById: userId, reason: `Taken back from the customer (${contract.contractNumber})` } });
+  }
+}
+
+/**
+ * Whether the phone-handling the person asked for fits this contract, before
+ * anything is done (and before a second approval is filed for it):
+ *  - a cancel of a sale whose phone is with the customer needs the phone
+ *    back: otherwise everything paid is listed as owed to a customer who
+ *    still has the phone. Write the sale off instead.
+ *  - a write-off of a phone sale must say whether the phone was taken back.
+ */
+export async function closingProblem(action: 'cancel' | 'writeoff', contract: { contractType: string; status: string; inventoryItemId: string | null }, phoneReturned: boolean | undefined): Promise<string | null> {
+  const problem = action === 'cancel' ? cancelProblem(contract) : writeOffProblem(contract);
+  if (problem) return problem;
+  if (!isInstalmentSale(contract.contractType) || !contract.inventoryItemId) return null;
+  const item = await prisma.inventoryItem.findUnique({ where: { id: contract.inventoryItemId }, select: { status: true } });
+  if (item?.status !== 'ISSUED') return null;
+  if (action === 'cancel' && phoneReturned !== true) {
+    return 'The phone is with the customer. Cancel only once they have handed it back (tick "The customer has handed the phone back"), or write the sale off if they keep it.';
+  }
+  if (action === 'writeoff' && typeof phoneReturned !== 'boolean') return 'Say whether the phone was taken back from the customer';
+  return null;
+}
+
+export async function cancelContract(params: { contractId: string; reason: string; userId: string; phoneReturned?: boolean }) {
+  const pre = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+  const closing = await closingProblem('cancel', pre, params.phoneReturned);
+  if (closing) throw new ContractError(closing);
   const cancelled = await prisma.$transaction(async (tx) => {
     const contract = await tx.contract.findUniqueOrThrow({ where: { id: params.contractId } });
     const problem = cancelProblem(contract);
@@ -488,6 +528,9 @@ export async function cancelContract(params: { contractId: string; reason: strin
           createdById: params.userId,
           tx,
         });
+      } else if (item.status === 'ISSUED' && params.phoneReturned) {
+        // Handed back (closingProblem refused this otherwise): what was paid is owed back, as below.
+        await takeBackUnit(tx, item, contract, params.userId, `cancelled: ${params.reason}`);
       }
     }
 
@@ -516,6 +559,11 @@ export function writeOffProblem(contract: { contractType: string; status: string
   if (!CONTRACT_STATUSES_BY_TYPE[contract.contractType as ContractTypeName].includes('WRITTEN_OFF')) {
     return `${contract.contractType} contracts cannot be written off`;
   }
+  // A phone sale is written off once the customer has it and stops paying;
+  // before that (awaiting approval or the deposit) it is cancelled instead.
+  if (isInstalmentSale(contract.contractType) && !['ACTIVE', 'DEFAULTED'].includes(contract.status)) {
+    return `Only an active or defaulted sale can be written off (this one is ${contract.status}): cancel it instead`;
+  }
   // Also DEVICE_LOAN's only way to reject an agent-submitted contract outright
   // (it has no CANCELLED state at all — docs/01-plan.md §5/CONTRACT_STATUSES_BY_TYPE).
   if (![...PRE_APPROVAL_STATUSES, 'ACTIVE', 'DEFAULTED'].includes(contract.status)) {
@@ -524,13 +572,24 @@ export function writeOffProblem(contract: { contractType: string; status: string
   return null;
 }
 
-export async function writeOffContract(params: { contractId: string; reason: string; userId: string }) {
+/**
+ * Gives up what is still owed. Nothing is refunded. For a phone sale, says
+ * whether the phone was taken back (it returns to stock as RETURNED) or the
+ * customer kept it (it stays ISSUED, and a PayTrigger phone stays locked).
+ */
+export async function writeOffContract(params: { contractId: string; reason: string; userId: string; phoneReturned?: boolean }) {
   const contract = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId } });
-  const problem = writeOffProblem(contract);
+  const problem = await closingProblem('writeoff', contract, params.phoneReturned);
   if (problem) throw new ContractError(problem);
-  const writtenOff = await prisma.contract.update({
-    where: { id: contract.id },
-    data: { status: 'WRITTEN_OFF', writtenOffAt: new Date(), writeOffReason: params.reason, updatedById: params.userId },
+  const writtenOff = await prisma.$transaction(async (tx) => {
+    if (params.phoneReturned && contract.inventoryItemId) {
+      const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: contract.inventoryItemId } });
+      if (item.status === 'ISSUED') await takeBackUnit(tx, item, contract, params.userId, `written off: ${params.reason}`);
+    }
+    return tx.contract.update({
+      where: { id: contract.id },
+      data: { status: 'WRITTEN_OFF', writtenOffAt: new Date(), writeOffReason: params.reason, updatedById: params.userId },
+    });
   });
   notifyPayTrigger(writtenOff.id, 'CONTRACT_CHANGED', writtenOff.contractType);
   return writtenOff;

@@ -119,7 +119,7 @@ describe('Agents: ledger, commission and controls', () => {
       const { user } = await makeAgent();
       const contract = await agentContract(user.id);
       await agentCash(contract.id, user.id, 12000);
-      await cancelContract({ contractId: contract.id, reason: 'Returned later', userId: managerId });
+      await cancelContract({ contractId: contract.id, reason: 'Returned later', userId: managerId, phoneReturned: true });
       expect(await ledgerOf(contract.id)).toMatchObject({ depositAmountMinor: 12000, commissionAmountMinor: 500, amountOwedMinor: 11500 });
     });
   });

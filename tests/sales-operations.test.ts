@@ -4,7 +4,7 @@
  * sale, and what stops an agent's next sale.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { enableOptionalContractTypes, freshPhone, setSaleRules } from './helpers';
+import { enableOptionalContractTypes, freshPhone, setSaleRules, setSecondApproval, makeParams } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 import { createContract, approveContract } from '@/lib/services/contractService';
 import { postPayment, amountOwedNow, reversePayment } from '@/lib/services/paymentService';
@@ -19,7 +19,9 @@ import { evaluateSaleChecks } from '@/lib/services/saleChecksService';
 import { getAgentPortfolioRisk } from '@/lib/services/portfolioRiskService';
 import { getCommissionSettings, updateCommissionSettings } from '@/lib/services/commissionSettingsService';
 import { listCompletionCommissions, markCompletionCommissionPaid, undoCompletionCommissionPaid, agentCompletionSummary } from '@/lib/services/completionCommissionService';
-import { cancelContract } from '@/lib/services/contractService';
+import { cancelContract, writeOffContract } from '@/lib/services/contractService';
+import { decideApproval } from '@/lib/services/approvalService';
+import { POST as writeOffPOST } from '@/app/api/contracts/[id]/writeoff/route';
 
 const runId = Date.now().toString().slice(-7) + Math.floor(Math.random() * 100);
 let counter = 0;
@@ -367,6 +369,72 @@ describe('Sales operations', () => {
       const extra = await prisma.payment.create({ data: { contractId: c.id, entryType: 'INSTALMENT_PAYMENT', amountMinor: 100, channel: 'CASH', transactionRef: `SO-X-${runId}-${++counter}`, status: 'SUCCESS', createdById: adminId, receivedAt: new Date() } });
       await reversePayment({ paymentId: extra.id, reason: 'Entered twice', reversedById: adminId });
       expect((await fresh(c.id)).status).toBe('COMPLETED');
+    });
+  });
+
+  describe('closing a sale the customer has the phone for', () => {
+    async function activeSale(createdById?: string) {
+      const c = await sale({ createdById, requiresApproval: !!createdById });
+      if (createdById) await approveContract({ contractId: c.id, approvedById: adminId });
+      await pay(c.id, 12000); // the deposit: the phone goes out
+      return c;
+    }
+    const unitOf = async (contractId: string) =>
+      prisma.inventoryItem.findUniqueOrThrow({ where: { id: (await fresh(contractId)).inventoryItemId! } });
+
+    it('writes off a defaulted sale the customer kept: nothing refunded, the phone stays out', async () => {
+      const c = await activeSale();
+      await prisma.contract.update({ where: { id: c.id }, data: { status: 'DEFAULTED' } });
+      await expect(writeOffContract({ contractId: c.id, reason: 'Stopped paying', userId: adminId })).rejects.toThrow(/Say whether the phone was taken back/);
+
+      await writeOffContract({ contractId: c.id, reason: 'Stopped paying', userId: adminId, phoneReturned: false });
+      const closed = await fresh(c.id);
+      expect(closed.status).toBe('WRITTEN_OFF');
+      expect(closed.refundDueMinor).toBeNull();
+      expect((await unitOf(c.id)).status).toBe('ISSUED');
+    });
+
+    it('takes a written-off phone back into stock, and back from the agent who sold it', async () => {
+      const agent = await newAgent();
+      const c = await activeSale(agent.id);
+      await writeOffContract({ contractId: c.id, reason: 'Repossessed', userId: adminId, phoneReturned: true });
+      const unit = await unitOf(c.id);
+      expect(unit).toMatchObject({ status: 'RETURNED', assignedAgentId: null });
+      expect(await prisma.inventoryAssignment.count({ where: { inventoryItemId: unit.id, fromAgentId: agent.id, toAgentId: null } })).toBe(1);
+    });
+
+    it('a sale still awaiting its deposit is cancelled, not written off', async () => {
+      const c = await sale();
+      await expect(writeOffContract({ contractId: c.id, reason: 'x', userId: adminId, phoneReturned: false })).rejects.toThrow(/cancel it instead/);
+    });
+
+    it('cancels a sale whose phone is out only once the phone is handed back', async () => {
+      const c = await activeSale();
+      await expect(cancelContract({ contractId: c.id, reason: 'Changed mind', userId: adminId })).rejects.toThrow(/The phone is with the customer/);
+      expect((await fresh(c.id)).status).toBe('ACTIVE');
+
+      await cancelContract({ contractId: c.id, reason: 'Changed mind', userId: adminId, phoneReturned: true });
+      expect(await fresh(c.id)).toMatchObject({ status: 'CANCELLED', refundDueMinor: 12000 });
+      expect((await unitOf(c.id)).status).toBe('RETURNED');
+    });
+
+    it('carries "taken back" through a second approval', async () => {
+      const c = await activeSale();
+      await setSecondApproval(true);
+      try {
+        const token = (await (await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email: 'branchmanager@example.test', password: 'Passw0rd!123' } }))).json()).token;
+        const res = await writeOffPOST(makeRequest('POST', `/api/contracts/${c.id}/writeoff`, { token, body: { reason: 'Repossessed', phoneReturned: true } }), makeParams({ id: c.id }));
+        expect(res.status).toBe(202);
+        const approval = await prisma.approvalRequest.findFirstOrThrow({ where: { contractId: c.id, status: 'PENDING' } });
+        expect(approval.phoneReturned).toBe(true);
+        // A different person approves: the Super Admin needs no permission list.
+        const superAdminId = (await prisma.user.findFirstOrThrow({ where: { email: 'superadmin@example.test' } })).id;
+        await decideApproval({ id: approval.id, decision: 'APPROVE', user: { id: superAdminId, roleName: 'SUPER_ADMIN', branchId: null, permissions: [] } as never });
+      } finally {
+        await setSecondApproval(false);
+      }
+      expect((await fresh(c.id)).status).toBe('WRITTEN_OFF');
+      expect((await unitOf(c.id)).status).toBe('RETURNED');
     });
   });
 });

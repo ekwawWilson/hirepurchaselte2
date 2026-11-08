@@ -95,7 +95,7 @@ describe('Contract-type-specific business rules', () => {
     expect(payments.every((p) => p.reversesPaymentId === null || p.reversalReason === 'customer withdrew')).toBe(true);
   });
 
-  it('cancelling a DEPOSIT_INSTALMENT contract that already issued the device does NOT auto-reverse payments — the customer keeps the device, so the refund figure needs a human, not an automatic full unwind', async () => {
+  it('cancelling a DEPOSIT_INSTALMENT contract that already issued the device needs the device back, and does NOT auto-reverse payments — the refund figure needs a human, not an automatic full unwind', async () => {
     const productId = await makeProduct('DEP-ISSUED-CANCEL');
     const { customerId, inventoryItemId } = await makeCustomerAndItem(productId, 'ISSUED');
     const contract = await createContract({
@@ -108,8 +108,11 @@ describe('Contract-type-specific business rules', () => {
     const item = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: inventoryItemId } });
     expect(item.status).toBe('ISSUED');
 
-    const cancelled = await cancelContract({ contractId: contract.id, reason: 'customer stopped paying', userId: adminUserId });
+    // The customer still has the device: not cancelled until it is handed back (write it off if they keep it).
+    await expect(cancelContract({ contractId: contract.id, reason: 'customer changed their mind', userId: adminUserId })).rejects.toThrow(/The phone is with the customer/);
+    const cancelled = await cancelContract({ contractId: contract.id, reason: 'customer changed their mind', userId: adminUserId, phoneReturned: true });
     expect(cancelled.status).toBe('CANCELLED');
+    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: inventoryItemId } })).status).toBe('RETURNED');
     expect(cancelled.refundDueMinor).toBe(50000); // reported, for a human to decide — not auto-refunded
 
     const after = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });

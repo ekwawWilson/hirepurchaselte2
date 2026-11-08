@@ -37,7 +37,7 @@ export async function secondApprovalRequired(): Promise<boolean> {
 }
 
 export async function requestApproval(params: {
-  kind: ApprovalKind; targetId: string; contractId: string; branchId: string; reason: string; requestedById: string;
+  kind: ApprovalKind; targetId: string; contractId: string; branchId: string; reason: string; requestedById: string; phoneReturned?: boolean;
 }) {
   const waiting = await prisma.approvalRequest.findFirst({ where: { kind: params.kind, targetId: params.targetId, status: 'PENDING' } });
   if (waiting) throw new ApprovalError('This is already waiting for a second person to approve it', 409);
@@ -138,7 +138,7 @@ export async function decideApproval(params: { id: string; decision: 'APPROVE' |
 }
 
 /** The action itself, recorded against the person who asked for it and the one who approved. */
-async function carryOut(request: { id: string; kind: string; targetId: string; reason: string; requestedById: string }, approvedById: string) {
+async function carryOut(request: { id: string; kind: string; targetId: string; reason: string; requestedById: string; phoneReturned: boolean | null }, approvedById: string) {
   if (request.kind === 'PAYMENT_REVERSAL') {
     const payment = await prisma.payment.findUniqueOrThrow({ where: { id: request.targetId } });
     await reversePayment({ paymentId: request.targetId, reason: request.reason, reversedById: request.requestedById });
@@ -149,11 +149,11 @@ async function carryOut(request: { id: string; kind: string; targetId: string; r
     return;
   }
   const contract = await prisma.contract.findUniqueOrThrow({ where: { id: request.targetId } });
-  const action = { contractId: request.targetId, reason: request.reason, userId: request.requestedById };
+  const action = { contractId: request.targetId, reason: request.reason, userId: request.requestedById, phoneReturned: request.phoneReturned ?? undefined };
   if (request.kind === 'CONTRACT_CANCEL') await cancelContract(action);
   else await writeOffContract(action);
   await logAudit({
     userId: request.requestedById, action: request.kind, entityType: 'Contract', entityId: request.targetId,
-    oldValues: contract, newValues: { reason: request.reason, approvedById, approvalRequestId: request.id },
+    oldValues: contract, newValues: { reason: request.reason, phoneReturned: request.phoneReturned, approvedById, approvalRequestId: request.id },
   });
 }

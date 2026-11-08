@@ -45,7 +45,7 @@ interface ContractDetail {
   deviceLoanState: DeviceLoanState | null;
   customer: { firstName: string; lastName: string; phone: string | null; phone2: string | null; phone3: string | null };
   product: { name: string } | null;
-  inventoryItem: { serialNumber: string; name: string | null; description: string | null } | null;
+  inventoryItem: { serialNumber: string; name: string | null; description: string | null; status: string } | null;
   instalments: Instalment[];
   payments: Payment[];
   // Reversals, write-offs or a cancellation asked for and not yet approved by a second person.
@@ -103,6 +103,8 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [reverseReason, setReverseReason] = useState('');
   const [confirmAction, setConfirmAction] = useState<'cancel' | 'writeoff' | 'release' | null>(null);
   const [actionReason, setActionReason] = useState('');
+  // A phone sale's cancel or write-off: was the phone taken back? Unanswered until chosen.
+  const [phoneReturned, setPhoneReturned] = useState<boolean | null>(null);
 
   const [ddMsisdn, setDdMsisdn] = useState('');
   const [ddNetwork, setDdNetwork] = useState('MTN');
@@ -327,10 +329,14 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       toast({ title: 'A reason is required', variant: 'destructive' });
       return;
     }
+    if (askPhoneBack && phoneReturned === null) {
+      toast({ title: 'Say whether the phone was taken back', variant: 'destructive' });
+      return;
+    }
     try {
       const res = await api.post<{ pendingApproval?: boolean; contract?: ContractDetail & { refundDueMinor?: number } }>(
         `/contracts/${id}/${confirmAction}`,
-        confirmAction === 'release' ? undefined : { reason: actionReason },
+        confirmAction === 'release' ? undefined : { reason: actionReason, ...(askPhoneBack && { phoneReturned }) },
       );
       if (res.pendingApproval) {
         toast({ title: 'Sent for approval', description: `A second person must approve this ${confirmAction === 'writeoff' ? 'write-off' : 'cancellation'} before it happens.` });
@@ -343,6 +349,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       }
       setConfirmAction(null);
       setActionReason('');
+      setPhoneReturned(null);
       await load();
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : `Failed to ${confirmAction} contract`, variant: 'destructive' });
@@ -508,6 +515,9 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const canReverse = hasPermission('payment.reverse');
   const canCancel = hasPermission('contract.cancel');
   const canWriteOff = hasPermission('contract.writeoff');
+  // The phone is with the customer: closing the sale has to say whether it came back (contractService.closingProblem).
+  const phoneWithCustomer = isInstalmentSale(contract.contractType) && contract.inventoryItem?.status === 'ISSUED';
+  const askPhoneBack = phoneWithCustomer && (confirmAction === 'cancel' || confirmAction === 'writeoff');
   const canRelease = hasPermission('inventory.issue');
   const canApprove = hasPermission('contract.approve');
   const canRecordRefund = hasPermission('payment.reverse', 'contract.cancel');
@@ -1113,10 +1123,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               <Button onClick={() => setConfirmAction('release')}>Release device</Button>
             )}
             {canCancel && contract.contractType !== 'DEVICE_LOAN' && (
-              <Button variant="outline" onClick={() => setConfirmAction('cancel')}>Cancel contract</Button>
+              <Button variant="outline" onClick={() => { setPhoneReturned(null); setConfirmAction('cancel'); }}>Cancel contract</Button>
             )}
-            {canWriteOff && contract.contractType === 'DEVICE_LOAN' && (
-              <Button variant="destructive" onClick={() => setConfirmAction('writeoff')}>Write off</Button>
+            {canWriteOff && (contract.contractType === 'DEVICE_LOAN' || (isInstalmentSale(contract.contractType) && ['ACTIVE', 'DEFAULTED'].includes(contract.status))) && (
+              <Button variant="destructive" onClick={() => { setPhoneReturned(null); setConfirmAction('writeoff'); }}>Write off</Button>
             )}
           </CardContent>
         </Card>
@@ -1196,9 +1206,32 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               <Input className="mt-1.5" value={actionReason} onChange={(e) => setActionReason(e.target.value)} />
             </div>
           )}
+          {askPhoneBack && confirmAction === 'writeoff' && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-gray-900">Was the phone taken back from the customer?</p>
+              <label className="flex items-start gap-2 text-sm text-gray-700">
+                <input type="radio" name="phone-back" className="mt-1" checked={phoneReturned === true} onChange={() => setPhoneReturned(true)} />
+                <span>Yes: it goes back into stock as Returned, to be checked before it is sold again.</span>
+              </label>
+              <label className="flex items-start gap-2 text-sm text-gray-700">
+                <input type="radio" name="phone-back" className="mt-1" checked={phoneReturned === false} onChange={() => setPhoneReturned(false)} />
+                <span>No: the customer kept it.{contract.contractType === 'DEVICE_FINANCING' && ' It stays locked by PayTrigger.'}</span>
+              </label>
+              <p className="text-xs text-gray-500">The {formatCurrency(contract.balanceMinor ?? 0)} still owed is given up. Nothing is refunded.</p>
+            </div>
+          )}
+          {askPhoneBack && confirmAction === 'cancel' && (
+            <div className="space-y-2">
+              <label className="flex items-start gap-2 text-sm text-gray-700">
+                <input type="checkbox" className="mt-1" checked={phoneReturned === true} onChange={(e) => setPhoneReturned(e.target.checked ? true : null)} />
+                <span>The customer has handed the phone back. It goes back into stock as Returned, and the {formatCurrency(contract.totalPaidMinor)} they paid is listed as owed back to them.</span>
+              </label>
+              <p className="text-xs text-gray-500">If the customer is keeping the phone, write the sale off instead.</p>
+            </div>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setActionReason('')}>Back</AlertDialogCancel>
-            <AlertDialogAction onClick={runConfirmedAction}>Confirm</AlertDialogAction>
+            <AlertDialogCancel onClick={() => { setActionReason(''); setPhoneReturned(null); }}>Back</AlertDialogCancel>
+            <AlertDialogAction onClick={runConfirmedAction} disabled={askPhoneBack && phoneReturned === null}>Confirm</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -19,6 +19,7 @@ interface Approval {
   id: string;
   kind: 'PAYMENT_REVERSAL' | 'CONTRACT_WRITEOFF' | 'CONTRACT_CANCEL';
   reason: string;
+  phoneReturned: boolean | null;
   status: string;
   decisionNote: string | null;
   createdAt: string;
@@ -131,6 +132,11 @@ export default function ApprovalsPage() {
                     </p>
                   )}
                   <p className="text-sm text-gray-700 mt-1.5">&ldquo;{a.reason}&rdquo;</p>
+                  {a.phoneReturned !== null && (
+                    <p className="text-xs font-medium text-gray-600 mt-1">
+                      {a.phoneReturned ? 'The phone was taken back: it goes back into stock as Returned.' : 'The customer kept the phone.'}
+                    </p>
+                  )}
                   <p className="text-xs text-gray-500 mt-1">
                     Asked for by {a.mine ? 'you' : `${a.requestedBy.firstName} ${a.requestedBy.lastName}`} on {formatDateTime(a.createdAt)}
                     {a.decidedBy && a.decidedAt && <> &middot; {a.status === 'APPROVED' ? 'approved' : 'rejected'} by {a.decidedBy.firstName} {a.decidedBy.lastName} on {formatDateTime(a.decidedAt)}</>}

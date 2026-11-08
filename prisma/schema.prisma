@@ -1057,6 +1057,8 @@ model ApprovalRequest {
   contractId    String
   branchId      String
   reason        String
+  // A phone sale's cancel or write-off: whether the phone was taken back (contractService.closingProblem).
+  phoneReturned Boolean?
   status        String    @default("PENDING")
   requestedById String
   decidedById   String?

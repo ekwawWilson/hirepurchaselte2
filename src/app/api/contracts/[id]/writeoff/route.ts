@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
-import { writeOffContract, writeOffProblem, ContractError } from '@/lib/services/contractService';
+import { writeOffContract, closingProblem, ContractError } from '@/lib/services/contractService';
 import { requestApproval, secondApprovalRequired, ApprovalError } from '@/lib/services/approvalService';
 import { PRE_APPROVAL_STATUSES } from '@/lib/constants/contracts';
 import { logAudit } from '@/lib/services/auditService';
@@ -17,8 +17,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!perm.authorized) return perm.error;
 
   const { id } = await params;
-  const { reason } = (await req.json()) as { reason?: string };
+  const { reason, phoneReturned } = (await req.json()) as { reason?: string; phoneReturned?: unknown };
   if (!reason?.trim()) return NextResponse.json({ error: 'reason is required' }, { status: 400 });
+  // A phone sale: whether the customer handed the phone back (contractService.closingProblem).
+  if (phoneReturned !== undefined && typeof phoneReturned !== 'boolean') return NextResponse.json({ error: 'phoneReturned must be true or false' }, { status: 400 });
 
   const existing = await prisma.contract.findUnique({ where: { id } });
   if (!existing) return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
@@ -30,18 +32,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // control is there for, and one approver's decision is enough.
     const givesUpDebt = !PRE_APPROVAL_STATUSES.includes(existing.status);
     if (givesUpDebt && await secondApprovalRequired()) {
-      const problem = writeOffProblem(existing);
+      const problem = await closingProblem('writeoff', existing, phoneReturned);
       if (problem) return NextResponse.json({ error: problem }, { status: 400 });
       const approval = await requestApproval({
         kind: 'CONTRACT_WRITEOFF', targetId: id, contractId: id, branchId: existing.branchId,
-        reason: reason.trim(), requestedById: auth.user.id,
+        reason: reason.trim(), requestedById: auth.user.id, phoneReturned,
       });
       await logAudit({ userId: auth.user.id, action: 'CONTRACT_WRITEOFF_REQUEST', entityType: 'Contract', entityId: id, newValues: { reason, approvalRequestId: approval.id } });
       return NextResponse.json({ pendingApproval: true, approval }, { status: 202 });
     }
 
-    const contract = await writeOffContract({ contractId: id, reason, userId: auth.user.id });
-    await logAudit({ userId: auth.user.id, action: 'CONTRACT_WRITEOFF', entityType: 'Contract', entityId: id, oldValues: existing, newValues: { reason } });
+    const contract = await writeOffContract({ contractId: id, reason, userId: auth.user.id, phoneReturned });
+    await logAudit({ userId: auth.user.id, action: 'CONTRACT_WRITEOFF', entityType: 'Contract', entityId: id, oldValues: existing, newValues: { reason, phoneReturned } });
     return NextResponse.json({ contract });
   } catch (e) {
     if (e instanceof ContractError) return NextResponse.json({ error: e.message }, { status: 400 });
