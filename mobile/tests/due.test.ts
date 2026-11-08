@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  amountProblem, coverageText, defaultAmount, formatMoney, isPayable, networkForPhone, normalisePhone, parseAmount, quickAmounts,
+  amountProblem, coverageText, defaultAmount, formatMoney, isPayable, networkForPhone, normalisePhone, ownNumbers, unlockBanner, parseAmount, quickAmounts,
 } from '../src/lib/due.ts';
 import type { Contract, Instalment } from '../src/lib/types.ts';
 
@@ -106,4 +106,17 @@ test('money in and out', () => {
   assert.equal(parseAmount('1,200.5'), 120050);
   assert.ok(Number.isNaN(parseAmount('50abc')));
   assert.ok(Number.isNaN(parseAmount('0.001')));
+});
+
+test('unlockBanner: what to say about a locked phone', () => {
+  const offer = { available: true, message: null, overdueMinor: 12000, options: [{ percent: 25, hours: 24, period: '1 day', amountMinor: 3000 }], activeUntil: null, usesLeft: 2 };
+  assert.equal(unlockBanner({ temporaryUnlock: null }), null);
+  assert.equal(unlockBanner({}), null); // a server older than this app
+  assert.equal(unlockBanner({ temporaryUnlock: offer }), 'LOCKED');
+  assert.equal(unlockBanner({ temporaryUnlock: { ...offer, activeUntil: '2026-11-14T14:30:00Z' } }), 'OPEN');
+  assert.equal(unlockBanner({ temporaryUnlock: { ...offer, available: false, options: [], message: 'Pay it all.' } }), 'CLOSED');
+});
+
+test('ownNumbers: each registered number once, as the server accepts it', () => {
+  assert.deepEqual(ownNumbers({ phone: '0241234567', phone2: '233241234567', phone3: null }), ['0241234567']);
 });

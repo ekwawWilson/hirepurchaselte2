@@ -7,6 +7,7 @@ import { useLoad } from '../../../lib/useLoad';
 import { colors } from '../../../constants/colors';
 import { Button, Card, Chip, ErrorBanner, Loading, Pill, ProgressBar, SectionTitle } from '../../../components/ui';
 import { openPay } from '../../../components/ContractCard';
+import { OpenPhoneBanner } from '../../../components/OpenPhoneBanner';
 import { depositLeftMinor, dueNowMinor, formatMoney, isLoan, isPayable, isSavings, progress } from '../../../lib/due';
 import { contractTitle, formatDate, FREQUENCY_LABELS, statusStyle } from '../../../lib/format';
 import type { Instalment } from '../../../lib/types';
@@ -50,6 +51,7 @@ export default function ContractDetail() {
         contentContainerStyle={{ padding: 16, paddingBottom: payable ? barHeight + 16 : 32 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={reload} colors={[colors.primary]} />}>
         {error ? <ErrorBanner message={error} onRetry={reload} /> : null}
+        <OpenPhoneBanner contract={c} />
         <Card>
           <View style={styles.top}>
             <View style={{ flex: 1, marginRight: 8 }}>

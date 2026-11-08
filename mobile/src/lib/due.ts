@@ -1,4 +1,4 @@
-import type { Contract, Instalment } from './types';
+import type { Contract, Customer, Instalment } from './types';
 
 /**
  * What a customer owes and what a payment will do: the figures behind Home,
@@ -168,6 +168,19 @@ export function networkForPhone(phone: string | null | undefined): 'MTN' | 'TELE
 }
 
 /** 0XXXXXXXXX from 233XXXXXXXXX / +233… / spaces; null if it isn't a 10-digit Ghana number. */
+/** The customer's registered numbers, as the server will accept them. */
+export function ownNumbers(c: Pick<Customer, 'phone' | 'phone2' | 'phone3'>): string[] {
+  return [...new Set([c.phone, c.phone2, c.phone3].map((p) => normalisePhone(p) ?? p?.trim() ?? null).filter((p): p is string => !!p))];
+}
+
+/** What to tell the customer about a locked phone: it can be opened, it is open for now, or only paying everything opens it. */
+export function unlockBanner(c: Pick<Contract, 'temporaryUnlock'>): 'LOCKED' | 'OPEN' | 'CLOSED' | null {
+  const offer = c.temporaryUnlock;
+  if (!offer) return null;
+  if (offer.activeUntil) return 'OPEN';
+  return offer.available && offer.options.length > 0 ? 'LOCKED' : 'CLOSED';
+}
+
 export function normalisePhone(phone: string | null | undefined): string | null {
   if (!phone) return null;
   const digits = phone.replace(/[\s\-()]/g, '').replace(/^\+/, '');

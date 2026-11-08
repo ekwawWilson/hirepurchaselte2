@@ -39,6 +39,25 @@ export interface DeviceLoanState {
   totalOwedMinor: number;
 }
 
+/** One tier of a temporary unlock: pay this, the phone opens this long. */
+export interface UnlockOption {
+  percent: number;
+  hours: number;
+  /** "1 day", "12 hours". */
+  period: string;
+  amountMinor: number;
+}
+
+/** A locked Device Financing phone (paytrigger/temporaryUnlock.ts on the server); null when it does not apply. */
+export interface TemporaryUnlockOffer {
+  available: boolean;
+  message: string | null;
+  overdueMinor: number;
+  options: UnlockOption[];
+  activeUntil: string | null;
+  usesLeft: number;
+}
+
 export interface Contract {
   id: string;
   contractNumber: string;
@@ -56,6 +75,8 @@ export interface Contract {
   startDate: string;
   product: { name: string } | null;
   deviceLoanState: DeviceLoanState | null;
+  /** Missing on a server older than this app. */
+  temporaryUnlock?: TemporaryUnlockOffer | null;
   due: Due;
 }
 

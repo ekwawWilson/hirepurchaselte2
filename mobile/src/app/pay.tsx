@@ -10,7 +10,7 @@ import { PAYMENT_CONFIG } from '../constants/config';
 import { Button, Card, Chip, EmptyState, ErrorBanner, Loading } from '../components/ui';
 import { inputStyles } from '../components/inputStyles';
 import {
-  amountProblem, coverageText, defaultAmount, dueNowMinor, formatMoney, isLoan, isPayable, isSavings, networkForPhone, normalisePhone, parseAmount, quickAmounts,
+  amountProblem, coverageText, defaultAmount, dueNowMinor, formatMoney, isLoan, isPayable, isSavings, networkForPhone, ownNumbers, parseAmount, quickAmounts,
 } from '../lib/due';
 import { contractTitle, formatDate } from '../lib/format';
 import type { Contract, ContractDetail, Customer } from '../lib/types';
@@ -210,11 +210,6 @@ export default function Pay() {
       </View>
     </KeyboardAvoidingView>
   );
-}
-
-/** The customer's registered numbers, as the server will accept them. */
-function ownNumbers(c: Customer): string[] {
-  return [...new Set([c.phone, c.phone2, c.phone3].map((p) => normalisePhone(p) ?? p?.trim() ?? null).filter((p): p is string => !!p))];
 }
 
 function StatusView({ stage, amountMinor, msisdn, reference, recorded, contractNumber, onClose, onRetry }: {

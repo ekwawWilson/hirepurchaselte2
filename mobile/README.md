@@ -49,9 +49,11 @@ Rules it follows, all enforced again by the server:
 
 ## Deep link (PayTrigger lock screen)
 
-`flezepay://pay?contract=<contract id>` opens Pay with that contract chosen. PayTrigger's lock screen can show
-a pay button with this link; give PayTrigger **both** the link and the package `com.flezepay.customer`, or it
-refuses the link (code 50012).
+`flezepay://pay?contract=<contract id>` opens Pay with that contract chosen, and
+`flezepay://open-phone?contract=<contract id>` opens the temporary unlock screen. The server sends PayTrigger the
+second one, with the package `com.flezepay.customer` (it refuses a link without it, code 50012), once **The app is
+on the phones** is ticked under PayTrigger > Settings. Whitelist the package in the PayTrigger portal too, or a
+locked phone cannot open the app.
 
 ## Build an APK
 

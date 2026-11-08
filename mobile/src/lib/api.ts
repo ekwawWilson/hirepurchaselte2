@@ -76,6 +76,8 @@ export const api = {
 
   startPayment: (params: { contractId: string; amountMinor: number; network: string; msisdn: string }) =>
     request<{ reference: string; status: string }>('POST', '/portal/pay', params),
+  startTemporaryUnlock: (params: { contractId: string; percent: number; network: string; msisdn: string }) =>
+    request<{ reference: string; status: string; amountMinor: number; period: string }>('POST', '/portal/temporary-unlock', params),
   paymentStatus: (reference: string) =>
     request<{ reference: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' | 'NEEDS_REVIEW'; amountMinor: number; recorded: boolean }>('GET', `/portal/pay/${encodeURIComponent(reference)}`),
 };

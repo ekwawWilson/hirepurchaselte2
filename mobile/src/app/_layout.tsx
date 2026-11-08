@@ -42,6 +42,10 @@ function RootNavigator() {
       <Stack.Protected guard={signedIn && !mustChoosePassword}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
+          name="open-phone"
+          options={{ headerShown: true, title: 'Open my phone', headerTintColor: colors.primary, headerShadowVisible: false }}
+        />
+        <Stack.Screen
           name="pay"
           options={{ headerShown: true, title: 'Make Payment', headerTintColor: colors.primary, headerShadowVisible: false, headerStyle: { backgroundColor: colors.background } }}
         />

@@ -8,6 +8,7 @@ import { useSession } from '../../lib/session';
 import { colors } from '../../constants/colors';
 import { Button, Card, EmptyState, ErrorBanner, Loading, SectionTitle } from '../../components/ui';
 import { ContractCard, openPay } from '../../components/ContractCard';
+import { OpenPhoneBanner } from '../../components/OpenPhoneBanner';
 import { callNumber, supportNumbers } from '../../components/SupportFooter';
 import { dueNowMinor, formatMoney, isPayable } from '../../lib/due';
 import { formatDate } from '../../lib/format';
@@ -55,6 +56,7 @@ export default function Home() {
       {error ? <ErrorBanner message={error} onRetry={reload} /> : null}
       {!contracts ? (error ? null : <Loading />) : (
         <>
+          {contracts.map((c) => <OpenPhoneBanner key={c.id} contract={c} />)}
           <Card style={[styles.hero, dueNow > 0 && { backgroundColor: colors.danger }]}>
             <Text style={styles.heroLabel}>{dueNow > 0 ? 'Due now' : next ? 'Next payment' : "You're all paid up"}</Text>
             <Text style={styles.heroAmount}>{formatMoney(dueNow > 0 ? dueNow : next?.due.nextDueMinor ?? 0)}</Text>
