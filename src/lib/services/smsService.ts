@@ -97,6 +97,40 @@ export async function queueSms(params: {
   });
 }
 
+/** Texts the customer about something already saved. Never throws: a text must not undo or block what it reports. */
+export async function sendContractSms(contractId: string, templateKey: string, extraVars?: Record<string, string>): Promise<boolean> {
+  try {
+    const sms = await queueSms({ contractId, templateKey, extraVars });
+    if (!sms) return false;
+    await deliverQueuedSms(sms.id);
+    return true;
+  } catch (e) {
+    console.error(`SMS ${templateKey} for contract ${contractId} could not be sent:`, e);
+    return false;
+  }
+}
+
+/** Texts a customer the password just issued to them, when that message is on. The stored copy is blanked once sent. */
+export async function textPortalPassword(customerId: string, password: string): Promise<void> {
+  try {
+    const template = await prisma.smsTemplate.findUnique({ where: { key: 'customer.portal_password' } });
+    if (!template?.isActive) return;
+    const customer = await prisma.customer.findUniqueOrThrow({ where: { id: customerId } });
+    const recipient = primaryPhone(customer);
+    if (!recipient) return;
+    const { companyName } = await getOrgSettings();
+    const body = (p: string) => renderTemplate(template.bodyTemplate, { customerName: `${customer.firstName} ${customer.lastName}`, companyName, password: p });
+    const sms = await prisma.smsMessage.create({ data: { recipient, templateKey: template.key, body: body(password), relatedCustomerId: customerId, status: 'QUEUED' } });
+    try {
+      await deliverQueuedSms(sms.id);
+    } finally {
+      await prisma.smsMessage.update({ where: { id: sms.id }, data: { body: body('******') } });
+    }
+  } catch (e) {
+    console.error(`The sign-in password for customer ${customerId} could not be texted:`, e);
+  }
+}
+
 /** Attempts delivery of one already-queued message. Never throws — failures are logged on the row itself. */
 export async function deliverQueuedSms(smsMessageId: string): Promise<void> {
   const sms = await prisma.smsMessage.findUnique({ where: { id: smsMessageId } });

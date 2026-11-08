@@ -377,6 +377,7 @@ const TEXT_FIELDS: Array<{ key: string; label: string; long?: boolean }> = [
   { key: 'lockTitle', label: 'Overdue lock screen: title' }, { key: 'lockTips', label: 'Overdue lock screen: text', long: true },
   { key: 'depositHoldTitle', label: 'Held for the agent\'s deposit: title' }, { key: 'depositHoldTips', label: 'Held for the agent\'s deposit: text', long: true },
   { key: 'unlinkedTitle', label: 'Phone with no contract: title' }, { key: 'unlinkedTips', label: 'Phone with no contract: text', long: true },
+  { key: 'reminderTitle', label: 'Payment reminder: title' }, { key: 'reminderText', label: 'Payment reminder: text', long: true },
 ];
 
 /** "1 day", "12 hours": what an entry in hours means, as customers will read it. */
@@ -430,6 +431,9 @@ function SettingsTab({ onError, canEdit }: { onError: OnError; canEdit: boolean 
         temporaryUnlockMaxUses: Number(settings!.temporaryUnlockMaxUses),
         temporaryUnlockTiers: (settings!.temporaryUnlockTiers as Tier[]).map((t) => ({ percent: Number(t.percent), hours: Number(t.hours) })),
         lockScreenAppLink: settings!.lockScreenAppLink,
+        reminderEnabled: settings!.reminderEnabled,
+        reminderIncludeDaily: settings!.reminderIncludeDaily,
+        reminderDaysBefore: settings!.reminderDaysBefore,
       };
       for (const f of NUMBER_FIELDS) body[f.key] = Number(settings![f.key]);
       for (const f of TEXT_FIELDS) body[f.key] = settings![f.key];
@@ -479,6 +483,24 @@ function SettingsTab({ onError, canEdit }: { onError: OnError; canEdit: boolean 
           <label className="flex items-start gap-2 text-sm">
             <input type="checkbox" className="mt-1" disabled={!canEdit} checked={!!settings.lockScreenAppLink} onChange={(e) => setSettings({ ...settings, lockScreenAppLink: e.target.checked })} />
             <span>The FlezePay Customer app is on the phones and whitelisted in PayTrigger: the lock screen&apos;s button opens it</span>
+          </label>
+        </div>
+        <div className="rounded-lg border p-4 space-y-3">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Payment reminders</p>
+            <p className="text-xs text-gray-500 mt-0.5">A pop-up on the phone before an instalment is due. A locked phone or one held for an agent&apos;s deposit gets none.</p>
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" disabled={!canEdit} checked={!!settings.reminderEnabled} onChange={(e) => setSettings({ ...settings, reminderEnabled: e.target.checked })} />
+            <span>Send payment reminders to phones</span>
+          </label>
+          <div className="max-w-xs">
+            <Label>Days before the due date</Label>
+            <Input className="mt-1.5" disabled={!canEdit} value={String(settings.reminderDaysBefore ?? '')} onChange={(e) => setSettings({ ...settings, reminderDaysBefore: e.target.value })} />
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" disabled={!canEdit} checked={!!settings.reminderIncludeDaily} onChange={(e) => setSettings({ ...settings, reminderIncludeDaily: e.target.checked })} />
+            <span>Include customers who pay daily</span>
           </label>
         </div>
         <p className="text-xs text-gray-500">Lock-screen messages may use: {placeholders.map((p) => `{${p}}`).join(' ')}. Titles up to 80 characters, text up to 400.</p>

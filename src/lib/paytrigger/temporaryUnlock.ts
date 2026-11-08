@@ -62,6 +62,15 @@ async function paidUnlocks(contractId: string) {
   return rows.filter((r) => ids.has(r.paymentId!));
 }
 
+/** The last moment nothing was overdue: a payment after which every instalment due before that day had been paid. */
+function arrearsLastCleared(instalments: Array<{ dueDate: Date; paidAt: Date | null }>): Date | null {
+  const payments = instalments.flatMap((i) => (i.paidAt ? [i.paidAt] : [])).sort((a, b) => b.getTime() - a.getTime());
+  return payments.find((paid) => {
+    const thatDay = new Date(Date.UTC(paid.getUTCFullYear(), paid.getUTCMonth(), paid.getUTCDate()));
+    return instalments.every((i) => i.dueDate >= thatDay || (i.paidAt !== null && i.paidAt <= paid));
+  }) ?? null;
+}
+
 /** The end of the window running on this contract, or null. */
 export async function temporaryUnlockUntil(contractId: string, now: Date = new Date()): Promise<Date | null> {
   const ends = (await paidUnlocks(contractId)).map((r) => r.expiresAt!.getTime()).filter((t) => t > now.getTime());
@@ -81,7 +90,7 @@ export async function getTemporaryUnlockOffer(contractId: string, now: Date = ne
     where: { id: contractId },
     select: {
       contractType: true, status: true, gracePeriodDays: true,
-      instalments: { where: { status: { not: 'PAID' } }, orderBy: { instalmentNo: 'asc' }, select: { dueDate: true, amountDueMinor: true, amountPaidMinor: true } },
+      instalments: { orderBy: { instalmentNo: 'asc' }, select: { dueDate: true, amountDueMinor: true, amountPaidMinor: true, status: true, paidAt: true } },
       createdBy: { select: { role: { select: { name: true } } } },
       agentDepositLedger: { select: { amountOwedMinor: true, amountRemittedMinor: true, commissionPaidMinor: true } },
     },
@@ -91,7 +100,7 @@ export async function getTemporaryUnlockOffer(contractId: string, now: Date = ne
   if (device?.enrollmentStatus !== 'ACTIVE') return null;
 
   const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const overdue = contract.instalments.filter((i) => i.dueDate < startOfToday && i.amountPaidMinor < i.amountDueMinor);
+  const overdue = contract.instalments.filter((i) => i.status !== 'PAID' && i.dueDate < startOfToday && i.amountPaidMinor < i.amountDueMinor);
   const overdueMinor = overdue.reduce((s, i) => s + i.amountDueMinor - i.amountPaidMinor, 0);
   if (overdueMinor <= 0) return null;
 
@@ -101,8 +110,9 @@ export async function getTemporaryUnlockOffer(contractId: string, now: Date = ne
   const lockedSince = lockMomentAfter(overdue[0].dueDate, contract.gracePeriodDays + settings.lockAfterOverdueDays);
   if (contract.status !== 'DEFAULTED' && lockedSince > now && !activeUntil) return null;
 
-  // Uses since this stretch of arrears began: clearing the arrears starts the count afresh.
-  const used = paid.filter((r) => r.activatedAt! >= overdue[0].dueDate).length;
+  // Uses since the customer last had nothing overdue: only clearing the arrears starts the count afresh.
+  const cleared = arrearsLastCleared(contract.instalments);
+  const used = paid.filter((r) => !cleared || r.activatedAt! > cleared).length;
   const usesLeft = Math.max(0, settings.temporaryUnlockMaxUses - used);
   const closed = (message: string): TemporaryUnlockOffer => ({ available: false, message, overdueMinor, options: [], activeUntil, usesLeft });
 

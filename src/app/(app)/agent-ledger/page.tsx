@@ -21,6 +21,9 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { AGENT_CASH_HOLD_ALERT_DAYS } from '@/lib/constants/agents';
 import { CompletionCommissions } from '@/components/agents/CompletionCommissions';
 
+/** Paid-in deposits listed before "Show all". */
+const PAID_IN_SHOWN = 20;
+
 interface Remittance {
   id: string;
   amountMinor: number;
@@ -28,6 +31,8 @@ interface Remittance {
   reference: string | null;
   status: string;
   rejectionReason: string | null;
+  confirmedById: string | null;
+  confirmedAt: string | null;
   createdAt: string;
 }
 interface LedgerEntry {
@@ -66,6 +71,7 @@ export default function AgentLedgerPage() {
   const [reason, setReason] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [agentFilter, setAgentFilter] = useState('__all__');
+  const [showAllPaidIn, setShowAllPaidIn] = useState(false);
   const [payTarget, setPayTarget] = useState<LedgerEntry | null>(null);
   const [payForm, setPayForm] = useState({ amount: '', method: 'CASH', reference: '' });
 
@@ -134,6 +140,9 @@ export default function AgentLedgerPage() {
   const totalOwed = shown.reduce((s, e) => s + e.agentOwesMinor, 0);
   const totalOwedToAgents = shown.reduce((s, e) => s + e.owedToAgentMinor, 0);
   const longHeld = shown.filter((e) => e.daysHeld !== null && e.daysHeld >= AGENT_CASH_HOLD_ALERT_DAYS).length;
+  const paidIn = shown
+    .flatMap((e) => e.remittances.filter((r) => r.status === 'CONFIRMED').map((r) => ({ ...r, entry: e })))
+    .sort((a, b) => new Date(b.confirmedAt ?? b.createdAt).getTime() - new Date(a.confirmedAt ?? a.createdAt).getTime());
   const pendingRemittances = shown.flatMap((e) => e.remittances.filter((r) => r.status === 'PENDING').map((r) => ({ ...r, entry: e })));
 
   if (!canManage) {
@@ -206,6 +215,33 @@ export default function AgentLedgerPage() {
                   </Card>
                 ))}
               </div>
+            </div>
+          )}
+
+          {paidIn.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Paid in</h2>
+              <Card>
+                <CardContent className="p-0 divide-y divide-gray-100">
+                  {paidIn.slice(0, showAllPaidIn ? undefined : PAID_IN_SHOWN).map((r) => (
+                    <div key={r.id} className="p-4">
+                      <p className="text-sm font-medium text-gray-900">
+                        {r.entry.agent.firstName} {r.entry.agent.lastName} &middot; {formatCurrency(r.amountMinor)} via {r.confirmedById ? (METHOD_LABELS[r.method] ?? r.method) : 'the short code'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        For <Link href={`/contracts/${r.entry.contract.id}`} className="font-mono text-blue-700 hover:underline">{r.entry.contract.contractNumber}</Link>
+                        {' '}&middot; {r.entry.contract.customer.firstName} {r.entry.contract.customer.lastName}
+                        {r.reference && <> &middot; ref {r.reference}</>} &middot; {formatDateTime(r.confirmedAt ?? r.createdAt)}
+                      </p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+              {paidIn.length > PAID_IN_SHOWN && (
+                <button className="mt-2 text-xs font-medium text-primary hover:underline" onClick={() => setShowAllPaidIn(!showAllPaidIn)}>
+                  {showAllPaidIn ? 'Show fewer' : `Show all ${paidIn.length}`}
+                </button>
+              )}
             </div>
           )}
 

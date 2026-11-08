@@ -4,6 +4,7 @@ import { resettleContract } from './paymentService';
 import { generateStraightLineSchedule } from './scheduleService';
 import { getWorkingDays } from './operatingSettingsService';
 import { notifyPayTrigger } from '../paytrigger/notify';
+import { sendContractSms } from './smsService';
 import {
   DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
   type PaymentFrequencyName, isInstalmentSale,
@@ -92,5 +93,6 @@ export async function rescheduleContract(params: {
     };
   });
   notifyPayTrigger(rescheduled.contract.id, 'CONTRACT_CHANGED', rescheduled.contract.contractType);
+  await sendContractSms(rescheduled.contract.id, 'contract.rescheduled');
   return rescheduled;
 }

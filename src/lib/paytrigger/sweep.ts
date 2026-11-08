@@ -6,6 +6,7 @@ import { loadPayTriggerRegistry } from './notify';
 import { ENFORCED_STATES, reconcileContract, readLockStates, syncLockText, type Breaker } from './reconcile';
 import { enrolPhones, releaseDevice } from './admin';
 import { devicesEnrolledLive } from './saleGuard';
+import { sendPaymentReminders } from './reminders';
 
 /**
  * PayTrigger's one scheduled job, daily after the 08:00 overdue sweep
@@ -30,10 +31,11 @@ export interface SweepSummary {
   statusReads: number;
   breakerTripped: boolean;
   reEnrolled: number;
+  reminders: number;
 }
 
 export async function runPayTriggerSweep(): Promise<SweepSummary> {
-  const summary: SweepSummary = { linked: 0, reconciled: 0, sent: 0, skipped: 0, errors: 0, released: 0, statusReads: 0, breakerTripped: false, reEnrolled: 0 };
+  const summary: SweepSummary = { linked: 0, reconciled: 0, sent: 0, skipped: 0, errors: 0, released: 0, statusReads: 0, breakerTripped: false, reEnrolled: 0, reminders: 0 };
   const settings = await getPayTriggerSettings();
   const now = Date.now();
 
@@ -127,6 +129,12 @@ export async function runPayTriggerSweep(): Promise<SweepSummary> {
   const orphans = await prisma.payTriggerDevice.findMany({ where: { enrollmentStatus: 'ACTIVE', contractId: null } });
   for (const device of orphans) await syncLockText(device, null, null).catch(() => undefined);
 
+  // 7. Payment reminders, last: they can never fail the sweep.
+  summary.reminders = await sendPaymentReminders(settings).catch((e) => {
+    console.error('[paytrigger] payment reminders failed:', e instanceof Error ? e.message : e);
+    return 0;
+  });
+
   await prisma.payTriggerSettings.update({
     where: { id: settings.id },
     data: { lastSweepAt: new Date(), lastSweepSummary: summary as unknown as Prisma.InputJsonValue },
@@ -138,5 +146,5 @@ export async function runPayTriggerSweep(): Promise<SweepSummary> {
 /** One line for the scheduler's log. */
 export function describeSweep(s: SweepSummary): string {
   return `PayTrigger sweep: ${s.reconciled} reconciled, ${s.sent} sent, ${s.released} released, ${s.statusReads} status reads, ${s.errors} errors`
-    + (s.linked ? `, ${s.linked} linked` : '') + (s.reEnrolled ? `, ${s.reEnrolled} re-enrolled` : '') + (s.breakerTripped ? ', CIRCUIT BREAKER TRIPPED' : '');
+    + (s.linked ? `, ${s.linked} linked` : '') + (s.reEnrolled ? `, ${s.reEnrolled} re-enrolled` : '') + (s.reminders ? `, ${s.reminders} reminders` : '') + (s.breakerTripped ? ', CIRCUIT BREAKER TRIPPED' : '');
 }

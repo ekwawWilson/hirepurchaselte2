@@ -19,6 +19,7 @@ import { agentDepositsToPay, fileRemittance, openUssdRemittance } from '@/lib/se
 import { hashPassword } from '@/lib/services/authService';
 import { issueAgentPaymentPin } from '@/lib/services/agentPaymentPinService';
 import { AGENT_DEPOSIT_CHANNEL } from '@/lib/constants/agents';
+import { listMobileMoneyAttempts } from '@/lib/services/mobileMoneyOpsService';
 
 const runId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
 let counter = 0;
@@ -287,5 +288,48 @@ describe('Agents paying in deposits on the short code', () => {
     expect((await saved.json()).user.phone).toBe(fresh);
     expect((await patch(b.user.id, '')).status).toBe(200);
     expect((await prisma.user.findUniqueOrThrow({ where: { id: b.user.id } })).phone).toBeNull();
+  });
+
+  /** An agent's checkout that Hubtel never answers, started this long ago. */
+  async function abandonedCheckout(minutesAgo: number) {
+    const { user, phone, pin } = await makeAgent();
+    const contract = await owedSale(user.id);
+    let sessionId = '';
+    await withLiveHubtel(() => hubtelHttp(200, {}), async () => { sessionId = (await dial(phone, '3', pin, '115', '1')).sessionId; });
+    await prisma.hubtelTransaction.update({ where: { clientReference: sessionId }, data: { createdAt: new Date(Date.now() - minutesAgo * 60_000) } });
+    await withLiveHubtel(() => hubtelHttp(404, {}), async () => { await reconcilePendingHubtelTransactions(); });
+    return { user, phone, pin, contract, sessionId };
+  }
+
+  it('sets an unanswered payment free after 30 minutes, so the agent can pay it in again', async () => {
+    const recent = await abandonedCheckout(10);
+    expect(await remittancesOf(recent.user.id)).toMatchObject([{ status: 'AWAITING_PAYMENT' }]);
+
+    const { user, phone, pin, sessionId } = await abandonedCheckout(31);
+    expect(await prisma.hubtelTransaction.findUniqueOrThrow({ where: { clientReference: sessionId } })).toMatchObject({ status: 'FAILED' });
+    expect(await remittancesOf(user.id)).toMatchObject([{ status: 'PAYMENT_FAILED' }]);
+    expect((await dial(phone, '3', pin)).last.message).toContain('You owe GHS115.00');
+  });
+
+  it('credits a payment reported after being given up on, unless the agent has since paid it in again', async () => {
+    const stillOwed = await abandonedCheckout(31);
+    await processHubtelCallback({ clientReference: stillOwed.sessionId, status: 'SUCCESS', rawPayload: '{}' });
+    expect(await ledgerOf(stillOwed.contract.id)).toMatchObject({ amountRemittedMinor: 11500, status: 'SETTLED' });
+
+    const { phone, pin, contract, sessionId } = await abandonedCheckout(31);
+    await dial(phone, '3', pin, '115', '1');
+    expect(await ledgerOf(contract.id)).toMatchObject({ amountRemittedMinor: 11500 });
+    await processHubtelCallback({ clientReference: sessionId, status: 'SUCCESS', rawPayload: '{}' });
+    expect(await ledgerOf(contract.id)).toMatchObject({ amountRemittedMinor: 11500 });
+    expect(await prisma.hubtelTransaction.findUniqueOrThrow({ where: { clientReference: sessionId } })).toMatchObject({ status: 'NEEDS_REVIEW', resolvedAt: null });
+  });
+
+  it('names the agent and the number of sales on Mobile Money', async () => {
+    const { user, phone, pin } = await makeAgent();
+    const first = await owedSale(user.id, 'Akua');
+    await owedSale(user.id, 'Kojo');
+    await dial(phone, '3', pin, '1', '1');
+    const listing = await listMobileMoneyAttempts({ scope: {}, filter: 'ALL', q: first.contractNumber, page: 1 } as Parameters<typeof listMobileMoneyAttempts>[0]);
+    expect(listing.attempts[0].agentDeposit).toEqual({ agentName: `${user.firstName} ${user.lastName}`, sales: 2 });
   });
 });

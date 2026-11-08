@@ -3,7 +3,7 @@ import { prisma } from '../db/prisma';
 import { generateContractNumber } from '../utils/idGenerators';
 import { applyStockMovement } from './inventoryService';
 import { generateStraightLineSchedule } from './scheduleService';
-import { queueSms, deliverQueuedSms } from './smsService';
+import { queueSms, deliverQueuedSms, sendContractSms } from './smsService';
 import { reverseAllPaymentsForContract } from './paymentService';
 import { initiatePreapproval, enableDirectDebit } from './hubtelPreapprovalService';
 import { getLoanSettings } from './loanSettingsService';
@@ -551,6 +551,7 @@ export async function cancelContract(params: { contractId: string; reason: strin
     return { ...updated, refundDueMinor: contract.totalPaidMinor };
   });
   notifyPayTrigger(cancelled.id, 'CONTRACT_CHANGED', cancelled.contractType);
+  if (!PRE_APPROVAL_STATUSES.includes(pre.status)) await sendContractSms(cancelled.id, 'contract.cancelled');
   return cancelled;
 }
 
@@ -592,6 +593,7 @@ export async function writeOffContract(params: { contractId: string; reason: str
     });
   });
   notifyPayTrigger(writtenOff.id, 'CONTRACT_CHANGED', writtenOff.contractType);
+  if (!PRE_APPROVAL_STATUSES.includes(contract.status)) await sendContractSms(writtenOff.id, 'contract.written_off');
   return writtenOff;
 }
 

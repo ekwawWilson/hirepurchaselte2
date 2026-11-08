@@ -1270,6 +1270,12 @@ model PayTriggerSettings {
   temporaryUnlockTiers     Json      @default("[{\"percent\":25,\"hours\":24},{\"percent\":50,\"hours\":72},{\"percent\":75,\"hours\":120},{\"percent\":90,\"hours\":168}]")
   // The lock screen's button opens the customer app: on once the app is on the phones.
   lockScreenAppLink        Boolean   @default(false)
+  // Pop-ups on the phone before an instalment is due (paytrigger/reminders.ts).
+  reminderEnabled          Boolean   @default(false)
+  reminderDaysBefore       String    @default("3,1,0")
+  reminderIncludeDaily     Boolean   @default(false)
+  reminderTitle            String    @default("Payment reminder")
+  reminderText             String    @default("Dear {firstName}, your payment of {amount} is due on {dueDate}. Please pay on time to keep your phone open.")
   lockTitle                String    @default("Payment overdue")
   lockTips                 String    @default("Dear {firstName}, your payment of {amount} was due on {dueDate}. Pay to open your phone. Call {supportPhone} for help.")
   depositHoldTitle         String    @default("Phone not yet activated")

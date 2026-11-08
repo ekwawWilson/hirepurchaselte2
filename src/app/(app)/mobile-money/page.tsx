@@ -26,6 +26,7 @@ interface Attempt {
   resolutionNote: string | null;
   createdAt: string;
   contract: { id: string; contractNumber: string; customer: { firstName: string; lastName: string } };
+  agentDeposit: { agentName: string; sales: number } | null;
 }
 interface Listing { attempts: Attempt[]; total: number; pageSize: number; needsReview: number }
 
@@ -168,11 +169,13 @@ export default function MobileMoneyPage() {
               <CardContent className="p-4 flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-medium text-gray-900">
-                    {a.contract.customer.firstName} {a.contract.customer.lastName}
+                    {a.agentDeposit ? a.agentDeposit.agentName : `${a.contract.customer.firstName} ${a.contract.customer.lastName}`}
                     <span className="ml-2 text-sm font-normal text-gray-500">{a.msisdn}</span>
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    <Link href={`/contracts/${a.contract.id}`} className="font-mono text-primary hover:underline">{a.contract.contractNumber}</Link>
+                    {a.agentDeposit && a.agentDeposit.sales > 1
+                      ? `${a.agentDeposit.sales} sales`
+                      : <Link href={`/contracts/${a.contract.id}`} className="font-mono text-primary hover:underline">{a.contract.contractNumber}</Link>}
                     {' '}&middot; {a.channel === 'DIRECT_DEBIT' ? 'Direct debit' : a.channel === 'AGENT_DEPOSIT' ? 'Agent deposit' : 'Customer prompt'} &middot; {formatDateTime(a.createdAt)}
                   </p>
                   {(a.resolutionNote || a.detail) && (

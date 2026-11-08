@@ -19,7 +19,7 @@ export async function registerScheduledJobs() {
   const { retryFailedDirectDebits, reconcilePendingPreapprovals } = await import('@/lib/services/hubtelPreapprovalService');
   const { runDirectDebitCollections } = await import('@/lib/services/collectionsService');
   const { accrueDailyLoanInterest } = await import('@/lib/services/loanService');
-  const { sendDueTodayReminders, sendOverdueReminders } = await import('@/lib/services/reminderService');
+  const { sendDueTodayReminders, sendOverdueReminders, sendLockWarnings } = await import('@/lib/services/reminderService');
   const { sendDirectDebitNotices, sendOwnerDailySummary } = await import('@/lib/services/dailyNoticesService');
   const { pruneLoginThrottles } = await import('@/lib/auth/loginThrottle');
   const { retryFulfilmentCallbacks } = await import('@/lib/services/ussdCheckoutService');
@@ -76,6 +76,10 @@ export async function registerScheduledJobs() {
     (run) => (run.sent > 0 ? `sent ${run.sent} due-today payment reminder(s)` : null)));
   cron.schedule('0 10 * * *', () => job('sendOverdueReminders', 'send overdue reminders', sendOverdueReminders,
     (run) => (run.sent > 0 ? `sent ${run.sent} overdue payment reminder(s)` : null)));
+
+  // Daily at 09:30 — a phone locking tomorrow, after the 08:36 PayTrigger sweep has set today's lock dates.
+  cron.schedule('30 9 * * *', () => job('sendLockWarnings', 'send phone lock warnings', sendLockWarnings,
+    (run) => (run.sent > 0 ? `sent ${run.sent} phone lock warning(s)` : null)));
 
   // Daily at 16:00 — tell customers whose wallet will be debited tomorrow,
   // while there is still an afternoon to put the money in it.

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, assertBranchAccess, assertOwnRecordAccess } from '@/lib/auth/rbac';
 import { issuePortalPassword } from '@/lib/services/customerPortalService';
+import { textPortalPassword } from '@/lib/services/smsService';
 import { clearLoginFailures } from '@/lib/auth/loginThrottle';
 import { normalizeGhanaPhone } from '@/lib/constants/customers';
 import { allPhones } from '@/lib/services/customerService';
@@ -25,6 +26,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!assertOwnRecordAccess(auth.user, customer.createdById)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const portalPassword = await issuePortalPassword(customer.id);
+  await textPortalPassword(customer.id, portalPassword);
   for (const phone of allPhones(customer)) await clearLoginFailures(`portal:${normalizeGhanaPhone(phone) ?? phone.trim()}`);
   await logAudit({ userId: auth.user.id, action: 'CUSTOMER_PORTAL_PASSWORD_ISSUE', entityType: 'Customer', entityId: customer.id });
   return NextResponse.json({ portalPassword });

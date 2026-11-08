@@ -59,7 +59,7 @@ You cannot see the project these were first built in. This file is the full spec
 - The device must lock itself at the end of the window while offline, so **only the lock date moves**. Do not use a provider's separate temporary-unlock call (PayTrigger's needs activating per account).
 - A window already running can only be lengthened, never shortened.
 - A reversed payment takes its unlock with it and gives the use back. Nothing needs changing at reversal: whether an unlock counts is read from its payment.
-- Clearing the arrears starts the use count afresh.
+- Only clearing the arrears starts the use count afresh. Paying off the oldest overdue instalment while a later one is still overdue does not.
 - An agent deposit not yet paid in outranks any window: the phone stays shut, and the customer is told so before they pay.
 - Agents can't take cash for it, because cash they hold keeps the phone locked until it is paid in.
 
@@ -105,7 +105,7 @@ model TemporaryUnlock {
 1. Return null if the feature is off, the contract or its status doesn't qualify, or the device isn't active.
 2. Take instalments with a due date before the start of today and not fully paid. Return null if the overdue total is 0.
 3. `lockedSince` = the lock moment after the oldest overdue due date, plus grace days and the lock-after-overdue setting, using the same function the lock decision uses. Return null if the contract isn't defaulted, `lockedSince` is in the future, and no window is running.
-4. `used` = paid unlocks with `activatedAt` on or after the oldest overdue due date. `usesLeft` = cap minus `used`, not below 0.
+4. Find the last moment nothing was overdue: the latest instalment `paidAt` after which every instalment due before that day had been paid. `used` = paid unlocks activated after that moment, or all of them if there is no such moment. `usesLeft` = cap minus `used`, not below 0.
 5. If the contract was sold by an agent, the deposit-hold setting is on, and the agent's balance is unknown or above 0: closed, "Your phone is held until your agent finishes registering your payment. Please contact your agent."
 6. If `usesLeft` is 0: closed, "You have used all your temporary unlocks. Pay the full overdue amount of {amount} to open your phone."
 7. Each tier's amount is `ceil(overdue × percent / 100)`. Keep options at or above the minimum payment and strictly below the overdue total. With none left: closed, "Pay the full overdue amount of {amount} to open your phone."
@@ -172,7 +172,8 @@ On confirm, request the unlock with `expectedAmountMinor` before charging. The r
 - One sale owed goes straight to the amount, and part payment is allowed. Several sales show a list. Pay all takes the oldest first.
 - The ledger is credited when the money arrives, with no one confirming it.
 - It is **not a customer payment**: write no `Payment` row and leave the contract's totals alone.
-- A failed charge credits nothing and the amount becomes payable again. A success that arrives late still lands, once.
+- A failed charge credits nothing and the amount becomes payable again. A success that arrives late still lands, once, unless the agent has paid that amount in again by then. It then goes to the staff review queue instead of being credited twice.
+- A checkout the agent abandons may never be answered, and the gateway's status check may refuse to look it up. After 30 minutes with no answer, the charge is marked failed and the amount becomes payable again.
 
 ### The PIN
 
@@ -253,7 +254,8 @@ The reference is the session id for gateway checkout, otherwise a new one. If st
 - **Agent dashboard:** a card visible only to the `AGENT` role. "Your payment PIN", the number in large type, and "To pay in your deposits, dial the short code, choose 3. Agent deposits and enter this PIN. Keep it to yourself." Serve it from an endpoint that returns only the signed-in agent's PIN and gives 403 to everyone else.
 - **Agent's deposits page:** labels `WAITING FOR PAYMENT` and `NOT PAID` for the new statuses, and count waiting amounts as outstanding.
 - **Staff page:** an optional unique mobile number, validated and audited, used for the receipt.
-- **Mobile money page:** label the channel "Agent deposit".
+- **Mobile money page:** show the agent's name and how many sales the charge covered, with the channel labelled "Agent deposit".
+- **Agent ledger page:** a list of what has been paid in, newest first, showing the agent, amount, sale, reference and whether it came through the short code.
 
 ### Tests to write
 

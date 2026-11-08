@@ -199,6 +199,29 @@ describe('Temporary unlock', () => {
       expect(refused.status).toBe(400);
     });
 
+    it('keeps counting uses while the customer is behind, and starts afresh only once nothing was overdue', async () => {
+      const s = await lockedSale();
+      const inst = await prisma.instalment.findMany({ where: { contractId: s.contract.id }, orderBy: { instalmentNo: 'asc' } });
+      await prisma.instalment.update({ where: { id: inst[1].id }, data: { dueDate: new Date(Date.now() - 10 * DAY), status: 'OVERDUE' } });
+      expect((await buyInApp(s, 25)).status).toBe(201);
+      await prisma.payTriggerTemporaryUnlock.updateMany({ where: { contractId: s.contract.id }, data: { activatedAt: new Date(Date.now() - 12 * DAY), expiresAt: new Date(Date.now() - 11 * DAY) } });
+      expect(await getTemporaryUnlockOffer(s.contract.id)).toMatchObject({ usesLeft: 1 });
+
+      // The oldest instalment is cleared, but the next is still overdue: the use still counts.
+      const first = await prisma.instalment.findUniqueOrThrow({ where: { id: inst[0].id } });
+      await postPayment({ contractId: s.contract.id, amountMinor: first.amountDueMinor - first.amountPaidMinor, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH', createdById: adminId });
+      await payTriggerIdle();
+      expect(await getTemporaryUnlockOffer(s.contract.id)).toMatchObject({ overdueMinor: 12000, usesLeft: 1 });
+
+      // Everything paid five days ago, and a later instalment overdue since: a new stretch of arrears.
+      await postPayment({ contractId: s.contract.id, amountMinor: 12000, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH', createdById: adminId });
+      await payTriggerIdle();
+      await prisma.instalment.updateMany({ where: { id: { in: [inst[0].id, inst[1].id] } }, data: { paidAt: new Date(Date.now() - 5 * DAY) } });
+      await prisma.contract.update({ where: { id: s.contract.id }, data: { gracePeriodDays: 0 } });
+      await prisma.instalment.update({ where: { id: inst[2].id }, data: { dueDate: new Date(Date.now() - 3 * DAY), status: 'OVERDUE' } });
+      expect(await getTemporaryUnlockOffer(s.contract.id)).toMatchObject({ usesLeft: 2 });
+    });
+
     it('lengthens a window already running, never shortens it', async () => {
       const s = await lockedSale();
       await buyInApp(s, 75); // 5 days

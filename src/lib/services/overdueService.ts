@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma';
 import { defaultCutoffDate, INSTALMENT_SALE_TYPES } from '../constants/contracts';
 import { notifyPayTrigger } from '../paytrigger/notify';
+import { sendContractSms } from './smsService';
 
 /**
  * Flips PENDING/PARTIAL instalments past their due date to OVERDUE. A direct
@@ -57,7 +58,10 @@ export async function markDefaultedContracts() {
     where: { id: { in: candidates.map((c) => c.id) } },
     data: { status: 'DEFAULTED', defaultedAt: new Date() },
   });
-  for (const c of candidates) notifyPayTrigger(c.id, 'CONTRACT_CHANGED', c.contractType);
+  for (const c of candidates) {
+    notifyPayTrigger(c.id, 'CONTRACT_CHANGED', c.contractType);
+    await sendContractSms(c.id, 'contract.defaulted');
+  }
   return result.count;
 }
 

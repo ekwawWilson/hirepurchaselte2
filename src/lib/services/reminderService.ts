@@ -83,6 +83,37 @@ export async function sendDueTodayReminders(now: Date = new Date()): Promise<Rem
   return run;
 }
 
+/**
+ * The day before a phone locks: its lock date is tomorrow and money is still
+ * due by then. Once per lock, so a date pushed back a day is not warned twice.
+ */
+export async function sendLockWarnings(now: Date = new Date()): Promise<ReminderRun> {
+  if (!isWorkingDay(now, await getWorkingDays())) return { skippedClosedDay: true, sent: 0, alreadyReminded: 0 };
+
+  const today = startOfDay(now);
+  const tomorrow = new Date(today.getTime() + DAY_MS);
+  const dayAfter = new Date(tomorrow.getTime() + DAY_MS);
+  const devices = await prisma.payTriggerDevice.findMany({
+    where: { enrollmentStatus: 'ACTIVE', contractId: { not: null }, committedState: { not: 'LOCKED' }, providerExpiresAt: { gte: tomorrow, lt: dayAfter } },
+    select: { contractId: true, providerExpiresAt: true },
+  });
+
+  const run: ReminderRun = { skippedClosedDay: false, sent: 0, alreadyReminded: 0 };
+  for (const device of devices) {
+    const contractId = device.contractId!;
+    const contract = await prisma.contract.findUniqueOrThrow({
+      where: { id: contractId },
+      select: { status: true, instalments: { where: { status: { not: 'PAID' }, dueDate: { lt: dayAfter } }, select: { amountDueMinor: true, amountPaidMinor: true } } },
+    });
+    const owedMinor = contract.instalments.reduce((s, i) => s + i.amountDueMinor - i.amountPaidMinor, 0);
+    if (contract.status !== 'ACTIVE' || owedMinor <= 0) continue;
+    if (await alreadySent(contractId, 'paytrigger.lock_tomorrow', new Date(today.getTime() - DAY_MS))) { run.alreadyReminded += 1; continue; }
+    const lockDate = device.providerExpiresAt!.toISOString().slice(0, 10);
+    if (await send(contractId, 'paytrigger.lock_tomorrow', { amountDue: formatMoney(owedMinor), lockDate })) run.sent += 1;
+  }
+  return run;
+}
+
 export async function sendOverdueReminders(now: Date = new Date()): Promise<ReminderRun> {
   if (!isWorkingDay(now, await getWorkingDays())) return { skippedClosedDay: true, sent: 0, alreadyReminded: 0 };
 

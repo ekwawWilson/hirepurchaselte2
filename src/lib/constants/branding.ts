@@ -8,7 +8,7 @@
  * No server-only imports here (no prisma) so both server and client code
  * (orgSettingsService.ts and orgSettingsStore.ts) can share one source of truth.
  */
-export const APP_NAME = 'PETROS Hirepurchase';
+export const APP_NAME = 'FlezePay';
 
 /**
  * Brand colour behind the initials badge — matches the manifest/viewport

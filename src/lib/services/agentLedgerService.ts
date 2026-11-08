@@ -287,12 +287,19 @@ export async function failUssdRemittance(clientReference: string): Promise<void>
  * confirm it, since the charge itself is the proof. A late success lands too
  * (hubtelPaymentService.claimableStatuses). Each row is claimed, so a callback
  * and the sweep cannot both credit it. False when the charge is for nothing
- * on record.
+ * on record, or arrived after it was given up on and the amount paid in again.
  */
 export async function settleUssdRemittance(clientReference: string): Promise<boolean> {
   const unsettled = [AWAITING_PAYMENT, PAYMENT_FAILED];
   const credited = await prisma.$transaction(async (tx) => {
     const rows = await tx.agentRemittance.findMany({ where: { reference: clientReference, method: 'MOBILE_MONEY', status: { in: unsettled } } });
+    for (const row of rows.filter((r) => r.status === PAYMENT_FAILED)) {
+      const ledger = await tx.agentDepositLedger.findUniqueOrThrow({
+        where: { id: row.ledgerId },
+        include: { remittances: { where: { status: { in: IN_FLIGHT_REMITTANCES } }, select: { amountMinor: true } } },
+      });
+      if (row.amountMinor > ledgerBalance(ledger) - ledger.remittances.reduce((s, r) => s + r.amountMinor, 0)) return null;
+    }
     const done: { contractId: string; agentId: string; amountMinor: number }[] = [];
     for (const row of rows) {
       const claimed = await tx.agentRemittance.updateMany({ where: { id: row.id, status: { in: unsettled } }, data: { status: 'CONFIRMED', confirmedAt: new Date() } });
@@ -300,6 +307,7 @@ export async function settleUssdRemittance(clientReference: string): Promise<boo
     }
     return done;
   });
+  if (!credited) return false;
   if (credited.length === 0) return (await prisma.agentRemittance.count({ where: { reference: clientReference, status: 'CONFIRMED' } })) > 0;
 
   // A Device Financing phone held for the agent's deposit can open now.

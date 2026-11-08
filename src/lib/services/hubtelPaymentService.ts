@@ -10,7 +10,7 @@ import { isOwnPhoneNumber } from './customerPortalService';
 import { networkForPhone } from '../constants/customers';
 import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES, isInstalmentSale } from '../constants/contracts';
 import { paymentAmountProblem, waitingPromptProblem } from './paymentLimitsService';
-import { AGENT_DEPOSIT_CHANNEL } from '../constants/agents';
+import { AGENT_DEPOSIT_CHANNEL, AGENT_DEPOSIT_RELEASE_MINUTES } from '../constants/agents';
 
 /**
  * `message` is fit to show whoever is paying. `staffDetail`, when set, is
@@ -258,7 +258,7 @@ export async function recordSuccessfulHubtelCharge(txnId: string, rawPayload: st
     if (txn.channel === AGENT_DEPOSIT_CHANNEL) {
       // Settles against the agent's ledger: no Payment row, so resolvedAt is what marks it done for the sweep.
       const { settleUssdRemittance } = await import('./agentLedgerService');
-      if (!(await settleUssdRemittance(txn.clientReference))) throw new HubtelError('the agent deposit it was for could not be found');
+      if (!(await settleUssdRemittance(txn.clientReference))) throw new HubtelError('the agent deposit it was for could not be found, or has since been paid in');
       await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { resolvedAt: new Date() } });
       return;
     }
@@ -395,6 +395,7 @@ export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 5, 
 
   const cutoff = new Date(Date.now() - staleAfterMinutes * 60_000);
   const giveUpCutoff = new Date(Date.now() - Math.max(staleAfterMinutes, giveUpAfterMinutes) * 60_000);
+  const agentReleaseCutoff = new Date(Date.now() - AGENT_DEPOSIT_RELEASE_MINUTES * 60_000);
   const stale = await prisma.hubtelTransaction.findMany({ where: { status: 'PENDING', createdAt: { lt: cutoff } } });
 
   let succeeded = 0;
@@ -415,9 +416,15 @@ export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 5, 
       lastStatusCheckError = e instanceof Error ? (e.cause instanceof Error ? `${e.message} (${e.cause.message})` : e.message) : String(e);
       console.error(`[hubtel] status check for ${txn.channel} payment ${txn.clientReference} failed: ${lastStatusCheckError}`);
       statusCheckErrors += 1;
-      if (!oldestUnanswered || txn.createdAt < oldestUnanswered) oldestUnanswered = txn.createdAt;
-      stillPending += 1;
-      continue;
+      // An agent's deposit is set aside until its charge is answered, and an
+      // abandoned checkout never is. A success that turns up later still lands.
+      if (txn.channel === AGENT_DEPOSIT_CHANNEL && txn.createdAt < agentReleaseCutoff) {
+        checkedStatus = 'PENDING';
+      } else {
+        if (!oldestUnanswered || txn.createdAt < oldestUnanswered) oldestUnanswered = txn.createdAt;
+        stillPending += 1;
+        continue;
+      }
     }
     if (checkedStatus === 'PENDING' && txn.createdAt > giveUpCutoff) {
       stillPending += 1;

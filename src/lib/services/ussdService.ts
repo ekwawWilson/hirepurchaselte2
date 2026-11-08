@@ -501,8 +501,8 @@ async function takeAgentDeposit(params: { sessionId: string; msisdn: string; ope
     });
     return chargeOutcomeScreen(txn.status);
   } catch (e) {
-    if (!(e instanceof HubtelError)) throw e;
     await failUssdRemittance(clientReference);
+    if (!(e instanceof HubtelError)) throw e;
     return { message: e.message.slice(0, 160), continueSession: false, label: 'Payment failed' };
   }
 }

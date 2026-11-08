@@ -31,6 +31,7 @@ const EDITABLE = {
   lockAfterOverdueDays: 'int', lockOnUnpaidAgentDeposit: 'bool', maxUnlockHorizonDays: 'int', releaseHoldHours: 'int',
   extendBreakerPercent: 'int', defaultRuleNum: 'int',
   temporaryUnlockEnabled: 'bool', temporaryUnlockMaxUses: 'int', temporaryUnlockTiers: 'tiers', lockScreenAppLink: 'bool',
+  reminderEnabled: 'bool', reminderDaysBefore: 'days', reminderIncludeDaily: 'bool', reminderTitle: 'title', reminderText: 'tips',
   lockTitle: 'title', lockTips: 'tips', depositHoldTitle: 'title', depositHoldTips: 'tips', unlinkedTitle: 'title', unlinkedTips: 'tips',
 } as const;
 export type EditablePayTriggerSettings = Partial<Pick<PayTriggerSettings, keyof typeof EDITABLE>>;
@@ -55,6 +56,7 @@ export function validatePayTriggerSettings(body: Record<string, unknown>, curren
       const problem = unlockTiersProblem(value, horizonDays * 24);
       if (problem) return problem;
     }
+    if (kind === 'days' && (typeof value !== 'string' || !/^\s*\d{1,2}(\s*,\s*\d{1,2})*\s*$/.test(value))) return `${field} must be days before the due date, separated by commas, such as 3,1,0`;
     if (kind === 'bool' && typeof value !== 'boolean') return `${field} must be true or false`;
     if (kind === 'int') {
       const [min, max] = RANGES[field]!;

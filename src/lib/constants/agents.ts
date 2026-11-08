@@ -7,3 +7,6 @@ export const AGENT_CASH_HOLD_ALERT_DAYS = 3;
  * (the customer's payment was recorded when the agent took the cash).
  */
 export const AGENT_DEPOSIT_CHANNEL = 'AGENT_DEPOSIT';
+
+/** A short code deposit with no answer from Hubtel after this long is given up on, so the amount can be paid in again. */
+export const AGENT_DEPOSIT_RELEASE_MINUTES = 30;

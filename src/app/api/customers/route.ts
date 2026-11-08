@@ -9,6 +9,7 @@ import {
   cleanNationalId, assertNationalIdNotTaken, CUSTOMER_SUMMARY_SELECT, CUSTOMER_DETAIL_SELECT,
 } from '@/lib/services/customerService';
 import { issuePortalPassword } from '@/lib/services/customerPortalService';
+import { textPortalPassword } from '@/lib/services/smsService';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -100,5 +101,6 @@ export async function POST(req: NextRequest) {
   // The customer's way into the portal: a one-time password, shown to the
   // person registering them this once and stored only as a hash.
   const portalPassword = await issuePortalPassword(customer.id);
+  await textPortalPassword(customer.id, portalPassword);
   return NextResponse.json({ customer, portalPassword }, { status: 201 });
 }

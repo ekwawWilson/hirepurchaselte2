@@ -26,6 +26,10 @@ function outcomeDetail(raw: string | null): string | null {
   }
 }
 
+function agentDepositOf(parts: Array<{ agent: { firstName: string; lastName: string } }>) {
+  return parts.length > 0 ? { agentName: `${parts[0].agent.firstName} ${parts[0].agent.lastName}`, sales: parts.length } : null;
+}
+
 /**
  * Every mobile money attempt — prompts customers started (USSD, portal),
  * prompts staff sent, and direct-debit charges — newest first. The one place
@@ -72,9 +76,16 @@ export async function listMobileMoneyAttempts(params: {
     prisma.hubtelTransaction.count({ where: { contract: contractWhere, status: 'NEEDS_REVIEW', resolvedAt: null } }),
   ]);
 
+  // A short code deposit is the agent's money, and may cover several sales: the contract on the row is only the first.
+  const remitted = await prisma.agentRemittance.findMany({
+    where: { reference: { in: rows.filter((t) => t.channel === AGENT_DEPOSIT_CHANNEL).map((t) => t.clientReference) } },
+    select: { reference: true, agent: { select: { firstName: true, lastName: true } } },
+  });
+
   return {
     attempts: rows.map(({ rawCallbackPayload, ...t }) => ({
       ...t,
+      agentDeposit: agentDepositOf(remitted.filter((r) => r.reference === t.clientReference)),
       status: t.status === 'NEEDS_REVIEW' && t.resolvedAt ? 'RESOLVED' : t.status,
       detail: outcomeDetail(rawCallbackPayload),
     })),
