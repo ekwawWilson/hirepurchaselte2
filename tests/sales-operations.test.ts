@@ -23,6 +23,8 @@ import { cancelContract, writeOffContract } from '@/lib/services/contractService
 import { decideApproval } from '@/lib/services/approvalService';
 import { POST as writeOffPOST } from '@/app/api/contracts/[id]/writeoff/route';
 import { POST as adjustPOST } from '@/app/api/inventory/[id]/adjust/route';
+import { PATCH as userPATCH } from '@/app/api/users/[id]/route';
+import { needsAttention } from '@/lib/services/attentionService';
 
 const runId = Date.now().toString().slice(-7) + Math.floor(Math.random() * 100);
 let counter = 0;
@@ -503,6 +505,33 @@ describe('Sales operations', () => {
       await reversePayment({ paymentId: wrong.id, reason: 'Entered on the wrong contract', reversedById: adminId });
       await cancelContract({ contractId: c.id, reason: 'Customer withdrew', userId: adminId });
       expect(ledgerBalance(await ledgerOf(c.id))).toBe(0);
+    });
+  });
+
+  describe('sales and stock nobody is watching', () => {
+    it('lists a sale that has waited a week for its deposit in Needs Attention', async () => {
+      const asAdmin = { id: adminId, roleName: 'SUPER_ADMIN', branchId: null, permissions: [] } as never;
+      const before = (await needsAttention(asAdmin)).depositsStalled;
+      const c = await sale();
+      expect((await needsAttention(asAdmin)).depositsStalled).toBe(before); // a new sale is not stalled
+      await prisma.contract.update({ where: { id: c.id }, data: { createdAt: new Date(Date.now() - 8 * DAY) } });
+      expect((await needsAttention(asAdmin)).depositsStalled).toBe(before + 1);
+    });
+
+    it("brings an agent's unsold stock back to the shop when they are deactivated, after saying so", async () => {
+      const agent = await newAgent();
+      const held = await unit();
+      await assignStock({ inventoryItemIds: [held.id], agentId: agent.id, actor: { id: adminId, branchId: null } });
+      const token = (await (await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email: 'superadmin@example.test', password: 'Passw0rd!123' } }))).json()).token;
+      const patch = (body: unknown) => userPATCH(makeRequest('PATCH', `/api/users/${agent.id}`, { token, body }), makeParams({ id: agent.id }));
+
+      const warned = await patch({ isActive: false });
+      expect(warned.status).toBe(409);
+      expect((await warned.json()).error).toMatch(/holds 1 unsold unit of stock, which will come back to the shop/);
+      expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: held.id } })).assignedAgentId).toBe(agent.id);
+
+      expect((await patch({ isActive: false, acknowledgeOutstanding: true })).status).toBe(200);
+      expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: held.id } })).assignedAgentId).toBeNull();
     });
   });
 });

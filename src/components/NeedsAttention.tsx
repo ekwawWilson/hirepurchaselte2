@@ -9,7 +9,7 @@ import { formatCurrency, formatDateTime } from '@/lib/utils';
 
 interface Alert { id: string; kind: string; message: string; occurrences: number; lastSeenAt: string }
 interface Attention {
-  paymentsToReview: number; refundsOwed: number; refundsOwedMinor: number; approvalsWaiting: number; followUpsDue: number;
+  paymentsToReview: number; depositsStalled: number; refundsOwed: number; refundsOwedMinor: number; approvalsWaiting: number; followUpsDue: number;
   contractsToApprove: number; remittancesToConfirm: number; contractsSentBack: number; cashToRemitMinor: number; commissionOwedToYouMinor: number;
   alerts: Alert[]; smsNotSending: boolean;
 }
@@ -65,6 +65,9 @@ export function NeedsAttention() {
     },
     data.followUpsDue > 0 && {
       href: '/collections', text: `${plural(data.followUpsDue, 'customer follow-up is', 'customer follow-ups are')} due`,
+    },
+    data.depositsStalled > 0 && {
+      href: '/contracts?status=PENDING_DEPOSIT', text: `${plural(data.depositsStalled, 'sale has', 'sales have')} waited a week or more for the deposit, holding the phone: chase the customer, or cancel`,
     },
     data.refundsOwed > 0 && {
       href: '/refunds', text: `${formatCurrency(data.refundsOwedMinor)} is owed back on ${plural(data.refundsOwed, 'cancelled contract', 'cancelled contracts')}`,

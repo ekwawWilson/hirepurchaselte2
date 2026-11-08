@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
 import { logAudit } from '@/lib/services/auditService';
 import { agentOutstanding } from '@/lib/services/agentLedgerService';
+import { assignStock } from '@/lib/services/stockAssignmentService';
 
 function toUserResponse(user: {
   id: string; email: string; firstName: string; lastName: string; isActive: boolean;
@@ -36,19 +37,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   // An agent leaving — deactivated, or moved to another role, which also
   // stops their ledger following their contracts — while they still hold the
-  // office's cash, or are owed commission, is said out loud first.
+  // office's cash, or are owed commission, is said out loud first. So are
+  // the phones they hold: once confirmed, those come back to the shop, as
+  // they do when an agent moves branch (they can only sell in their own).
   const agentLeaving = existing.role.name === 'AGENT'
     && ((isActive === false && existing.isActive) || (role !== undefined && role !== 'AGENT'));
-  if (agentLeaving && !acknowledgeOutstanding) {
-    const outstanding = await agentOutstanding(id);
-    if (outstanding.agentOwesMinor > 0 || outstanding.owedToAgentMinor > 0) {
+  const agentMoving = existing.role.name === 'AGENT' && branchId !== undefined && branchId !== existing.branchId;
+  const heldStock = agentLeaving || agentMoving
+    ? await prisma.inventoryItem.findMany({ where: { assignedAgentId: id, status: 'AVAILABLE' }, select: { id: true } })
+    : [];
+  if ((agentLeaving || agentMoving) && !acknowledgeOutstanding) {
+    const outstanding = agentLeaving ? await agentOutstanding(id) : { agentOwesMinor: 0, owedToAgentMinor: 0 };
+    if (outstanding.agentOwesMinor > 0 || outstanding.owedToAgentMinor > 0 || heldStock.length > 0) {
       const parts = [
         outstanding.agentOwesMinor > 0 && `still owes GHS ${(outstanding.agentOwesMinor / 100).toFixed(2)} of customers' cash`,
         outstanding.owedToAgentMinor > 0 && `is owed GHS ${(outstanding.owedToAgentMinor / 100).toFixed(2)} of commission`,
+        heldStock.length > 0 && `holds ${heldStock.length} unsold unit${heldStock.length === 1 ? '' : 's'} of stock, which will come back to the shop`,
       ].filter(Boolean).join(' and ');
       return NextResponse.json({
-        error: `${existing.firstName} ${existing.lastName} ${parts}. Settle it on the Agent Ledger first, or confirm to go ahead anyway.`,
-        code: 'AGENT_HAS_BALANCE', ...outstanding,
+        error: `${existing.firstName} ${existing.lastName} ${parts}. Settle it on the Agent Ledger and collect the phones first, or confirm to go ahead anyway.`,
+        code: 'AGENT_HAS_BALANCE', ...outstanding, unitsHeld: heldStock.length,
       }, { status: 409 });
     }
   }
@@ -73,6 +81,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     },
     include: { role: true },
   });
+  if (heldStock.length > 0) {
+    await assignStock({
+      inventoryItemIds: heldStock.map((i) => i.id), agentId: null, actor: { id: auth.user.id, branchId: null },
+      reason: agentLeaving ? `${existing.firstName} ${existing.lastName} stopped being an agent` : `${existing.firstName} ${existing.lastName} moved branch`,
+    });
+  }
   await logAudit({
     userId: auth.user.id, action: 'USER_UPDATE', entityType: 'User', entityId: id,
     oldValues: { roleId: existing.roleId, branchId: existing.branchId, isActive: existing.isActive },

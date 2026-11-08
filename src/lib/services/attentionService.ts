@@ -6,6 +6,9 @@ import { ledgerBalance } from './agentLedgerService';
 import type { AuthenticatedUser } from '../auth/types';
 import type { Permission } from '../constants/rbac';
 
+/** A sale still waiting for its deposit after this long holds its phone for nothing: someone should chase or cancel it. */
+export const DEPOSIT_STALL_DAYS = 7;
+
 /**
  * Everything waiting on a person, in one place, for the dashboard — each
  * item only for someone who can act on it, and scoped as their own screens
@@ -18,7 +21,8 @@ export async function needsAttention(user: AuthenticatedUser) {
   const own = user.roleName === 'AGENT' ? { createdById: user.id } : {};
 
   const isAgent = user.roleName === 'AGENT';
-  const [paymentsToReview, refunds, approvals, followUps, alerts, contractsToApprove, remittancesToConfirm, sentBack, agentEntries] = await Promise.all([
+  const stalledSince = new Date(Date.now() - DEPOSIT_STALL_DAYS * 24 * 60 * 60 * 1000);
+  const [paymentsToReview, refunds, approvals, followUps, alerts, contractsToApprove, remittancesToConfirm, sentBack, agentEntries, depositsStalled] = await Promise.all([
     can('payment.view')
       ? prisma.hubtelTransaction.count({ where: { status: 'NEEDS_REVIEW', resolvedAt: null, ...(user.branchId && { contract: branch }) } })
       : 0,
@@ -42,6 +46,10 @@ export async function needsAttention(user: AuthenticatedUser) {
     // An agent's own: contracts sent back to them, and what they and the office owe each other.
     isAgent ? prisma.contract.count({ where: { createdById: user.id, status: 'REVISION_REQUESTED' } }) : 0,
     isAgent ? prisma.agentDepositLedger.findMany({ where: { agentId: user.id, status: { not: 'SETTLED' } } }) : [],
+    // Sales approved (or made) a week ago or more whose deposit never came: the unit sits reserved meanwhile.
+    can('contract.view')
+      ? prisma.contract.count({ where: { ...branch, ...own, status: 'PENDING_DEPOSIT', OR: [{ approvedAt: { lt: stalledSince } }, { approvedAt: null, createdAt: { lt: stalledSince } }] } })
+      : 0,
   ]);
   const agentBalances = agentEntries.map(ledgerBalance);
 
@@ -56,6 +64,7 @@ export async function needsAttention(user: AuthenticatedUser) {
     cashToRemitMinor: agentBalances.filter((b) => b > 0).reduce((s, b) => s + b, 0),
     commissionOwedToYouMinor: agentBalances.filter((b) => b < 0).reduce((s, b) => s - b, 0),
     followUpsDue: followUps,
+    depositsStalled,
     alerts,
     // Not an alert that comes and goes, but a standing fact worth saying
     // plainly: with no provider set up, messages are written to a log and
