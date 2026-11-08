@@ -48,6 +48,29 @@ export async function receiveInventoryItem(params: {
   });
 }
 
+/** Contract states in which the unit belongs to that sale: awaiting it, out with the customer, or theirs. */
+const UNIT_BOUND_STATUSES = ['PENDING_APPROVAL', 'REVISION_REQUESTED', 'PENDING_DEPOSIT', 'ACTIVE', 'DEFAULTED', 'COMPLETED', 'RELEASED'];
+
+/**
+ * Why a stock adjustment by hand may not make this change, or null. A unit
+ * on a contract moves with the contract (cancel, write off, take back), so an
+ * adjustment can never free it to be sold twice; and only a contract
+ * reserves or issues a unit, so an adjustment never sets those.
+ */
+export async function adjustmentProblem(inventoryItemId: string, toStatus: string): Promise<string | null> {
+  if (!['AVAILABLE', 'RETURNED', 'WRITTEN_OFF'].includes(toStatus)) {
+    return 'An adjustment can set a unit to Available, Returned or Written off. Reserving and issuing happen through a contract.';
+  }
+  const contract = await prisma.contract.findFirst({
+    where: { inventoryItemId, status: { in: UNIT_BOUND_STATUSES } },
+    select: { contractNumber: true, status: true },
+  });
+  if (contract) {
+    return `This unit is on contract ${contract.contractNumber} (${contract.status.toLowerCase().replace(/_/g, ' ')}). Change it through the contract: cancel it, or write it off and say whether the phone was taken back.`;
+  }
+  return null;
+}
+
 /**
  * The single place inventory status changes and stock-movement rows get written together —
  * keeps InventoryItem.status and the stock_movements ledger from ever drifting apart.

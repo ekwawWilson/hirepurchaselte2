@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, assertBranchAccess } from '@/lib/auth/rbac';
-import { applyStockMovement } from '@/lib/services/inventoryService';
+import { applyStockMovement, adjustmentProblem } from '@/lib/services/inventoryService';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(req);
@@ -16,6 +16,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const existing = await prisma.inventoryItem.findUnique({ where: { id } });
   if (!existing) return NextResponse.json({ error: 'Inventory item not found' }, { status: 404 });
   if (!assertBranchAccess(auth.user, existing.branchId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  const problem = await adjustmentProblem(id, toStatus);
+  if (problem) return NextResponse.json({ error: problem }, { status: 400 });
 
   try {
     const item = await applyStockMovement({ inventoryItemId: id, type: 'ADJUSTMENT', toStatus, reason, createdById: auth.user.id });

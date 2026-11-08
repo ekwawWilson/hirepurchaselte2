@@ -22,6 +22,7 @@ import { listCompletionCommissions, markCompletionCommissionPaid, undoCompletion
 import { cancelContract, writeOffContract } from '@/lib/services/contractService';
 import { decideApproval } from '@/lib/services/approvalService';
 import { POST as writeOffPOST } from '@/app/api/contracts/[id]/writeoff/route';
+import { POST as adjustPOST } from '@/app/api/inventory/[id]/adjust/route';
 
 const runId = Date.now().toString().slice(-7) + Math.floor(Math.random() * 100);
 let counter = 0;
@@ -435,6 +436,34 @@ describe('Sales operations', () => {
       }
       expect((await fresh(c.id)).status).toBe('WRITTEN_OFF');
       expect((await unitOf(c.id)).status).toBe('RETURNED');
+    });
+  });
+
+  describe('adjusting stock by hand', () => {
+    const adjust = async (id: string, toStatus: string) => {
+      const token = (await (await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email: 'admin@example.test', password: 'Passw0rd!123' } }))).json()).token;
+      return adjustPOST(makeRequest('POST', `/api/inventory/${id}/adjust`, { token, body: { toStatus, reason: 'Recount' } }), makeParams({ id }));
+    };
+
+    it('never frees a unit that is on a contract, so it cannot be sold twice', async () => {
+      const c = await sale(); // reserved for this sale
+      const res = await adjust(c.inventoryItemId!, 'AVAILABLE');
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/is on contract .* Change it through the contract/);
+      expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: c.inventoryItemId! } })).status).toBe('RESERVED');
+    });
+
+    it('never reserves or issues a unit: only a contract does', async () => {
+      const u = await unit();
+      expect((await adjust(u.id, 'ISSUED')).status).toBe(400);
+    });
+
+    it('puts a phone taken back on a written-off sale back on sale', async () => {
+      const c = await sale();
+      await pay(c.id, 12000);
+      await writeOffContract({ contractId: c.id, reason: 'Repossessed', userId: adminId, phoneReturned: true });
+      expect((await adjust(c.inventoryItemId!, 'AVAILABLE')).status).toBe(200);
+      expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: c.inventoryItemId! } })).status).toBe('AVAILABLE');
     });
   });
 });

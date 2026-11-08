@@ -32,6 +32,9 @@ interface InventoryItem {
   assignedAgent?: { id: string; firstName: string; lastName: string } | null;
 }
 interface AgentStock { id: string; firstName: string; lastName: string; branch: { name: string } | null; available: number; reserved: number; issued: number }
+/** What a stock adjustment may set (inventoryService.adjustmentProblem): never reserved or issued. */
+const ADJUST_LABELS: Record<string, string> = { AVAILABLE: 'Available (on sale)', RETURNED: 'Returned (to be checked)', WRITTEN_OFF: 'Written off (lost or broken)' };
+
 interface Handover { id: string; createdAt: string; fromAgentName: string | null; toAgentName: string | null; assignedByName: string | null; reason: string | null }
 
 const ALL = '__all__';
@@ -49,6 +52,7 @@ export default function InventoryPage() {
   const canEdit = useAuthStore((s) => s.hasPermission('inventory.receive', 'inventory.adjust'));
   // Handing stock to agents (stockAssignmentService.ts); an agent sees only their own.
   const canAssign = useAuthStore((s) => s.hasPermission('inventory.transfer'));
+  const canAdjust = useAuthStore((s) => s.hasPermission('inventory.adjust'));
   const isAgent = useAuthStore((s) => s.user?.role === 'AGENT');
   const isAllBranch = useAuthStore((s) => s.user?.branchId === null);
   const { toast } = useToast();
@@ -74,6 +78,9 @@ export default function InventoryPage() {
   const [assignTo, setAssignTo] = useState('');
   const [assignReason, setAssignReason] = useState('');
   const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
+  // Putting a taken-back phone back on sale, or writing a unit off. Units on a contract move with it instead.
+  const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null);
+  const [adjustForm, setAdjustForm] = useState({ toStatus: '', reason: '' });
   const [history, setHistory] = useState<Handover[] | null>(null);
 
   const load = useCallback(async () => {
@@ -158,6 +165,21 @@ export default function InventoryPage() {
       await load();
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to assign stock', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onAdjust() {
+    if (!adjustItem || !adjustForm.toStatus || !adjustForm.reason.trim()) return;
+    setSaving(true);
+    try {
+      await api.post(`/inventory/${adjustItem.id}/adjust`, { toStatus: adjustForm.toStatus, reason: adjustForm.reason.trim() });
+      toast({ title: 'Stock updated', description: `${adjustItem.serialNumber} is now ${ADJUST_LABELS[adjustForm.toStatus].toLowerCase()}.` });
+      setAdjustItem(null);
+      await load();
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to update the unit', variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -395,6 +417,11 @@ export default function InventoryPage() {
                     <TableCell className="whitespace-nowrap space-x-3">
                       <button className="text-xs text-blue-700 hover:underline" onClick={() => openHistory(i)}>History</button>
                       {canEdit && <button className="text-xs text-blue-700 hover:underline" onClick={() => { setEditItem(i); setEditForm({ name: i.name ?? '', description: i.description ?? '' }); }}>Edit</button>}
+                      {canAdjust && i.status in ADJUST_LABELS && (
+                        <button className="text-xs text-blue-700 hover:underline" onClick={() => { setAdjustItem(i); setAdjustForm({ toStatus: i.status === 'RETURNED' ? 'AVAILABLE' : '', reason: '' }); }}>
+                          {i.status === 'RETURNED' ? 'Put back on sale' : 'Adjust'}
+                        </button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -446,6 +473,34 @@ export default function InventoryPage() {
               ))}
             </ul>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!adjustItem} onOpenChange={(open) => { if (!open) setAdjustItem(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{adjustItem && `${adjustItem.product.name} · ${adjustItem.serialNumber}`}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            {adjustItem?.status === 'RETURNED' && (
+              <p className="text-sm text-gray-600">This unit was taken back from a customer. Check it before putting it back on sale.</p>
+            )}
+            <div>
+              <Label>Change to</Label>
+              <Select value={adjustForm.toStatus} onValueChange={(v) => setAdjustForm({ ...adjustForm, toStatus: v })}>
+                <SelectTrigger className="mt-1.5"><SelectValue placeholder="Choose..." /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(ADJUST_LABELS).filter(([v]) => v !== adjustItem?.status).map(([v, label]) => <SelectItem key={v} value={v}>{label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="adjust-reason">Reason</Label>
+              <Input id="adjust-reason" className="mt-1.5" placeholder="e.g. Checked and working / Screen broken / Lost" value={adjustForm.reason} onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdjustItem(null)}>Cancel</Button>
+            <Button onClick={onAdjust} disabled={saving || !adjustForm.toStatus || !adjustForm.reason.trim()}>{saving ? 'Saving...' : 'Save'}</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
