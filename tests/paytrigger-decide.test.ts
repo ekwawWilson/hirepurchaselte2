@@ -7,10 +7,11 @@ import { decide, lockMomentAfter, type DecisionInput } from '@/lib/paytrigger/de
 
 const NOW = new Date('2026-10-28T12:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 const day = (offset: number) => new Date(Date.UTC(2026, 9, 28 + offset));
 
 /** GHS 600 phone, GHS 120 deposit paid, four weekly GHS 120 instalments; the first due in three days. */
-function input(overrides: { contract?: Partial<DecisionInput['contract']>; device?: Partial<DecisionInput['device']>; agentDeposit?: DecisionInput['agentDeposit']; settings?: Partial<DecisionInput['settings']> } = {}): DecisionInput {
+function input(overrides: { contract?: Partial<DecisionInput['contract']>; device?: Partial<DecisionInput['device']>; temporaryUnlockUntil?: Date | null; agentDeposit?: DecisionInput['agentDeposit']; settings?: Partial<DecisionInput['settings']> } = {}): DecisionInput {
   return {
     now: NOW,
     contract: {
@@ -24,6 +25,7 @@ function input(overrides: { contract?: Partial<DecisionInput['contract']>; devic
     agentDeposit: overrides.agentDeposit ?? null,
     device: { activated: true, providerExpiresAt: new Date(NOW.getTime() + 5 * DAY), ...overrides.device },
     settings: { lockAfterOverdueDays: 1, maxUnlockHorizonDays: 45, ...overrides.settings },
+    temporaryUnlockUntil: overrides.temporaryUnlockUntil,
   };
 }
 
@@ -140,5 +142,29 @@ describe('PayTrigger lock decision', () => {
     const a = decide(input({ contract: overdue }));
     const b = decide({ ...input({ contract: overdue }), now: new Date(NOW.getTime() + 5 * 60_000) });
     expect(b.fingerprint).toBe(a.fingerprint);
+  });
+
+  describe('temporary unlock', () => {
+    const overdue = { instalments: [-20, 10, 17, 24].map((offset, i) => ({ instalmentNo: i + 1, dueDate: day(offset), amountDueMinor: 12000, amountPaidMinor: 0, status: offset < 0 ? 'OVERDUE' : 'PENDING' })) };
+    const until = new Date(NOW.getTime() + 2 * DAY);
+    const shut = { providerExpiresAt: new Date(NOW.getTime() - DAY) };
+
+    it('opens a locked phone to the end of the window', () => {
+      expect(decide(input({ contract: overdue, device: shut, temporaryUnlockUntil: until }))).toMatchObject({ action: 'EXTEND', nextRepayTime: until, lockNow: false });
+    });
+    it('opens a defaulted contract too', () => {
+      expect(decide(input({ contract: { ...overdue, status: 'DEFAULTED' }, device: shut, temporaryUnlockUntil: until }))).toMatchObject({ action: 'EXTEND', nextRepayTime: until });
+    });
+    it('locks again once the window has passed', () => {
+      expect(decide(input({ contract: overdue, device: shut, temporaryUnlockUntil: new Date(NOW.getTime() - HOUR_MS) })).action).toBe('LOCK');
+    });
+    it('never cuts short a normal schedule that runs later than the window', () => {
+      const d = decide(input({ temporaryUnlockUntil: new Date(NOW.getTime() + HOUR_MS) }));
+      expect(d.action).toBe('EXTEND');
+      expect(d.nextRepayTime).toEqual(lockMomentAfter(day(3), 8));
+    });
+    it('an unremitted agent deposit outranks a window', () => {
+      expect(decide(input({ contract: overdue, device: shut, agentDeposit: { owedMinor: 500 }, temporaryUnlockUntil: until })).action).toBe('HOLD');
+    });
   });
 });

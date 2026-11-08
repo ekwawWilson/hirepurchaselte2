@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { TemporaryUnlockCard } from '@/components/TemporaryUnlockCard';
 import { AccessDenied } from '@/components/AccessDenied';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import {
@@ -565,6 +566,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           </p>
         )}
       </div>
+
+      {contract.contractType === 'DEVICE_FINANCING' && canPay && (
+        <TemporaryUnlockCard key={contract.totalPaidMinor} contractId={contract.id} canTakeCash={user?.role !== 'AGENT'} onDone={load} />
+      )}
 
       {!preApproval && (
         <div className="flex flex-wrap gap-2">

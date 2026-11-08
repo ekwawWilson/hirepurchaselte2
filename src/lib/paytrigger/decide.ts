@@ -30,6 +30,8 @@ export interface DecisionInput {
   agentDeposit: { owedMinor: number | null } | null;
   device: { activated: boolean; providerExpiresAt: Date | null };
   settings: { lockAfterOverdueDays: number; maxUnlockHorizonDays: number };
+  /** The end of a temporary unlock the customer has paid for (temporaryUnlock.ts), if any. */
+  temporaryUnlockUntil?: Date | null;
 }
 
 export interface LockAmounts {
@@ -109,6 +111,11 @@ export function decide(input: DecisionInput): Decision {
     ? result(action, reason, new Date(now.getTime() + LOCK_NOW_MS), { ...extra, lockNow: true })
     : result(action, `${reason} (the phone is already past its lock date)`, null, { ...extra, lockNow: true });
 
+  // A paid-for window stays open to its end, even on a defaulted contract.
+  const unlockedUntil = input.temporaryUnlockUntil && input.temporaryUnlockUntil.getTime() > now.getTime() + LOCK_NOW_MS ? input.temporaryUnlockUntil : null;
+  const openUntil = (d: Date) => `Temporary unlock until ${d.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  if (contract.status === 'DEFAULTED' && unlockedUntil) return result('EXTEND', openUntil(unlockedUntil), unlockedUntil, { scheduleExpiresAt: unlockedUntil });
+
   switch (contract.status) {
     case 'COMPLETED':
       return result('RELEASE', 'Paid in full: the lock is removed after the hold period', null);
@@ -142,6 +149,9 @@ export function decide(input: DecisionInput): Decision {
       ? lockNow('HOLD', why, { depositHold: true, scheduleExpiresAt: schedule })
       : result('HOLD', why, null, { depositHold: true, scheduleExpiresAt: schedule, lockNow: true });
   }
+
+  const windowIsLater = !!unlockedUntil && unlockedUntil.getTime() > schedule.getTime();
+  if (windowIsLater) return result('EXTEND', openUntil(unlockedUntil!), unlockedUntil, { scheduleExpiresAt: schedule });
 
   if (schedule.getTime() <= now.getTime() + LOCK_NOW_MS) {
     return lockNow('LOCK', `Instalment ${next!.instalmentNo} is unpaid past the grace period`, { scheduleExpiresAt: schedule });

@@ -11,6 +11,8 @@ import { beginUssdCheckout, ussdUsesHubtelCheckout } from './ussdCheckoutService
 import { parseCedis, paymentAmountProblem, waitingPromptProblem } from './paymentLimitsService';
 import { MONEY_OUT_ENTRY_TYPES } from '../constants/contracts';
 import { verifyMobileMoneyNumber } from './hubtelVerificationService';
+import { getTemporaryUnlockOffer, requestTemporaryUnlock, TemporaryUnlockError } from '../paytrigger/temporaryUnlock';
+import { generateTransactionRef } from '../utils/idGenerators';
 
 const SESSION_TTL_MINUTES = 5;
 // The gateway is waiting on the whole answer: a slow name lookup is dropped
@@ -27,6 +29,8 @@ interface UssdContext {
   name?: string;
   /** The first line of the account screens: "Welcome {name}", or "Paying for {name}" when paying for someone else. */
   heading?: string;
+  /** Set when the amount being confirmed buys a temporary unlock: the tier's percentage. */
+  unlockPercent?: number;
 }
 
 /**
@@ -211,6 +215,30 @@ async function contractPrompt(contract: {
   return `${hello}${paidLine}${dueLine ? `\n${dueLine}` : ''}\n0. Last payments\nEnter amount to pay:`;
 }
 
+/** dd/mm hh:mm */
+const shortDateTime = (d: Date) => `${shortDate(d)} ${d.toISOString().slice(11, 16)}`;
+
+/**
+ * A Device Financing customer whose phone has locked is asked first whether
+ * they want to open it by paying part of what is overdue. Null for everyone
+ * else, who go straight on to paying as before.
+ */
+async function unlockChoiceScreen(contract: { id: string; contractType: string }, heading: string): Promise<UssdResult | null> {
+  if (contract.contractType !== 'DEVICE_FINANCING') return null;
+  const offer = await getTemporaryUnlockOffer(contract.id);
+  if (!offer?.available) return null;
+  const state = offer.activeUntil ? `Open until ${shortDateTime(offer.activeUntil)}` : 'Phone locked';
+  return {
+    message: `${await greeting(heading)}${state}. Overdue GHS${formatMoney(offer.overdueMinor)}\n1. Open phone (pay part)\n2. Pay any amount`,
+    continueSession: true, label: 'Choose option', fieldType: 'number',
+  };
+}
+
+function unlockTierScreen(options: Array<{ amountMinor: number; period: string }>, notice = ''): UssdResult {
+  const lines = options.map((o, i) => `${i + 1}. GHS${formatMoney(o.amountMinor)} - ${o.period}`);
+  return { message: `${notice}Open phone:\n${lines.join('\n')}\n0. Back`, continueSession: true, label: 'Choose option', fieldType: 'number' };
+}
+
 type ListedContract = { id: string; contractType: string; totalPaidMinor: number; balanceMinor: number | null; product: { name: string } | null };
 
 /**
@@ -309,6 +337,14 @@ async function beginForCustomer(sessionId: string, customerId: string, heading: 
   }
 
   const contract = contracts[0];
+  const unlockChoice = await unlockChoiceScreen(contract, heading);
+  if (unlockChoice) {
+    await prisma.ussdSession.update({
+      where: { sessionId },
+      data: { state: 'UNLOCK_CHOICE', contractId: contract.id, context: JSON.stringify({ contractId: contract.id, heading }), expiresAt },
+    });
+    return unlockChoice;
+  }
   const context: UssdContext = { contractId: contract.id };
   const nextState = nextStateFor(contract.contractType);
   await prisma.ussdSession.update({
@@ -461,6 +497,15 @@ export async function handleUssdInput(params: {
         return { message: screen.message, continueSession: true, label: 'Select contract', fieldType: 'number' };
       }
       const contract = await prisma.contract.findUniqueOrThrow({ where: { id: contractIds[idx] }, include: { customer: true } });
+      const chosenHeading = context.heading ?? welcomeLine(`${contract.customer.firstName} ${contract.customer.lastName}`);
+      const unlockChoice = await unlockChoiceScreen(contract, chosenHeading);
+      if (unlockChoice) {
+        await prisma.ussdSession.update({
+          where: { id: existing.id },
+          data: { state: 'UNLOCK_CHOICE', contractId: contract.id, context: JSON.stringify({ contractId: contract.id, heading: chosenHeading }) },
+        });
+        return unlockChoice;
+      }
       const nextState = nextStateFor(contract.contractType);
       await prisma.ussdSession.update({
         where: { id: existing.id },
@@ -471,6 +516,51 @@ export async function handleUssdInput(params: {
         continueSession: true,
         label: nextState === 'DEVICE_LOAN_CHOOSE' ? 'Choose option' : 'Enter amount',
         fieldType: nextState === 'DEVICE_LOAN_CHOOSE' ? 'number' : 'decimal',
+      };
+    }
+
+    case 'UNLOCK_CHOICE': {
+      const contractId = context.contractId as string;
+      const choice = params.input.trim();
+      if (choice === '2') {
+        const contract = await prisma.contract.findUniqueOrThrow({ where: { id: contractId } });
+        await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'ENTER_AMOUNT', context: JSON.stringify({ contractId }) } });
+        return { message: await contractPrompt(contract, context.heading ?? ''), continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+      }
+      if (choice !== '1') {
+        return { message: 'Not an option.\n1. Open phone (pay part)\n2. Pay any amount', continueSession: true, label: 'Choose option', fieldType: 'number' };
+      }
+      const offer = await getTemporaryUnlockOffer(contractId);
+      if (!offer?.available) {
+        await endSession(existing.id);
+        return { message: (offer?.message ?? 'Temporary unlock is not available right now.').slice(0, USSD_SCREEN_LIMIT), continueSession: false, label: 'Not available' };
+      }
+      await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'UNLOCK_TIER' } });
+      return unlockTierScreen(offer.options);
+    }
+
+    case 'UNLOCK_TIER': {
+      const contractId = context.contractId as string;
+      const offer = await getTemporaryUnlockOffer(contractId);
+      if (!offer?.available) {
+        await endSession(existing.id);
+        return { message: (offer?.message ?? 'Temporary unlock is not available right now.').slice(0, USSD_SCREEN_LIMIT), continueSession: false, label: 'Not available' };
+      }
+      const choice = params.input.trim();
+      if (choice === '0') {
+        const contract = await prisma.contract.findUniqueOrThrow({ where: { id: contractId } });
+        await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'UNLOCK_CHOICE' } });
+        return (await unlockChoiceScreen(contract, context.heading ?? ''))!;
+      }
+      const option = /^\d+$/.test(choice) ? offer.options[parseInt(choice, 10) - 1] : undefined;
+      if (!option) return unlockTierScreen(offer.options, 'Not on the list.\n');
+      await prisma.ussdSession.update({
+        where: { id: existing.id },
+        data: { state: 'CONFIRM', context: JSON.stringify({ contractId, amountMinor: option.amountMinor, unlockPercent: option.percent }) },
+      });
+      return {
+        message: `Pay GHS${formatMoney(option.amountMinor)} to open phone for ${option.period}? It locks after that unless all overdue is paid.\n1. Confirm\n2. Cancel`,
+        continueSession: true, label: 'Confirm payment', fieldType: 'number',
       };
     }
 
@@ -541,7 +631,7 @@ export async function handleUssdInput(params: {
       if (params.input !== '1') {
         return { message: 'Invalid option.\n1. Confirm\n2. Cancel', continueSession: true, label: 'Confirm payment', fieldType: 'number' };
       }
-      const { contractId, amountMinor } = context;
+      const { contractId, amountMinor, unlockPercent } = context;
       await endSession(existing.id);
       if (!contractId || !amountMinor) {
         return { message: 'Session error. Please try again.', continueSession: false, label: 'Session error' };
@@ -560,6 +650,18 @@ export async function handleUssdInput(params: {
       // A prompt this phone has not answered yet: a second one could be approved too.
       const waiting = await waitingPromptProblem(contractId, params.msisdn);
       if (waiting) return { message: 'A payment request is already waiting on your phone. Approve or decline it first, or try again in a few minutes.', continueSession: false, label: 'Request already waiting' };
+
+      // A tier is tied to its charge before the charge exists, so a payment that
+      // settles at once still finds it. Checkout's charge is keyed on the session.
+      const unlockReference = unlockPercent === undefined ? undefined : ussdUsesHubtelCheckout() ? params.sessionId : generateTransactionRef();
+      if (unlockPercent !== undefined) {
+        try {
+          await requestTemporaryUnlock({ contractId, percent: unlockPercent, channel: 'USSD', clientReference: unlockReference, expectedAmountMinor: amountMinor });
+        } catch (e) {
+          if (!(e instanceof TemporaryUnlockError)) throw e;
+          return { message: e.message.slice(0, USSD_SCREEN_LIMIT), continueSession: false, label: 'Not available' };
+        }
+      }
 
       if (ussdUsesHubtelCheckout()) {
         // Hubtel's own checkout takes the money from here (ussdCheckoutService.ts):
@@ -580,7 +682,7 @@ export async function handleUssdInput(params: {
       let txn;
       try {
         txn = await initiateHubtelPayment({
-          contractId, msisdn: params.msisdn, amountMinor, network: networkForOperator(params.operator) ?? undefined,
+          contractId, msisdn: params.msisdn, amountMinor, network: networkForOperator(params.operator) ?? undefined, clientReference: unlockReference,
         });
       } catch (e) {
         if (!(e instanceof HubtelError)) throw e;

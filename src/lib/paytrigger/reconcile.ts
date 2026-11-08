@@ -6,6 +6,7 @@ import { getOrgSettings } from '../services/orgSettingsService';
 import { formatMoney } from '../utils/money';
 import { decide, type Decision } from './decide';
 import { getPayTriggerSettings, fillTemplate } from './settings';
+import { temporaryUnlockUntil } from './temporaryUnlock';
 import { registryAdd, registryRemove, notifyPayTrigger, type PayTriggerReason } from './notify';
 import {
   PAYTRIGGER_PATHS, payTriggerAction, payTriggerRead, payTriggerConfig, actionsAreLive, type PayTriggerResult,
@@ -28,6 +29,8 @@ const RELEASE_KEEP_OPEN_MS = 14 * 24 * 60 * 60 * 1000;
 /** Failed sends are tried again after these delays, then left to the morning sweep. */
 const RETRY_DELAYS_MS = [30_000, 120_000, 600_000];
 const STATUS_READ_AFTER_UNLOCK_MS = 60_000;
+/** The customer app (mobile/app.json). */
+const APP_PACKAGE = 'com.flezepay.customer';
 
 export interface Breaker {
   limit: number;
@@ -334,6 +337,7 @@ export async function reconcileContract(contractId: string, opts: {
       : null,
     device: { activated, providerExpiresAt: device.providerExpiresAt },
     settings,
+    temporaryUnlockUntil: await temporaryUnlockUntil(contract.id, now),
   });
 
   const update: Prisma.PayTriggerDeviceUpdateInput = { scheduleExpiresAt: decision.scheduleExpiresAt };
@@ -413,6 +417,8 @@ async function sendLockDate(
     ruleNum: settings.defaultRuleNum,
     description,
     ...(decision.amounts ?? {}),
+    // The lock screen's button. PayTrigger needs the package with the link (code 50012).
+    ...(settings.lockScreenAppLink && { deeplink: `flezepay://open-phone?contract=${contract.id}`, deeplinkPkg: APP_PACKAGE }),
   };
   const type: CommandType = decision.action === 'EXTEND' ? 'EXTEND' : 'LOCK';
   const run = await runCommand({

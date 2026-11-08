@@ -9,6 +9,7 @@ import { AccessDenied } from '@/components/AccessDenied';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { MIN_UNLOCK_TIERS, MAX_UNLOCK_TIERS } from '@/lib/constants/temporaryUnlock';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -32,7 +33,8 @@ interface Issues {
 }
 interface Candidate { id: string; serialNumber: string; status: string; productName: string; branchName: string; imeiValid: boolean; device: { enrollmentStatus: string; lastError: string | null } | null }
 interface Product { id: string; name: string; sku: string; brand: string | null; payTriggerBrand: string | null; suggestedBrand: string | null }
-type Settings = Record<string, string | number | boolean | null>;
+type Settings = Record<string, string | number | boolean | null | Tier[]>;
+interface Tier { percent: number; hours: number }
 
 const TABS = [
   { key: 'attention', label: 'Needs attention' },
@@ -377,6 +379,38 @@ const TEXT_FIELDS: Array<{ key: string; label: string; long?: boolean }> = [
   { key: 'unlinkedTitle', label: 'Phone with no contract: title' }, { key: 'unlinkedTips', label: 'Phone with no contract: text', long: true },
 ];
 
+/** "1 day", "12 hours": what an entry in hours means, as customers will read it. */
+const periodOf = (hours: number) => (!(hours > 0) ? '' : hours % 24 === 0 ? `${hours / 24} day${hours === 24 ? '' : 's'}` : `${hours} hour${hours === 1 ? '' : 's'}`);
+
+/** Four to six tiers (constants/temporaryUnlock.ts), each paying more and opening longer than the last. */
+function UnlockTiers({ tiers, canEdit, onChange }: { tiers: Tier[]; canEdit: boolean; onChange: (tiers: Tier[]) => void }) {
+  const set = (i: number, change: Partial<Tier>) => onChange(tiers.map((t, n) => (n === i ? { ...t, ...change } : t)));
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-[3rem_1fr_1fr_4.5rem_1.5rem] gap-2 text-xs font-medium text-gray-500">
+        <span>Tier</span><span>% of overdue</span><span>Hours open</span><span /><span />
+      </div>
+      {tiers.map((t, i) => (
+        <div key={i} className="grid grid-cols-[3rem_1fr_1fr_4.5rem_1.5rem] gap-2 items-center">
+          <span className="text-sm text-gray-700">{i + 1}</span>
+          <Input type="number" min={1} max={99} aria-label={`Tier ${i + 1} percentage`} disabled={!canEdit} value={String(t.percent)} onChange={(e) => set(i, { percent: Number(e.target.value) })} />
+          <Input type="number" min={1} aria-label={`Tier ${i + 1} hours open`} disabled={!canEdit} value={String(t.hours)} onChange={(e) => set(i, { hours: Number(e.target.value) })} />
+          <span className="text-xs text-gray-500">{periodOf(t.hours)}</span>
+          {canEdit && tiers.length > MIN_UNLOCK_TIERS
+            ? <button type="button" className="text-gray-400 hover:text-red-600" aria-label={`Remove tier ${i + 1}`} onClick={() => onChange(tiers.filter((_, n) => n !== i))}>&times;</button>
+            : <span />}
+        </div>
+      ))}
+      {canEdit && tiers.length < MAX_UNLOCK_TIERS && (
+        <Button type="button" variant="outline" size="sm" onClick={() => {
+          const last = tiers[tiers.length - 1];
+          onChange([...tiers, { percent: Math.min(99, last.percent + 5), hours: last.hours + 24 }]);
+        }}>Add a tier</Button>
+      )}
+    </div>
+  );
+}
+
 function SettingsTab({ onError, canEdit }: { onError: OnError; canEdit: boolean }) {
   const { toast } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -390,7 +424,13 @@ function SettingsTab({ onError, canEdit }: { onError: OnError; canEdit: boolean 
   async function save() {
     setSaving(true);
     try {
-      const body: Record<string, unknown> = { lockOnUnpaidAgentDeposit: settings!.lockOnUnpaidAgentDeposit };
+      const body: Record<string, unknown> = {
+        lockOnUnpaidAgentDeposit: settings!.lockOnUnpaidAgentDeposit,
+        temporaryUnlockEnabled: settings!.temporaryUnlockEnabled,
+        temporaryUnlockMaxUses: Number(settings!.temporaryUnlockMaxUses),
+        temporaryUnlockTiers: (settings!.temporaryUnlockTiers as Tier[]).map((t) => ({ percent: Number(t.percent), hours: Number(t.hours) })),
+        lockScreenAppLink: settings!.lockScreenAppLink,
+      };
       for (const f of NUMBER_FIELDS) body[f.key] = Number(settings![f.key]);
       for (const f of TEXT_FIELDS) body[f.key] = settings![f.key];
       const r = await api.patch<{ settings: Settings }>('/paytrigger/settings', body);
@@ -419,6 +459,28 @@ function SettingsTab({ onError, canEdit }: { onError: OnError; canEdit: boolean 
           <input type="checkbox" className="mt-1" disabled={!canEdit} checked={!!settings.lockOnUnpaidAgentDeposit} onChange={(e) => setSettings({ ...settings, lockOnUnpaidAgentDeposit: e.target.checked })} />
           <span>Keep an agent&apos;s customer locked until the agent remits the deposit cash they took</span>
         </label>
+        <div className="rounded-xl border border-gray-200 p-3 space-y-3">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Temporary unlock</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              A customer whose phone has locked pays part of what is overdue, by the short code, the app or cash at the office, and the phone opens for a set time.
+              It locks again at the end unless all that is overdue has been paid.
+            </p>
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" disabled={!canEdit} checked={!!settings.temporaryUnlockEnabled} onChange={(e) => setSettings({ ...settings, temporaryUnlockEnabled: e.target.checked })} />
+            <span>Offer temporary unlock to customers</span>
+          </label>
+          <UnlockTiers tiers={settings.temporaryUnlockTiers as Tier[]} canEdit={canEdit} onChange={(temporaryUnlockTiers) => setSettings({ ...settings, temporaryUnlockTiers })} />
+          <div className="max-w-xs">
+            <Label>Unlocks allowed before the full overdue must be paid</Label>
+            <Input type="number" min={1} max={20} className="mt-1.5" disabled={!canEdit} value={String(settings.temporaryUnlockMaxUses ?? '')} onChange={(e) => setSettings({ ...settings, temporaryUnlockMaxUses: e.target.value })} />
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" disabled={!canEdit} checked={!!settings.lockScreenAppLink} onChange={(e) => setSettings({ ...settings, lockScreenAppLink: e.target.checked })} />
+            <span>The FlezePay Customer app is on the phones and whitelisted in PayTrigger: the lock screen&apos;s button opens it</span>
+          </label>
+        </div>
         <p className="text-xs text-gray-500">Lock-screen messages may use: {placeholders.map((p) => `{${p}}`).join(' ')}. Titles up to 80 characters, text up to 400.</p>
         {TEXT_FIELDS.map((f) => (
           <div key={f.key}>

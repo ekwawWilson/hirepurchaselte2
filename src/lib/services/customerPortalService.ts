@@ -5,6 +5,7 @@
  * than an email, they see only their own contracts, and their token carries
  * typ: 'customer' so no staff route will ever accept it (auth/jwt.ts).
  */
+import { getTemporaryUnlockOffer } from '../paytrigger/temporaryUnlock';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../db/prisma';
 import { phoneVariants } from './hubtelClient';
@@ -132,7 +133,8 @@ export async function portalContract(customerId: string, contractId: string) {
 
   const deviceLoanState = contract.contractType === 'DEVICE_LOAN' ? await getDeviceLoanState(contract.id) : null;
   const charges = await unpaidChargesByContract([contract.id]);
-  return { ...contract, deviceLoanState, due: dueSummary(contract, contract.instalments, charges.get(contract.id) ?? 0, deviceLoanState) };
+  const temporaryUnlock = contract.contractType === 'DEVICE_FINANCING' ? await getTemporaryUnlockOffer(contract.id) : null;
+  return { ...contract, deviceLoanState, temporaryUnlock, due: dueSummary(contract, contract.instalments, charges.get(contract.id) ?? 0, deviceLoanState) };
 }
 
 export async function portalContracts(customerId: string) {
@@ -148,7 +150,8 @@ export async function portalContracts(customerId: string) {
 
   return Promise.all(contracts.map(async ({ instalments, ...c }) => {
     const deviceLoanState = c.contractType === 'DEVICE_LOAN' ? await getDeviceLoanState(c.id) : null;
-    return { ...c, deviceLoanState, due: dueSummary(c, instalments, charges.get(c.id) ?? 0, deviceLoanState) };
+    const temporaryUnlock = c.contractType === 'DEVICE_FINANCING' ? await getTemporaryUnlockOffer(c.id) : null;
+    return { ...c, deviceLoanState, temporaryUnlock, due: dueSummary(c, instalments, charges.get(c.id) ?? 0, deviceLoanState) };
   }));
 }
 

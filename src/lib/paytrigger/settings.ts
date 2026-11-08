@@ -1,5 +1,6 @@
 import type { PayTriggerSettings } from '@prisma/client';
 import { prisma } from '../db/prisma';
+import { unlockTiersProblem, type TemporaryUnlockTier } from '../constants/temporaryUnlock';
 
 /** Always exactly one row (Settings > PayTrigger), read through a 60-second cache. */
 const SINGLETON_ID = 'singleton';
@@ -29,19 +30,31 @@ export const LOCK_TIPS_MAX = 400;
 const EDITABLE = {
   lockAfterOverdueDays: 'int', lockOnUnpaidAgentDeposit: 'bool', maxUnlockHorizonDays: 'int', releaseHoldHours: 'int',
   extendBreakerPercent: 'int', defaultRuleNum: 'int',
+  temporaryUnlockEnabled: 'bool', temporaryUnlockMaxUses: 'int', temporaryUnlockTiers: 'tiers', lockScreenAppLink: 'bool',
   lockTitle: 'title', lockTips: 'tips', depositHoldTitle: 'title', depositHoldTips: 'tips', unlinkedTitle: 'title', unlinkedTips: 'tips',
 } as const;
 export type EditablePayTriggerSettings = Partial<Pick<PayTriggerSettings, keyof typeof EDITABLE>>;
 
 const RANGES: Partial<Record<keyof typeof EDITABLE, [number, number]>> = {
-  lockAfterOverdueDays: [0, 30], maxUnlockHorizonDays: [7, 180], releaseHoldHours: [0, 720], extendBreakerPercent: [1, 100], defaultRuleNum: [0, 5],
+  lockAfterOverdueDays: [0, 30], maxUnlockHorizonDays: [7, 180], releaseHoldHours: [0, 720], extendBreakerPercent: [1, 100], defaultRuleNum: [0, 5], temporaryUnlockMaxUses: [1, 20],
 };
 
+/** The tiers as saved. */
+export function unlockTiersOf(settings: Pick<PayTriggerSettings, 'temporaryUnlockTiers'>): TemporaryUnlockTier[] {
+  return settings.temporaryUnlockTiers as unknown as TemporaryUnlockTier[];
+}
+
 /** Null if the body is a valid change, else why not. Unknown fields are ignored. */
-export function validatePayTriggerSettings(body: Record<string, unknown>): string | null {
+export function validatePayTriggerSettings(body: Record<string, unknown>, current?: Pick<PayTriggerSettings, 'maxUnlockHorizonDays'>): string | null {
   for (const [field, kind] of Object.entries(EDITABLE) as Array<[keyof typeof EDITABLE, string]>) {
     const value = body[field];
     if (value === undefined) continue;
+    if (kind === 'tiers') {
+      // A phone is never opened further ahead than the cap, so no tier may promise more.
+      const horizonDays = typeof body.maxUnlockHorizonDays === 'number' ? body.maxUnlockHorizonDays : current?.maxUnlockHorizonDays ?? 180;
+      const problem = unlockTiersProblem(value, horizonDays * 24);
+      if (problem) return problem;
+    }
     if (kind === 'bool' && typeof value !== 'boolean') return `${field} must be true or false`;
     if (kind === 'int') {
       const [min, max] = RANGES[field]!;

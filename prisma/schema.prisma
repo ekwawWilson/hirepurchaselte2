@@ -1248,6 +1248,14 @@ model PayTriggerSettings {
   maxUnlockHorizonDays     Int       @default(45)
   releaseHoldHours         Int       @default(24)
   extendBreakerPercent     Int       @default(20)
+  // Temporary unlock (paytrigger/temporaryUnlock.ts): off until the tiers are reviewed.
+  temporaryUnlockEnabled   Boolean   @default(false)
+  // How many a customer may use before they must clear all that is overdue.
+  temporaryUnlockMaxUses   Int       @default(2)
+  // [{ percent, hours }]: pay this share of the overdue amount, open this long.
+  temporaryUnlockTiers     Json      @default("[{\"percent\":25,\"hours\":24},{\"percent\":50,\"hours\":72},{\"percent\":75,\"hours\":120},{\"percent\":90,\"hours\":168}]")
+  // The lock screen's button opens the customer app: on once the app is on the phones.
+  lockScreenAppLink        Boolean   @default(false)
   lockTitle                String    @default("Payment overdue")
   lockTips                 String    @default("Dear {firstName}, your payment of {amount} was due on {dueDate}. Pay to open your phone. Call {supportPhone} for help.")
   depositHoldTitle         String    @default("Phone not yet activated")
@@ -1260,6 +1268,31 @@ model PayTriggerSettings {
   updatedAt                DateTime  @updatedAt
 
   @@map("paytrigger_settings")
+}
+
+// A customer paying part of what is overdue to open a locked phone for a
+// while. status: PENDING (the money has not come in) | APPLIED. Whether one is
+// still running is read from expiresAt, and whether it still counts from its
+// payment, so a reversal needs nothing done here.
+model PayTriggerTemporaryUnlock {
+  id              String    @id @default(uuid())
+  contractId      String
+  percent         Int
+  hours           Int
+  overdueMinor    Int
+  amountMinor     Int
+  channel         String // USSD | APP | STAFF
+  status          String    @default("PENDING")
+  // The mobile money charge (or cash payment) that pays for it.
+  clientReference String    @unique
+  paymentId       String?
+  requestedById   String?
+  activatedAt     DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([contractId, status])
+  @@map("paytrigger_temporary_unlocks")
 }
 
 // A customer resetting a forgotten portal/app password: a 6-digit code sent

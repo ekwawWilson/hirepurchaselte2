@@ -90,6 +90,8 @@ export async function initiateHubtelPayment(params: {
   msisdn: string;
   amountMinor: number;
   network?: string;
+  /** Set when something must be tied to this charge before it can settle (a temporary unlock). */
+  clientReference?: string;
 }) {
   const network = params.network ?? networkForPhone(params.msisdn);
   if (isHubtelLiveMode()) {
@@ -101,7 +103,7 @@ export async function initiateHubtelPayment(params: {
     }
   }
 
-  const clientReference = generateTransactionRef();
+  const clientReference = params.clientReference ?? generateTransactionRef();
 
   await prisma.hubtelTransaction.create({
     data: {
@@ -245,6 +247,9 @@ export async function recordSuccessfulHubtelCharge(txnId: string, rawPayload: st
   try {
     const paymentId = await postHubtelCharge(txn, rawPayload);
     await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { paymentId } });
+    // Imported here, like notifyPayTrigger's reconcile, to keep the phone-lock code out of this one's imports.
+    const { applyTemporaryUnlock } = await import('../paytrigger/temporaryUnlock');
+    await applyTemporaryUnlock(txn.clientReference, paymentId);
   } catch (e) {
     if (!(e instanceof PaymentError || e instanceof HubtelError)) throw e;
     console.error(`[hubtel] charge ${txn.clientReference} was collected but could not be recorded: ${e.message}`);

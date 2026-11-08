@@ -18,9 +18,9 @@ export async function PATCH(req: NextRequest) {
   const perm = requirePermission(auth.user, 'settings.manage');
   if (!perm.authorized) return perm.error;
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  const error = validatePayTriggerSettings(body);
-  if (error) return NextResponse.json({ error }, { status: 400 });
   const before = await getPayTriggerSettings();
+  const error = validatePayTriggerSettings(body, before);
+  if (error) return NextResponse.json({ error }, { status: 400 });
   const settings = await updatePayTriggerSettings(body, auth.user.id);
   await logAudit({ userId: auth.user.id, action: 'SETTINGS_UPDATE', entityType: 'PayTriggerSettings', entityId: 'singleton', oldValues: before, newValues: settings });
   return NextResponse.json({ settings, placeholders: MESSAGE_PLACEHOLDERS });
