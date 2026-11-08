@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { enableOptionalContractTypes, freshPhone, setSaleRules } from './helpers';
 import { prisma } from '@/lib/db/prisma';
 import { createContract, approveContract } from '@/lib/services/contractService';
-import { postPayment, amountOwedNow } from '@/lib/services/paymentService';
+import { postPayment, amountOwedNow, reversePayment } from '@/lib/services/paymentService';
 import { fileRemittance, confirmRemittance, ledgerBalance } from '@/lib/services/agentLedgerService';
 import { assignStock } from '@/lib/services/stockAssignmentService';
 import { applyStockMovement } from '@/lib/services/inventoryService';
@@ -341,6 +341,32 @@ describe('Sales operations', () => {
       } finally {
         await updateCommissionSettings({ fixedCommissionMinor: saved.fixedCommissionMinor, deferredCommissionMinor: 1500, completionBonusMinor: 1000, updatedById: adminId });
       }
+    });
+  });
+
+  describe('reversing a payment', () => {
+    it('reopens a completed contract that is owed money again, so the customer can pay it', async () => {
+      const c = await sale();
+      await pay(c.id, 12000);
+      const last = await pay(c.id, 48000);
+      expect((await fresh(c.id)).status).toBe('COMPLETED');
+
+      await reversePayment({ paymentId: last.payment.id, reason: 'Cheque bounced', reversedById: adminId });
+      const reopened = await fresh(c.id);
+      expect(reopened).toMatchObject({ status: 'ACTIVE', completedAt: null, balanceMinor: 48000 });
+      expect(await prisma.auditLog.count({ where: { entityId: c.id, action: 'CONTRACT_REOPENED' } })).toBe(1);
+
+      await pay(c.id, 48000); // payable again
+      expect((await fresh(c.id)).status).toBe('COMPLETED');
+    });
+
+    it('leaves a completed contract alone when the reversal leaves nothing owing', async () => {
+      const c = await sale();
+      await pay(c.id, 12000);
+      await pay(c.id, 48000);
+      const extra = await prisma.payment.create({ data: { contractId: c.id, entryType: 'INSTALMENT_PAYMENT', amountMinor: 100, channel: 'CASH', transactionRef: `SO-X-${runId}-${++counter}`, status: 'SUCCESS', createdById: adminId, receivedAt: new Date() } });
+      await reversePayment({ paymentId: extra.id, reason: 'Entered twice', reversedById: adminId });
+      expect((await fresh(c.id)).status).toBe('COMPLETED');
     });
   });
 });

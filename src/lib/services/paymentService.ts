@@ -745,10 +745,45 @@ async function reversePaymentInTx(tx: Tx, params: { paymentId: string; reason: s
   return reversal;
 }
 
+/**
+ * A contract completed by a payment that has now been reversed is owed money
+ * again: it goes back to ACTIVE, so the customer can pay it (no payment is
+ * taken on a completed contract) and a Device Financing phone is locked
+ * again if it falls behind. Returns whether it was reopened.
+ */
+async function reopenIfOwing(tx: Tx, contractId: string, reason: string, userId: string): Promise<boolean> {
+  const contract = await tx.contract.findUniqueOrThrow({ where: { id: contractId } });
+  if (contract.status !== 'COMPLETED') return false;
+  let owing: boolean;
+  if (contract.contractType === 'DEVICE_LOAN') {
+    const principalPaid = (await getEffectivePayments(tx, contractId))
+      .filter((p) => p.entryType === 'LOAN_PRINCIPAL_PAYMENT')
+      .reduce((s, p) => s + p.amountMinor, 0);
+    owing = principalPaid < (contract.principalMinor ?? 0)
+      || (await tx.penalty.count({ where: { contractId, reason: 'DAILY_LOAN_INTEREST', isPaid: false } })) > 0;
+  } else if (isInstalmentSale(contract.contractType)) {
+    owing = (contract.balanceMinor ?? 0) > 0 || (await tx.penalty.count({ where: { contractId, isPaid: false } })) > 0;
+  } else {
+    return false; // SAVE_TO_OWN is never completed by a payment
+  }
+  if (!owing) return false;
+  // ACTIVE, not straight to DEFAULTED: the nightly job judges arrears as it does for every contract.
+  await tx.contract.update({ where: { id: contractId }, data: { status: 'ACTIVE', completedAt: null, updatedById: userId } });
+  await tx.auditLog.create({
+    data: {
+      userId, action: 'CONTRACT_REOPENED', entityType: 'Contract', entityId: contractId,
+      oldValues: JSON.stringify({ status: 'COMPLETED', completedAt: contract.completedAt }),
+      newValues: JSON.stringify({ status: 'ACTIVE', reason: `A payment was reversed: ${reason}`, balanceMinor: contract.balanceMinor }),
+    },
+  });
+  return true;
+}
+
 export async function reversePayment(params: { paymentId: string; reason: string; reversedById: string }) {
   const reversal = await prisma.$transaction(async (tx) => {
     const reversal = await reversePaymentInTx(tx, params);
     await recomputeContract(tx, reversal.contractId);
+    await reopenIfOwing(tx, reversal.contractId, params.reason, params.reversedById);
     return reversal;
   });
   notifyPayTrigger(reversal.contractId, 'PAYMENT_REVERSED');
