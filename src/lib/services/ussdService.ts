@@ -65,8 +65,8 @@ export interface UssdResult {
 
 const MAIN_MENU = '1. Self payment\n2. Pay for others\n3. Agent deposits';
 const NO_CONTRACT_MENU = '1. Pay for others\n2. Cancel';
-/** Sales listed by name on an agent's deposit screen; Pay all covers any beyond these. */
-const AGENT_DEPOSITS_SHOWN = 4;
+/** Sales listed on each page of an agent's deposit screen, numbered 2 to 4; 9 shows the next page. */
+const AGENT_DEPOSITS_PER_PAGE = 3;
 const ALT_PHONE_PROMPT = 'Enter their registered phone number, or 0 to go back:';
 
 // A customer can dial in from any of their three registered numbers, not just
@@ -426,17 +426,36 @@ async function tooManyAgentPinTries(sessionRowId: string): Promise<UssdResult> {
 
 type AgentDeposit = Awaited<ReturnType<typeof agentDepositsToPay>>[number];
 
-const depositCustomer = (d: AgentDeposit) => `${d.customer.firstName} ${d.customer.lastName.charAt(0)}`.slice(0, 12);
+/** "Akua M #4": the customer, and the contract number's own digits as the agent sees them in the app (FP-CON-2026-000004). */
+const depositCustomer = (d: AgentDeposit) => `${d.customer.firstName.slice(0, 8)} ${d.customer.lastName.charAt(0)} #${String(Number(d.contractNumber.split('-').pop()) || d.contractNumber.split('-').pop())}`;
 
 async function nothingToPayIn(sessionRowId: string): Promise<UssdResult> {
   await endSession(sessionRowId);
   return { message: 'You have nothing to pay in right now. Any payment you have just approved is still being processed.', continueSession: false, label: 'Nothing to pay' };
 }
 
-function agentDepositList(deposits: AgentDeposit[], notice = ''): UssdResult {
+/** The sales on one page of the list, the page brought back in range if the list has since shrunk. */
+function agentDepositPage(deposits: AgentDeposit[], page: number) {
+  const pages = Math.max(1, Math.ceil(deposits.length / AGENT_DEPOSITS_PER_PAGE));
+  const shown = Math.min(Math.max(0, page), pages - 1);
+  return { page: shown, onPage: deposits.slice(shown * AGENT_DEPOSITS_PER_PAGE, (shown + 1) * AGENT_DEPOSITS_PER_PAGE), more: shown < pages - 1 };
+}
+
+/** Every sale the agent owes on, a page at a time, each with its contract number, and Pay all. */
+async function showAgentDepositList(sessionRowId: string, context: UssdContext, deposits: AgentDeposit[], page: number, notice = ''): Promise<UssdResult> {
+  const { page: shown, onPage, more } = agentDepositPage(deposits, page);
+  await prisma.ussdSession.update({
+    where: { id: sessionRowId },
+    data: { state: 'AGENT_CHOOSE', context: JSON.stringify({ ...context, page: shown, ledgerIds: onPage.map((d) => d.ledgerId), ledgerId: undefined }) },
+  });
   const total = deposits.reduce((s, d) => s + d.payableMinor, 0);
-  const lines = deposits.slice(0, AGENT_DEPOSITS_SHOWN).map((d, i) => `${i + 2}. ${depositCustomer(d)} GHS${formatMoney(d.payableMinor)}`);
-  return { message: `${notice}You owe GHS${formatMoney(total)}\n1. Pay all\n${lines.join('\n')}\n0. Back`, continueSession: true, label: 'Choose option', fieldType: 'number' };
+  const lines = onPage.map((d, i) => `${i + 2}. ${depositCustomer(d)} GHS${formatMoney(d.payableMinor)}`);
+  const heading = `You owe GHS${formatMoney(total)} on ${deposits.length} sales`;
+  return {
+    // A notice takes the heading's place, so the screen still fits.
+    message: `${notice || `${heading}\n`}1. Pay all\n${lines.join('\n')}${more ? '\n9. More' : ''}\n0. Back`,
+    continueSession: true, label: 'Choose option', fieldType: 'number',
+  };
 }
 
 function agentAmountScreen(deposit: AgentDeposit, notice = ''): UssdResult {
@@ -451,9 +470,7 @@ async function beginAgentDeposit(sessionRowId: string, context: UssdContext): Pr
     await prisma.ussdSession.update({ where: { id: sessionRowId }, data: { state: 'AGENT_AMOUNT', context: JSON.stringify({ ...context, ledgerId: deposits[0].ledgerId }) } });
     return agentAmountScreen(deposits[0]);
   }
-  const ledgerIds = deposits.slice(0, AGENT_DEPOSITS_SHOWN).map((d) => d.ledgerId);
-  await prisma.ussdSession.update({ where: { id: sessionRowId }, data: { state: 'AGENT_CHOOSE', context: JSON.stringify({ ...context, ledgerIds }) } });
-  return agentDepositList(deposits);
+  return showAgentDepositList(sessionRowId, context, deposits, 0);
 }
 
 async function askToConfirmAgentDeposit(sessionRowId: string, context: UssdContext): Promise<UssdResult> {
@@ -774,11 +791,15 @@ export async function handleUssdInput(params: {
 
     case 'AGENT_CHOOSE': {
       const choice = params.input.trim();
-      if (choice === '0') {
+      const page = context.page ?? 0;
+      if (choice === '0' && page === 0) {
         await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'MAIN_MENU' } });
         return mainMenu(context.name);
       }
       const deposits = await agentDepositsToPay(context.agentId!);
+      if (deposits.length === 0) return nothingToPayIn(existing.id);
+      if (choice === '0') return showAgentDepositList(existing.id, context, deposits, page - 1);
+      if (choice === '9' && agentDepositPage(deposits, page).more) return showAgentDepositList(existing.id, context, deposits, page + 1);
       if (choice === '1') {
         const amountMinor = deposits.reduce((s, d) => s + d.payableMinor, 0);
         if (amountMinor < MIN_PAYMENT_MINOR) return nothingToPayIn(existing.id);
@@ -786,7 +807,7 @@ export async function handleUssdInput(params: {
       }
       const ledgerId = /^\d+$/.test(choice) ? context.ledgerIds?.[parseInt(choice, 10) - 2] : undefined;
       const deposit = deposits.find((d) => d.ledgerId === ledgerId);
-      if (!deposit) return agentDepositList(deposits, 'Not on the list.\n');
+      if (!deposit) return showAgentDepositList(existing.id, context, deposits, page, 'Not on the list.\n');
       await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'AGENT_AMOUNT', context: JSON.stringify({ ...context, ledgerId: deposit.ledgerId }) } });
       return agentAmountScreen(deposit);
     }

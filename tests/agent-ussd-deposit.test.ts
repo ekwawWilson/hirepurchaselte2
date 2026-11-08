@@ -163,7 +163,7 @@ describe('Agents paying in deposits on the short code', () => {
     const paymentsBefore = await prisma.payment.count({ where: { contractId: contract.id } });
 
     const amountScreen = await dial(phone, '3', pin);
-    expect(amountScreen.last.message).toContain('You owe GHS115.00 for Efua M');
+    expect(amountScreen.last.message).toContain('You owe GHS115.00 for Efua M #');
     const { last, sessionId } = await dial(phone, '3', pin, '115', '1');
     expect(last.message).toContain('Payment successful');
     expect(sessionId).toBeTruthy();
@@ -197,20 +197,23 @@ describe('Agents paying in deposits on the short code', () => {
     expect((await dial(phone, '3', pin)).last.message).toContain('You owe GHS75.00');
   });
 
-  it('pays all sales oldest first, or just the one chosen', async () => {
+  it('pays all sales oldest first, or just the one chosen, named by customer and contract number', async () => {
     const { user, phone, pin } = await makeAgent();
     const first = await owedSale(user.id, 'Akua');
     const second = await owedSale(user.id, 'Kojo');
     const third = await owedSale(user.id, 'Yaa');
+    const no = (c: { contractNumber: string }) => `#${Number(c.contractNumber.split('-').pop())}`;
 
     const list = await dial(phone, '3', pin);
-    expect(list.last.message).toContain('You owe GHS345.00');
+    expect(list.last.message).toContain('You owe GHS345.00 on 3 sales');
     expect(list.last.message).toContain('1. Pay all');
-    expect(list.last.message).toContain('2. Akua M GHS115.00');
-    expect(list.last.message).toContain('4. Yaa M GHS115.00');
+    expect(list.last.message).toContain(`2. Akua M ${no(first)} GHS115.00`);
+    expect(list.last.message).toContain(`4. Yaa M ${no(third)} GHS115.00`);
+    expect(list.last.message).not.toContain('9. More');
     expect(list.last.message.length).toBeLessThanOrEqual(160);
 
-    expect((await dial(phone, '3', pin, '9')).last.message).toContain('Not on the list');
+    expect((await dial(phone, '3', pin, '7')).last.message).toContain('Not on the list');
+    expect((await dial(phone, '3', pin, '3')).last.message).toContain(`You owe GHS115.00 for Kojo M ${no(second)}.`);
 
     await dial(phone, '3', pin, '3', '115', '1'); // Kojo's only
     expect(await ledgerOf(second.id)).toMatchObject({ status: 'SETTLED' });
@@ -219,6 +222,34 @@ describe('Agents paying in deposits on the short code', () => {
     await dial(phone, '3', pin, '1', '1'); // Pay all
     expect(await ledgerOf(first.id)).toMatchObject({ amountRemittedMinor: 11500, status: 'SETTLED' });
     expect(await ledgerOf(third.id)).toMatchObject({ amountRemittedMinor: 11500, status: 'SETTLED' });
+  });
+
+  it('lists every sale a page at a time, so any one can be chosen', async () => {
+    const { user, phone, pin } = await makeAgent();
+    const names = ['Abenaaaaaaaaa', 'Bright', 'Comfort', 'Dede', 'Efua', 'Fiifi', 'Gifty'];
+    const sales = [];
+    for (const n of names) sales.push(await owedSale(user.id, n));
+
+    const pageOne = await dial(phone, '3', pin);
+    expect(pageOne.last.message).toContain('on 7 sales');
+    expect(pageOne.last.message).toContain('2. Abenaaaa M');
+    expect(pageOne.last.message).toContain('9. More');
+    const pageTwo = await dial(phone, '3', pin, '9');
+    expect(pageTwo.last.message).toContain('2. Dede M');
+    const pageThree = await dial(phone, '3', pin, '9', '9');
+    expect(pageThree.last.message).toContain('2. Gifty M');
+    expect(pageThree.last.message).not.toContain('9. More');
+    expect((await dial(phone, '3', pin, '9', '0')).last.message).toContain('2. Abenaaaa M');
+    expect((await dial(phone, '3', pin, '0')).last.message).toContain('1. Self payment');
+    const wrong = await dial(phone, '3', pin, '7');
+    expect(wrong.last.message).toMatch(/^Not on the list\.\n1\. Pay all/);
+    expect(wrong.last.message.length).toBeLessThanOrEqual(160);
+    for (const screen of [pageOne, pageTwo, pageThree]) expect(screen.last.message.length).toBeLessThanOrEqual(160);
+
+    // The last sale, only reachable on the third page.
+    await dial(phone, '3', pin, '9', '9', '2', '115', '1');
+    expect(await ledgerOf(sales[6].id)).toMatchObject({ status: 'SETTLED' });
+    expect(await ledgerOf(sales[0].id)).toMatchObject({ amountRemittedMinor: 0 });
   });
 
   it('credits nothing on a failed charge, makes it payable again, and still lands a late success once', async () => {

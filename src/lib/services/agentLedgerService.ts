@@ -239,7 +239,7 @@ export async function agentDepositsToPay(agentId: string) {
   const entries = await prisma.agentDepositLedger.findMany({
     where: { agentId, status: { not: 'SETTLED' } },
     include: {
-      contract: { select: { id: true, customer: { select: { firstName: true, lastName: true } } } },
+      contract: { select: { id: true, contractNumber: true, customer: { select: { firstName: true, lastName: true } } } },
       remittances: { where: { status: { in: IN_FLIGHT_REMITTANCES } }, select: { amountMinor: true } },
     },
     orderBy: { createdAt: 'asc' },
@@ -248,6 +248,7 @@ export async function agentDepositsToPay(agentId: string) {
     .map((e) => ({
       ledgerId: e.id,
       contractId: e.contract.id,
+      contractNumber: e.contract.contractNumber,
       customer: e.contract.customer,
       payableMinor: ledgerBalance(e) - e.remittances.reduce((s, r) => s + r.amountMinor, 0),
     }))

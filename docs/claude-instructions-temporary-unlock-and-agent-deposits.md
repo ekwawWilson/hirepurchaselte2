@@ -242,7 +242,7 @@ A sale's balance is cash collected minus commission minus remitted plus commissi
 | State | Screen | Input |
 | --- | --- | --- |
 | `AGENT_PIN` | The PIN prompt, with `Wrong PIN.` above it after a miss | 0 returns to the menu. Follow the lockout rules. A right PIN stores the agent id and continues |
-| `AGENT_CHOOSE` | `You owe GHS{total}`, `1. Pay all`, then `2. {First name} {initial} GHS{x}` for up to 4 sales, `0. Back` | Re-read the sales first. Pay all covers any beyond the 4 listed |
+| `AGENT_CHOOSE` | `You owe GHS{total} on {n} sales`, `1. Pay all`, then 3 sales a page as `2. {first name, 8 letters} {initial} #{contract number digits} GHS{x}`, `9. More` when another page follows, `0. Back` | Re-read the sales first. 9 shows the next page; 0 goes to the previous page, or the main menu from the first. A notice such as "Not on the list." replaces the heading line so the screen fits |
 | `AGENT_AMOUNT` | `You owe GHS{x} for {name}.` then `Enter amount to pay:` | Refuse non-numbers, below the minimum, above the amount owed, and ask again |
 | `AGENT_CONFIRM` | `Pay in GHS{x} of your deposits?` then `1. Confirm` and `2. Cancel` | Check the closed day, open the remittance, then charge |
 
