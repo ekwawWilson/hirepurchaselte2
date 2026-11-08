@@ -100,7 +100,7 @@ describe('Agents: ledger, commission and controls', () => {
       expect(await ledgerOf(contract.id)).toMatchObject({ depositAmountMinor: 0, commissionAmountMinor: 0, amountOwedMinor: 0, status: 'SETTLED' });
     });
 
-    it('cancelling before the device is handed over unwinds the agent\'s ledger with the deposit', async () => {
+    it('cancelling before the device is handed over leaves the agent owing the cash they took: the office refunds the customer', async () => {
       const { user } = await makeAgent();
       const product = await prisma.product.create({ data: { sku: `GAP-${unique()}`, name: 'Gap Phone', cashPriceMinor: 100000 } });
       const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: `GAP-SN-${unique()}`, assignedAgentId: user.id } });
@@ -112,7 +112,9 @@ describe('Agents: ledger, commission and controls', () => {
       await approveContract({ contractId: contract.id, approvedById: managerId });
       await agentCash(contract.id, user.id, 6000); // part of the deposit: device still reserved
       await cancelContract({ contractId: contract.id, reason: 'Customer withdrew', userId: managerId });
-      expect(await ledgerOf(contract.id)).toMatchObject({ depositAmountMinor: 0, amountOwedMinor: 0, status: 'SETTLED' });
+      // The cancellation lists the GHS 60 as owed back to the customer, paid by the office; no commission on a sale that fell through.
+      expect(await ledgerOf(contract.id)).toMatchObject({ depositAmountMinor: 6000, commissionAmountMinor: 0, amountOwedMinor: 6000, status: 'OWED' });
+      expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).refundDueMinor).toBe(6000);
     });
 
     it('a cancellation after the device went out keeps the commission: the sale happened', async () => {

@@ -466,4 +466,43 @@ describe('Sales operations', () => {
       expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: c.inventoryItemId! } })).status).toBe('AVAILABLE');
     });
   });
+
+  describe("the agent's ledger when a sale is cancelled", () => {
+    async function partDeposit() {
+      const agent = await newAgent();
+      const c = await sale({ createdById: agent.id, requiresApproval: true });
+      await approveContract({ contractId: c.id, approvedById: adminId });
+      await pay(c.id, 5000, { createdById: agent.id, collectedByAgentId: agent.id }); // part of the GHS 120 deposit: the phone stays reserved
+      return { agent, c };
+    }
+    const ledgerOf = (contractId: string) => prisma.agentDepositLedger.findUniqueOrThrow({ where: { contractId } });
+
+    it('never shows the customer\'s paid-in money as owed to the agent', async () => {
+      const { agent, c } = await partDeposit();
+      const ledger = await ledgerOf(c.id);
+      const remittance = await fileRemittance({ ledgerId: ledger.id, agentId: agent.id, amountMinor: 5000, method: 'CASH' });
+      await confirmRemittance({ remittanceId: remittance.id, confirmedById: adminId, confirmerBranchId: null });
+
+      await cancelContract({ contractId: c.id, reason: 'Customer withdrew', userId: adminId });
+      const after = await ledgerOf(c.id);
+      expect(ledgerBalance(after)).toBe(0); // the office holds it, to refund the customer
+      expect(after.status).toBe('SETTLED');
+    });
+
+    it('still has the agent hand in cash they collected and had not paid in', async () => {
+      const { c } = await partDeposit();
+      await cancelContract({ contractId: c.id, reason: 'Customer withdrew', userId: adminId });
+      const after = await ledgerOf(c.id);
+      expect(ledgerBalance(after)).toBe(5000); // the office refunds the customer, so the agent hands the cash in
+      expect(after.status).toBe('OWED');
+    });
+
+    it('drops a payment reversed as a mistake before the sale was cancelled', async () => {
+      const { c } = await partDeposit();
+      const wrong = await prisma.payment.findFirstOrThrow({ where: { contractId: c.id, reversesPaymentId: null } });
+      await reversePayment({ paymentId: wrong.id, reason: 'Entered on the wrong contract', reversedById: adminId });
+      await cancelContract({ contractId: c.id, reason: 'Customer withdrew', userId: adminId });
+      expect(ledgerBalance(await ledgerOf(c.id))).toBe(0);
+    });
+  });
 });

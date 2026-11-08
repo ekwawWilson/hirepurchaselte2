@@ -18,8 +18,9 @@ type Db = Tx | typeof prisma;
  *  - cash collected: every effective cash payment on the contract recorded
  *    as taken by the agent (Payment.collectedByAgentId). A part-deposit, a
  *    second part, an instalment the agent collected — all of it; a payment
- *    later reversed drops out, as does everything when a cancellation
- *    unwinds the deposit.
+ *    reversed as a mistake drops out. One undone because the sale was
+ *    cancelled still counts: the office refunds the customer (refundDueMinor),
+ *    so the agent still hands in that cash, and never has it paid back to them.
  *  - commission: earned on a Deposit + Instalment sale once its deposit has
  *    been paid in full, however it was paid — cash to the agent, cash at the
  *    counter or mobile money. The rate is fixed the first time it is earned;
@@ -32,16 +33,17 @@ export async function syncAgentLedger(tx: Db, contractId: string): Promise<void>
   const contract = await tx.contract.findUniqueOrThrow({
     where: { id: contractId },
     select: {
-      id: true, contractType: true, activatedAt: true, depositAmountMinor: true, createdById: true,
+      id: true, contractType: true, activatedAt: true, depositAmountMinor: true, createdById: true, status: true, cancelledAt: true,
       createdBy: { select: { role: { select: { name: true } } } },
     },
   });
   if (contract.createdBy.role.name !== 'AGENT') return;
 
   const payments = await effectivePayments(tx, contractId);
-  const cashCollected = payments
-    .filter((p) => p.channel === 'CASH' && p.collectedByAgentId === contract.createdById && !isMoneyOut(p.entryType))
-    .reduce((sum, p) => sum + p.amountMinor, 0);
+  const takenByAgent = (p: { channel: string; collectedByAgentId: string | null; entryType: string }) =>
+    p.channel === 'CASH' && p.collectedByAgentId === contract.createdById && !isMoneyOut(p.entryType);
+  const cashCollected = payments.filter(takenByAgent).reduce((sum, p) => sum + p.amountMinor, 0)
+    + (await cashUndoneByCancellation(tx, contract, takenByAgent));
   const depositPaid = payments.filter((p) => p.entryType === 'DEPOSIT').reduce((sum, p) => sum + p.amountMinor, 0);
   const earned = isInstalmentSale(contract.contractType) && contract.activatedAt !== null && depositPaid >= contract.depositAmountMinor;
 
@@ -81,6 +83,29 @@ export function ledgerBalance(entry: { amountOwedMinor: number; amountRemittedMi
 
 function statusFor(balance: number): 'OWED' | 'DUE_TO_AGENT' | 'SETTLED' {
   return balance > 0 ? 'OWED' : balance < 0 ? 'DUE_TO_AGENT' : 'SETTLED';
+}
+
+/**
+ * Cash the agent took that was reversed by the cancellation itself (its
+ * reversal recorded at or after the moment of cancelling), not by an
+ * earlier correction. 0 unless the contract is cancelled.
+ */
+async function cashUndoneByCancellation(
+  db: Db,
+  contract: { id: string; status: string; cancelledAt: Date | null },
+  takenByAgent: (p: { channel: string; collectedByAgentId: string | null; entryType: string }) => boolean,
+): Promise<number> {
+  if (contract.status !== 'CANCELLED' || !contract.cancelledAt) return 0;
+  const reversals = await db.payment.findMany({
+    where: { contractId: contract.id, status: 'SUCCESS', reversesPaymentId: { not: null }, receivedAt: { gte: contract.cancelledAt } },
+    select: { reversesPaymentId: true },
+  });
+  if (reversals.length === 0) return 0;
+  const originals = await db.payment.findMany({
+    where: { id: { in: reversals.map((r) => r.reversesPaymentId!) } },
+    select: { amountMinor: true, channel: true, collectedByAgentId: true, entryType: true },
+  });
+  return originals.filter(takenByAgent).reduce((sum, p) => sum + p.amountMinor, 0);
 }
 
 /** Successful payments that count: not a reversal row, and not themselves reversed. */
