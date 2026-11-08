@@ -34,7 +34,7 @@ interface Issues {
 interface Candidate { id: string; serialNumber: string; status: string; productName: string; branchName: string; imeiValid: boolean; device: { enrollmentStatus: string; lastError: string | null } | null }
 interface Product { id: string; name: string; sku: string; brand: string | null; payTriggerBrand: string | null; suggestedBrand: string | null }
 type Settings = Record<string, string | number | boolean | null | Tier[]>;
-interface Tier { percent: number; hours: number }
+interface Tier { percent: number; hours: number; chargeMinor?: number; chargeText?: string }
 
 const TABS = [
   { key: 'attention', label: 'Needs attention' },
@@ -388,14 +388,15 @@ function UnlockTiers({ tiers, canEdit, onChange }: { tiers: Tier[]; canEdit: boo
   const set = (i: number, change: Partial<Tier>) => onChange(tiers.map((t, n) => (n === i ? { ...t, ...change } : t)));
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-[3rem_1fr_1fr_4.5rem_1.5rem] gap-2 text-xs font-medium text-gray-500">
-        <span>Tier</span><span>% of overdue</span><span>Hours open</span><span /><span />
+      <div className="grid grid-cols-[3rem_1fr_1fr_1fr_4.5rem_1.5rem] gap-2 text-xs font-medium text-gray-500">
+        <span>Tier</span><span>% of overdue</span><span>Hours open</span><span>Charge (GHS)</span><span /><span />
       </div>
       {tiers.map((t, i) => (
-        <div key={i} className="grid grid-cols-[3rem_1fr_1fr_4.5rem_1.5rem] gap-2 items-center">
+        <div key={i} className="grid grid-cols-[3rem_1fr_1fr_1fr_4.5rem_1.5rem] gap-2 items-center">
           <span className="text-sm text-gray-700">{i + 1}</span>
           <Input type="number" min={1} max={99} aria-label={`Tier ${i + 1} percentage`} disabled={!canEdit} value={String(t.percent)} onChange={(e) => set(i, { percent: Number(e.target.value) })} />
           <Input type="number" min={1} aria-label={`Tier ${i + 1} hours open`} disabled={!canEdit} value={String(t.hours)} onChange={(e) => set(i, { hours: Number(e.target.value) })} />
+          <Input type="number" min={0} step="0.01" aria-label={`Tier ${i + 1} charge`} disabled={!canEdit} value={t.chargeText ?? String((t.chargeMinor ?? 0) / 100)} onChange={(e) => set(i, { chargeText: e.target.value, chargeMinor: Math.round(Number(e.target.value) * 100) })} />
           <span className="text-xs text-gray-500">{periodOf(t.hours)}</span>
           {canEdit && tiers.length > MIN_UNLOCK_TIERS
             ? <button type="button" className="text-gray-400 hover:text-red-600" aria-label={`Remove tier ${i + 1}`} onClick={() => onChange(tiers.filter((_, n) => n !== i))}>&times;</button>
@@ -405,7 +406,7 @@ function UnlockTiers({ tiers, canEdit, onChange }: { tiers: Tier[]; canEdit: boo
       {canEdit && tiers.length < MAX_UNLOCK_TIERS && (
         <Button type="button" variant="outline" size="sm" onClick={() => {
           const last = tiers[tiers.length - 1];
-          onChange([...tiers, { percent: Math.min(99, last.percent + 5), hours: last.hours + 24 }]);
+          onChange([...tiers, { percent: Math.min(99, last.percent + 5), hours: last.hours + 24, chargeMinor: last.chargeMinor ?? 0 }]);
         }}>Add a tier</Button>
       )}
     </div>
@@ -429,7 +430,7 @@ function SettingsTab({ onError, canEdit }: { onError: OnError; canEdit: boolean 
         lockOnUnpaidAgentDeposit: settings!.lockOnUnpaidAgentDeposit,
         temporaryUnlockEnabled: settings!.temporaryUnlockEnabled,
         temporaryUnlockMaxUses: Number(settings!.temporaryUnlockMaxUses),
-        temporaryUnlockTiers: (settings!.temporaryUnlockTiers as Tier[]).map((t) => ({ percent: Number(t.percent), hours: Number(t.hours) })),
+        temporaryUnlockTiers: (settings!.temporaryUnlockTiers as Tier[]).map((t) => ({ percent: Number(t.percent), hours: Number(t.hours), chargeMinor: t.chargeMinor ?? 0 })),
         lockScreenAppLink: settings!.lockScreenAppLink,
         reminderEnabled: settings!.reminderEnabled,
         reminderIncludeDaily: settings!.reminderIncludeDaily,

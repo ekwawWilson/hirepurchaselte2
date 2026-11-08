@@ -52,6 +52,7 @@ You cannot see the project these were first built in. This file is the full spec
 
 - It is off until switched on in settings.
 - Settings hold 4 to 6 tiers of `{ percent, hours }`. Each tier needs a higher percentage and more hours than the one before. Percent is a whole number from 1 to 99. Hours run from 1 to the maximum unlock horizon in hours. Defaults: 25% for 24 hours, 50% for 72, 75% for 120, 90% for 168. A USSD screen holds at most 6.
+- Each tier can also carry a fixed charge, from GHS 0 to GHS 1,000, default 0. The customer pays the tier's share plus its charge. The charge never reduces what they owe.
 - A use cap is editable from 1 to 20, default 2.
 - Overdue means unpaid instalment amounts due before today. Late charges never count.
 - It applies only to a device-financing contract, status active or defaulted, with an active enrolled device.
@@ -108,7 +109,7 @@ model TemporaryUnlock {
 4. Find the last moment nothing was overdue: the latest instalment `paidAt` after which every instalment due before that day had been paid. `used` = paid unlocks activated after that moment, or all of them if there is no such moment. `usesLeft` = cap minus `used`, not below 0.
 5. If the contract was sold by an agent, the deposit-hold setting is on, and the agent's balance is unknown or above 0: closed, "Your phone is held until your agent finishes registering your payment. Please contact your agent."
 6. If `usesLeft` is 0: closed, "You have used all your temporary unlocks. Pay the full overdue amount of {amount} to open your phone."
-7. Each tier's amount is `ceil(overdue × percent / 100)`. Keep options at or above the minimum payment and strictly below the overdue total. With none left: closed, "Pay the full overdue amount of {amount} to open your phone."
+7. Each tier's share is `ceil(overdue × percent / 100)`. Keep options whose share is at or above the minimum payment and strictly below the overdue total. What the customer pays is the share plus the tier's charge. With none left: closed, "Pay the full overdue amount of {amount} to open your phone."
 
 "Closed" means `available: false`, the message, and no options.
 

@@ -1266,7 +1266,7 @@ model PayTriggerSettings {
   temporaryUnlockEnabled   Boolean   @default(false)
   // How many a customer may use before they must clear all that is overdue.
   temporaryUnlockMaxUses   Int       @default(2)
-  // [{ percent, hours }]: pay this share of the overdue amount, open this long.
+  // [{ percent, hours, chargeMinor? }]: pay this share of the overdue amount and this charge, open this long.
   temporaryUnlockTiers     Json      @default("[{\"percent\":25,\"hours\":24},{\"percent\":50,\"hours\":72},{\"percent\":75,\"hours\":120},{\"percent\":90,\"hours\":168}]")
   // The lock screen's button opens the customer app: on once the app is on the phones.
   lockScreenAppLink        Boolean   @default(false)
@@ -1300,7 +1300,9 @@ model PayTriggerTemporaryUnlock {
   percent         Int
   hours           Int
   overdueMinor    Int
+  // What the customer pays: the share of what is overdue, plus chargeMinor.
   amountMinor     Int
+  chargeMinor     Int       @default(0)
   channel         String // USSD | APP | STAFF
   status          String    @default("PENDING")
   // The mobile money charge (or cash payment) that pays for it.

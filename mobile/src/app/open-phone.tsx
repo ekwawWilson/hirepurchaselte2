@@ -135,7 +135,7 @@ export default function OpenPhone() {
               <Ionicons name={chosen ? 'radio-button-on' : 'radio-button-off'} size={22} color={chosen ? colors.primary : colors.textMuted} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.optionTitle}>Open for {o.period}</Text>
-                <Text style={styles.muted}>{o.percent}% of what is overdue</Text>
+                <Text style={styles.muted}>{o.percent}% of what is overdue{o.chargeMinor > 0 ? `, plus a ${formatMoney(o.chargeMinor)} charge` : ''}</Text>
               </View>
               <Text style={styles.optionAmount}>{formatMoney(o.amountMinor)}</Text>
             </Pressable>

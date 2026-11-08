@@ -689,8 +689,9 @@ export async function handleUssdInput(params: {
         where: { id: existing.id },
         data: { state: 'CONFIRM', context: JSON.stringify({ contractId, amountMinor: option.amountMinor, unlockPercent: option.percent }) },
       });
+      const includesCharge = option.chargeMinor > 0 ? ` (incl. GHS${formatMoney(option.chargeMinor)} charge)` : '';
       return {
-        message: `Pay GHS${formatMoney(option.amountMinor)} to open phone for ${option.period}? It locks after that unless all overdue is paid.\n1. Confirm\n2. Cancel`,
+        message: `Pay GHS${formatMoney(option.amountMinor)}${includesCharge} to open phone for ${option.period}? It locks after that unless all overdue is paid.\n1. Confirm\n2. Cancel`,
         continueSession: true, label: 'Confirm payment', fieldType: 'number',
       };
     }

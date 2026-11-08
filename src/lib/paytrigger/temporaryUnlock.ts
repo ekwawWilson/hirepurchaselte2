@@ -34,7 +34,9 @@ export interface UnlockOption {
   hours: number;
   /** "1 day", "12 hours". */
   period: string;
+  /** What the customer pays: the share of what is overdue, plus the charge. */
   amountMinor: number;
+  chargeMinor: number;
 }
 
 export interface TemporaryUnlockOffer {
@@ -124,8 +126,9 @@ export async function getTemporaryUnlockOffer(contractId: string, now: Date = ne
   if (usesLeft === 0) return closed(`You have used all your temporary unlocks. Pay the full overdue amount of ${cedis(overdueMinor)} to open your phone.`);
 
   const options = unlockTiersOf(settings)
-    .map((t) => ({ percent: t.percent, hours: t.hours, period: unlockPeriodLabel(t.hours), amountMinor: Math.ceil((overdueMinor * t.percent) / 100) }))
-    .filter((o) => o.amountMinor >= MIN_PAYMENT_MINOR && o.amountMinor < overdueMinor);
+    .map((t) => ({ percent: t.percent, hours: t.hours, period: unlockPeriodLabel(t.hours), shareMinor: Math.ceil((overdueMinor * t.percent) / 100), chargeMinor: t.chargeMinor ?? 0 }))
+    .filter((o) => o.shareMinor >= MIN_PAYMENT_MINOR && o.shareMinor < overdueMinor)
+    .map(({ shareMinor, ...o }) => ({ ...o, amountMinor: shareMinor + o.chargeMinor }));
   if (options.length === 0) return closed(`Pay the full overdue amount of ${cedis(overdueMinor)} to open your phone.`);
   return { available: true, message: null, overdueMinor, options, activeUntil, usesLeft };
 }
@@ -147,7 +150,7 @@ export async function requestTemporaryUnlock(params: {
   if (params.expectedAmountMinor !== undefined && params.expectedAmountMinor !== option.amountMinor) {
     throw new TemporaryUnlockError('The amount overdue has changed. Please start again.');
   }
-  const problem = await paymentAmountProblem(params.contractId, option.amountMinor);
+  const problem = await paymentAmountProblem(params.contractId, option.amountMinor - option.chargeMinor);
   if (problem) throw new TemporaryUnlockError(problem);
 
   const clientReference = params.clientReference ?? generateTransactionRef();
@@ -155,7 +158,7 @@ export async function requestTemporaryUnlock(params: {
   await prisma.payTriggerTemporaryUnlock.upsert({
     where: { clientReference },
     create: {
-      contractId: params.contractId, percent: option.percent, hours: option.hours, overdueMinor: offer.overdueMinor, amountMinor: option.amountMinor,
+      contractId: params.contractId, percent: option.percent, hours: option.hours, overdueMinor: offer.overdueMinor, amountMinor: option.amountMinor, chargeMinor: option.chargeMinor,
       channel: params.channel, clientReference, requestedById: params.requestedById ?? null,
     },
     update: {},
@@ -185,7 +188,7 @@ export async function applyTemporaryUnlock(clientReference: string, paymentId: s
     if (claimed.count === 0) return;
     await logAudit({
       userId: row.requestedById, action: 'TEMPORARY_UNLOCK', entityType: 'Contract', entityId: row.contractId,
-      newValues: { percent: row.percent, hours: row.hours, amountMinor: row.amountMinor, overdueMinor: row.overdueMinor, channel: row.channel, expiresAt },
+      newValues: { percent: row.percent, hours: row.hours, amountMinor: row.amountMinor, chargeMinor: row.chargeMinor, overdueMinor: row.overdueMinor, channel: row.channel, expiresAt },
     });
     notifyPayTrigger(row.contractId, 'PAYMENT', 'DEVICE_FINANCING');
     await tellCustomer(row.contractId, expiresAt, now);
@@ -219,7 +222,7 @@ export async function takeCashForTemporaryUnlock(params: { contractId: string; p
   const { clientReference, option } = await requestTemporaryUnlock({ contractId: params.contractId, percent: params.percent, channel: 'STAFF', requestedById: params.userId });
   const result = await postPayment({
     contractId: params.contractId, amountMinor: option.amountMinor, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH',
-    transactionRef: clientReference, createdById: params.userId, notes: `Temporary unlock: ${option.percent}% of the overdue amount, open ${option.period}`,
+    transactionRef: clientReference, createdById: params.userId, includedChargeMinor: option.chargeMinor, notes: `Temporary unlock: ${option.percent}% of the overdue amount, open ${option.period}`,
   });
   await applyTemporaryUnlock(clientReference, result.payment.id);
   return { payment: result.payment, option };

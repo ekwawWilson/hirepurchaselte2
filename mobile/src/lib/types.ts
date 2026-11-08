@@ -46,6 +46,7 @@ export interface UnlockOption {
   /** "1 day", "12 hours". */
   period: string;
   amountMinor: number;
+  chargeMinor: number;
 }
 
 /** A locked Device Financing phone (paytrigger/temporaryUnlock.ts on the server); null when it does not apply. */

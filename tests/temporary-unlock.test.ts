@@ -199,6 +199,71 @@ describe('Temporary unlock', () => {
       expect(refused.status).toBe(400);
     });
 
+    it("adds each tier's charge on top: paid with the share, and never counted towards what is owed", async () => {
+      const tiers = [{ percent: 25, hours: 24, chargeMinor: 500 }, { percent: 50, hours: 72, chargeMinor: 800 }, { percent: 75, hours: 120 }, { percent: 90, hours: 168, chargeMinor: 1000 }];
+      await settings({ temporaryUnlockTiers: tiers });
+      try {
+        const s = await lockedSale();
+        const before = await prisma.contract.findUniqueOrThrow({ where: { id: s.contract.id } });
+        const offer = (await getTemporaryUnlockOffer(s.contract.id))!;
+        // GHS 120 overdue: 25% is GHS 30, and the GHS 5 charge goes on top. A tier with no charge costs just its share.
+        expect(offer.options[0]).toMatchObject({ amountMinor: 3500, chargeMinor: 500 });
+        expect(offer.options[2]).toMatchObject({ amountMinor: 9000, chargeMinor: 0 });
+
+        expect((await buyInApp(s, 25)).status).toBe(201);
+        const unlock = await prisma.payTriggerTemporaryUnlock.findFirstOrThrow({ where: { contractId: s.contract.id } });
+        expect(unlock).toMatchObject({ status: 'APPLIED', amountMinor: 3500, chargeMinor: 500 });
+        const payment = await prisma.payment.findUniqueOrThrow({ where: { id: unlock.paymentId! } });
+        expect(payment.amountMinor).toBe(3500);
+
+        const after = await prisma.contract.findUniqueOrThrow({ where: { id: s.contract.id } });
+        expect(after.totalPaidMinor - before.totalPaidMinor).toBe(3000);
+        expect(before.balanceMinor! - after.balanceMinor!).toBe(3000);
+        const first = await prisma.instalment.findFirstOrThrow({ where: { contractId: s.contract.id, instalmentNo: 1 } });
+        expect(first.amountPaidMinor).toBe(3000);
+        expect(await prisma.penalty.findMany({ where: { contractId: s.contract.id } })).toMatchObject([{ reason: 'TEMPORARY_UNLOCK_CHARGE', amountMinor: 500, isPaid: true }]);
+
+        // Reversed: the share is owed again, and no charge is left behind to pay.
+        await reversePayment({ paymentId: payment.id, reason: 'Keyed in error', reversedById: adminId });
+        await payTriggerIdle();
+        expect((await prisma.contract.findUniqueOrThrow({ where: { id: s.contract.id } })).balanceMinor).toBe(before.balanceMinor);
+        expect(await prisma.penalty.count({ where: { contractId: s.contract.id, isPaid: false } })).toBe(0);
+      } finally {
+        await settings({ temporaryUnlockTiers: [{ percent: 25, hours: 24 }, { percent: 50, hours: 72 }, { percent: 75, hours: 120 }, { percent: 90, hours: 168 }] });
+      }
+    });
+
+    it('shows the charge on the short code and takes it with cash at the office', async () => {
+      await settings({ temporaryUnlockTiers: [{ percent: 25, hours: 24, chargeMinor: 500 }, { percent: 50, hours: 72 }, { percent: 75, hours: 120 }, { percent: 90, hours: 168 }] });
+      try {
+        const s = await lockedSale();
+        const sessionId = `tu-charge-${runId}-${++counter}`;
+        const say = (input: string, isNewSession = false) => handleUssdInput({ sessionId, msisdn: s.phone, input, isNewSession });
+        await say('', true);
+        await say('1');
+        await say('1');
+        expect((await say('1')).message).toContain('Pay GHS35.00 (incl. GHS5.00 charge) to open phone for 1 day?');
+
+        const cash = await lockedSale();
+        const token = await login('admin@example.test');
+        const taken = await staffPOST(makeRequest('POST', `/api/contracts/${cash.contract.id}/temporary-unlock`, { token, body: { percent: 25 } }), makeParams({ id: cash.contract.id }));
+        expect(taken.status).toBe(201);
+        const first = await prisma.instalment.findFirstOrThrow({ where: { contractId: cash.contract.id, instalmentNo: 1 } });
+        expect(first.amountPaidMinor).toBe(3000);
+        expect((await taken.json()).payment.amountMinor).toBe(3500);
+      } finally {
+        await settings({ temporaryUnlockTiers: [{ percent: 25, hours: 24 }, { percent: 50, hours: 72 }, { percent: 75, hours: 120 }, { percent: 90, hours: 168 }] });
+      }
+    });
+
+    it('settings refuse a charge that is negative, too large or not whole pesewas', () => {
+      const tiers = (chargeMinor: number) => ({ temporaryUnlockTiers: [{ percent: 25, hours: 24, chargeMinor }, { percent: 50, hours: 72 }, { percent: 75, hours: 120 }, { percent: 90, hours: 168 }] });
+      expect(validatePayTriggerSettings(tiers(500))).toBeNull();
+      expect(validatePayTriggerSettings(tiers(-1))).toMatch(/Tier 1: the charge/);
+      expect(validatePayTriggerSettings(tiers(100_001))).toMatch(/Tier 1: the charge/);
+      expect(validatePayTriggerSettings(tiers(1.5))).toMatch(/Tier 1: the charge/);
+    });
+
     it('keeps counting uses while the customer is behind, and starts afresh only once nothing was overdue', async () => {
       const s = await lockedSale();
       const inst = await prisma.instalment.findMany({ where: { contractId: s.contract.id }, orderBy: { instalmentNo: 'asc' } });

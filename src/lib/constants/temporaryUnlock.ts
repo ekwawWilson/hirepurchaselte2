@@ -8,11 +8,14 @@ export interface TemporaryUnlockTier {
   percent: number;
   /** How long the phone opens for. */
   hours: number;
+  /** A fixed charge paid on top of the share, in pesewas. It never reduces what is owed. */
+  chargeMinor?: number;
 }
 
 export const MIN_UNLOCK_TIERS = 4;
 /** Six lines is what a USSD screen holds. */
 export const MAX_UNLOCK_TIERS = 6;
+export const MAX_UNLOCK_CHARGE_MINOR = 100_000;
 
 /** "12 hours", "1 day", "3 days". */
 export function unlockPeriodLabel(hours: number): string {
@@ -28,9 +31,12 @@ export function unlockTiersProblem(value: unknown, maxHours: number): string | n
   }
   let previous: TemporaryUnlockTier | null = null;
   for (const [i, tier] of (value as Array<Partial<TemporaryUnlockTier>>).entries()) {
-    const { percent, hours } = tier ?? {};
+    const { percent, hours, chargeMinor } = tier ?? {};
     if (!Number.isInteger(percent) || percent! < 1 || percent! > 99) return `Tier ${i + 1}: the percentage must be a whole number from 1 to 99`;
     if (!Number.isInteger(hours) || hours! < 1 || hours! > maxHours) return `Tier ${i + 1}: the hours must be a whole number from 1 to ${maxHours}`;
+    if (chargeMinor !== undefined && (!Number.isInteger(chargeMinor) || chargeMinor < 0 || chargeMinor > MAX_UNLOCK_CHARGE_MINOR)) {
+      return `Tier ${i + 1}: the charge must be from GHS 0 to GHS ${MAX_UNLOCK_CHARGE_MINOR / 100}`;
+    }
     if (previous && (percent! <= previous.percent || hours! <= previous.hours)) {
       return `Tier ${i + 1} must take a higher percentage and open for longer than tier ${i}`;
     }

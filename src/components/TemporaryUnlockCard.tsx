@@ -10,7 +10,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-interface Option { percent: number; hours: number; period: string; amountMinor: number }
+interface Option { percent: number; hours: number; period: string; amountMinor: number; chargeMinor: number }
 interface Offer { available: boolean; message: string | null; overdueMinor: number; options: Option[]; activeUntil: string | null; usesLeft: number }
 
 /**
@@ -70,7 +70,7 @@ export function TemporaryUnlockCard({ contractId, canTakeCash, onDone }: { contr
           <AlertDialogHeader>
             <AlertDialogTitle>Take {chosen && formatCurrency(chosen.amountMinor)} in cash?</AlertDialogTitle>
             <AlertDialogDescription>
-              The payment is recorded now and the phone opens for {chosen?.period}. It locks again at the end unless all that is overdue has been paid.
+              {!!chosen?.chargeMinor && `This includes a ${formatCurrency(chosen.chargeMinor)} charge. `}The payment is recorded now and the phone opens for {chosen?.period}. It locks again at the end unless all that is overdue has been paid.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

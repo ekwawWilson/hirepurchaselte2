@@ -338,9 +338,11 @@ async function postHubtelCharge(
   const entryType = isInstalmentSale(contract.contractType) && contract.status === 'PENDING_DEPOSIT'
     ? 'DEPOSIT'
     : 'INSTALMENT_PAYMENT';
+  const unlock = await prisma.payTriggerTemporaryUnlock.findUnique({ where: { clientReference: txn.clientReference }, select: { chargeMinor: true } });
   const result = await postPayment({
     contractId: txn.contractId,
     amountMinor: txn.amountMinor,
+    includedChargeMinor: unlock?.chargeMinor,
     entryType,
     channel: 'USSD',
     transactionRef: txn.clientReference,

@@ -231,6 +231,8 @@ export async function resettleContract(tx: Tx, contractId: string) {
 }
 
 export interface PostPaymentParams {
+  /** Part of amountMinor that is a charge agreed with this payment (a temporary unlock's): recorded as paid, and never put towards what is owed. */
+  includedChargeMinor?: number;
   contractId: string;
   amountMinor: number;
   entryType: 'DEPOSIT' | 'INSTALMENT_PAYMENT';
@@ -366,7 +368,12 @@ export async function postPayment(params: PostPaymentParams) {
     // below are computed straight from the payments ledger regardless, so skipping
     // allocation here doesn't affect correctness, just avoids a pointless no-op query.
     if (scheduleShareMinor > 0) {
-      await allocatePayment(tx, payment.id, contract.id, scheduleShareMinor);
+      const chargeMinor = params.includedChargeMinor ?? 0;
+      if (chargeMinor > 0) {
+        const charge = await tx.penalty.create({ data: { contractId: contract.id, amountMinor: chargeMinor, reason: 'TEMPORARY_UNLOCK_CHARGE' } });
+        await tx.paymentAllocation.create({ data: { paymentId: payment.id, targetType: 'PENALTY', penaltyId: charge.id, amountMinor: chargeMinor } });
+      }
+      await allocatePayment(tx, payment.id, contract.id, scheduleShareMinor - chargeMinor);
     }
 
     await recomputeContract(tx, contract.id);

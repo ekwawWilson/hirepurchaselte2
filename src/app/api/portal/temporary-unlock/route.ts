@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   try {
     await assertPaymentsAcceptedToday();
     const { clientReference, option } = await requestTemporaryUnlock({ contractId: contract.id, percent, channel: 'APP' });
-    const problem = await mobileMoneyRequestProblem({ contract, customer: contract.customer, amountMinor: option.amountMinor, msisdn });
+    const problem = await mobileMoneyRequestProblem({ contract, customer: contract.customer, amountMinor: option.amountMinor - option.chargeMinor, msisdn });
     if (problem) return NextResponse.json({ error: problem.error }, { status: problem.status });
     const txn = await initiateHubtelPayment({ contractId: contract.id, msisdn: msisdn.trim(), amountMinor: option.amountMinor, network, clientReference });
     await logAudit({
