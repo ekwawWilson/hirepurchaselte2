@@ -292,7 +292,7 @@ describe('USSD payments through Hubtel\'s checkout', () => {
     const { phone, sessionId } = await makeSaver({ firstName: 'Kɔfi', lastName: 'Ésí-Ɔbɛŋ' });
     let first: Record<string, string> = {};
     await withLiveHubtel(() => ({}), async () => { first = await dial(sessionId, phone, 'Initiation', '*713#'); });
-    expect(first.Message).toBe('Welcome Kofi Esi-Oben\n1. Self payment\n2. Pay for others'); // Hubtel gave no wallet name, so the registered one, in plain text
+    expect(first.Message).toBe('Welcome Kofi Esi-Oben\n1. Self payment\n2. Pay for others\n3. Agent deposits'); // Hubtel gave no wallet name, so the registered one, in plain text
     // Nothing outside plain ASCII and line breaks.
     expect(first.Message).toMatch(/^[\x20-\x7E\n]+$/);
   });
@@ -307,7 +307,7 @@ describe('USSD payments through Hubtel\'s checkout', () => {
     expect(calls.map((c) => c.url)).toEqual([
       `https://rnv.hubtel.com/v2/merchantaccount/merchants/11684/mobilemoney/verify?channel=mtn-gh&customerMsisdn=233${phone.slice(1)}`,
     ]);
-    expect(first.Message).toBe('Welcome Ama Serwaa\n1. Self payment\n2. Pay for others'); // ordinary case, whole words, cut to fit
+    expect(first.Message).toBe('Welcome Ama Serwaa\n1. Self payment\n2. Pay for others\n3. Agent deposits'); // ordinary case, whole words, cut to fit
 
     // Self payment's screens carry the same name; the lookup is not repeated.
     let account: Record<string, string> = {};

@@ -27,7 +27,7 @@ async function netPaymentsInRange(scope: Scope, start: Date, end: Date, channel?
     ...(channel && { channel }),
     ...(scope.branchId && { contract: { branchId: scope.branchId } }),
   };
-  return prisma.payment.findMany({ where, include: { createdBy: true, contract: true } });
+  return prisma.payment.findMany({ where, include: { createdBy: { select: { firstName: true, lastName: true } }, contract: true } });
 }
 
 // 1. Daily cash received — by cashier, by branch, cash vs USSD split.
@@ -71,7 +71,7 @@ export async function contractsCreatedReport(scope: Scope, from?: string, to?: s
   const { start, end } = dayRange(from, to);
   const contracts = await prisma.contract.findMany({
     where: { createdAt: { gte: start, lte: end }, ...(scope.branchId && { branchId: scope.branchId }) },
-    include: { createdBy: true },
+    include: { createdBy: { select: { firstName: true, lastName: true } } },
   });
 
   const byType = new Map<string, { count: number; totalMinor: number }>();
@@ -119,7 +119,7 @@ export async function paymentsRegisterReport(scope: Scope, from?: string, to?: s
   const { start, end } = dayRange(from, to);
   const payments = await prisma.payment.findMany({
     where: { createdAt: { gte: start, lte: end }, ...(scope.branchId && { contract: { branchId: scope.branchId } }) },
-    include: { createdBy: true, contract: { select: { contractNumber: true } } },
+    include: { createdBy: { select: { firstName: true, lastName: true } }, contract: { select: { contractNumber: true } } },
     orderBy: { createdAt: 'desc' },
   });
   return { range: { start, end }, payments };

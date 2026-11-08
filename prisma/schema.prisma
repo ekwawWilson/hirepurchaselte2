@@ -75,6 +75,10 @@ model User {
   id                 String    @id @default(uuid())
   email              String    @unique
   phone              String?
+  // An agent's own PIN for paying in deposits on the short code, which anyone
+  // can dial: it is how they are told apart, so it is unique. Shown to them on
+  // their dashboard, so it is kept readable; never send it anywhere else.
+  paymentPin         String?   @unique
   passwordHash       String
   firstName          String
   lastName           String
@@ -687,6 +691,16 @@ model HubtelPreapproval {
 // msisdn is deliberately NOT a foreign key to Customer.phone — a USSD session
 // can start from a number that isn't a registered customer yet (that's what
 // the lookup step in the menu is for).
+// A wrong agent payment PIN typed on the short code, counted per phone to stop guessing.
+model AgentPinFailure {
+  id        String   @id @default(uuid())
+  msisdn    String
+  createdAt DateTime @default(now())
+
+  @@index([msisdn, createdAt])
+  @@map("agent_pin_failures")
+}
+
 model UssdSession {
   id         String   @id @default(uuid())
   sessionId  String   @unique

@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { OneTimePasswordDialog } from '@/components/OneTimePasswordDialog';
 
 interface User {
-  id: string; email: string; firstName: string; lastName: string; isActive: boolean;
+  id: string; email: string; phone: string | null; firstName: string; lastName: string; isActive: boolean;
   mustChangePassword: boolean; branchId: string | null; role: string;
 }
 interface Branch { id: string; name: string; code: string }
@@ -38,11 +38,11 @@ export default function UsersPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [createForm, setCreateForm] = useState({ firstName: '', lastName: '', email: '', password: '', role: '', branchId: ALL_BRANCHES });
+  const [createForm, setCreateForm] = useState({ firstName: '', lastName: '', email: '', phone: '', password: '', role: '', branchId: ALL_BRANCHES });
   const [creating, setCreating] = useState(false);
 
   const [editUser, setEditUser] = useState<User | null>(null);
-  const [editForm, setEditForm] = useState({ role: '', branchId: ALL_BRANCHES, isActive: true });
+  const [editForm, setEditForm] = useState({ role: '', branchId: ALL_BRANCHES, isActive: true, phone: '' });
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   // An agent leaving with money still outstanding: the server's warning, shown before saving anyway.
@@ -101,7 +101,7 @@ export default function UsersPage() {
       });
       toast({ title: 'User created' });
       setCreateOpen(false);
-      setCreateForm({ firstName: '', lastName: '', email: '', password: '', role: roles[0]?.name ?? '', branchId: ALL_BRANCHES });
+      setCreateForm({ firstName: '', lastName: '', email: '', phone: '', password: '', role: roles[0]?.name ?? '', branchId: ALL_BRANCHES });
       await load();
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to create user', variant: 'destructive' });
@@ -112,7 +112,7 @@ export default function UsersPage() {
 
   function openEdit(u: User) {
     setEditUser(u);
-    setEditForm({ role: u.role, branchId: u.branchId ?? ALL_BRANCHES, isActive: u.isActive });
+    setEditForm({ role: u.role, branchId: u.branchId ?? ALL_BRANCHES, isActive: u.isActive, phone: u.phone ?? '' });
   }
 
   async function onSaveEdit(acknowledgeOutstanding = false) {
@@ -123,6 +123,7 @@ export default function UsersPage() {
         role: editForm.role,
         branchId: editForm.branchId === ALL_BRANCHES ? null : editForm.branchId,
         isActive: editForm.isActive,
+        phone: editForm.phone,
         ...(acknowledgeOutstanding && { acknowledgeOutstanding: true }),
       });
       toast({ title: 'User updated' });
@@ -181,6 +182,7 @@ export default function UsersPage() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
+                  <TableHead>Mobile</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Branch</TableHead>
                   <TableHead>Status</TableHead>
@@ -192,6 +194,7 @@ export default function UsersPage() {
                   <TableRow key={u.id}>
                     <TableCell className="font-medium text-gray-900">{u.firstName} {u.lastName}</TableCell>
                     <TableCell>{u.email}</TableCell>
+                    <TableCell>{u.phone ?? '—'}</TableCell>
                     <TableCell><Badge variant="secondary">{u.role}</Badge></TableCell>
                     <TableCell>{branchName(u.branchId)}</TableCell>
                     <TableCell>
@@ -225,6 +228,11 @@ export default function UsersPage() {
             <div className="col-span-2">
               <Label>Email</Label>
               <Input required type="email" className="mt-1.5" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} />
+            </div>
+            <div className="col-span-2">
+              <Label>Mobile number</Label>
+              <Input type="tel" className="mt-1.5" placeholder="e.g. 0241234567" value={createForm.phone} onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })} />
+              <p className="text-xs text-gray-400 mt-1.5">An agent is texted a receipt on this number when they pay in deposits on the short code.</p>
             </div>
             <div className="col-span-2">
               <Label>First password</Label>
@@ -263,6 +271,11 @@ export default function UsersPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>{editUser?.firstName} {editUser?.lastName}</DialogTitle></DialogHeader>
           <div className="space-y-4">
+            <div>
+              <Label>Mobile number</Label>
+              <Input type="tel" className="mt-1.5" placeholder="e.g. 0241234567" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+              <p className="text-xs text-gray-400 mt-1.5">An agent is texted a receipt on this number when they pay in deposits on the short code.</p>
+            </div>
             <div>
               <Label>Role</Label>
               <Select value={editForm.role} onValueChange={(v) => setEditForm({ ...editForm, role: v })}>

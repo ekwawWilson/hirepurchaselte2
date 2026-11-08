@@ -55,7 +55,10 @@ const STATUS_TONE: Record<string, string> = {
   PENDING: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/60',
   CONFIRMED: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60',
   REJECTED: 'bg-red-50 text-red-700 ring-1 ring-red-200/60',
+  AWAITING_PAYMENT: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/60',
+  PAYMENT_FAILED: 'bg-red-50 text-red-700 ring-1 ring-red-200/60',
 };
+const STATUS_LABELS: Record<string, string> = { AWAITING_PAYMENT: 'WAITING FOR PAYMENT', PAYMENT_FAILED: 'NOT PAID' };
 
 interface CompletionSummary {
   dueOnCompletion: { count: number; totalMinor: number };
@@ -101,7 +104,7 @@ export default function MyDepositsPage() {
 
   /** What can still be remitted: what is owed, less claims still waiting to be confirmed. */
   function outstanding(e: LedgerEntry) {
-    const pending = e.remittances.filter((r) => r.status === 'PENDING').reduce((s, r) => s + r.amountMinor, 0);
+    const pending = e.remittances.filter((r) => r.status === 'PENDING' || r.status === 'AWAITING_PAYMENT').reduce((s, r) => s + r.amountMinor, 0);
     return Math.max(0, e.agentOwesMinor - pending);
   }
 
@@ -231,7 +234,7 @@ export default function MyDepositsPage() {
                             {r.reference && <> ({r.reference})</>} &middot; {formatDateTime(r.createdAt)}
                             {r.status === 'REJECTED' && r.rejectionReason && <span className="text-red-600"> — {r.rejectionReason}</span>}
                           </span>
-                          <Badge className={cn(STATUS_TONE[r.status])}>{r.status}</Badge>
+                          <Badge className={cn(STATUS_TONE[r.status])}>{STATUS_LABELS[r.status] ?? r.status}</Badge>
                         </div>
                       ))}
                     </div>
@@ -268,7 +271,7 @@ export default function MyDepositsPage() {
                 <Input id="remit-ref" className="mt-1.5" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Transaction ID" />
               </div>
             )}
-            <p className="text-xs text-gray-400">The office will confirm this once they have counted the cash or checked the transfer.</p>
+            <p className="text-xs text-gray-400">The office will confirm this once they have counted the cash or checked the transfer. To pay by mobile money without waiting, dial the short code, choose Agent deposits and enter the payment PIN on your dashboard: it is confirmed as soon as the money arrives.</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRemitTarget(null)}>Cancel</Button>

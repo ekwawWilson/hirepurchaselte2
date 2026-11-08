@@ -36,7 +36,7 @@ const CALLBACK_WINDOW_MS = 60 * 60_000;
  * Records the payment the customer has just confirmed in the menu, before
  * the menu hands them to Hubtel's checkout. Returns what goes in the cart.
  */
-export async function beginUssdCheckout(params: { sessionId: string; contractId: string; msisdn: string; amountMinor: number }) {
+export async function beginUssdCheckout(params: { sessionId: string; contractId: string; msisdn: string; amountMinor: number; channel?: string; itemName?: string }) {
   const contract = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId }, select: { contractNumber: true } });
   const existing = await prisma.hubtelTransaction.findUnique({ where: { clientReference: params.sessionId } });
   // A session id is Hubtel's and is never reused; one seen before is the
@@ -48,12 +48,12 @@ export async function beginUssdCheckout(params: { sessionId: string; contractId:
     await prisma.hubtelTransaction.create({
       data: {
         clientReference: params.sessionId, contractId: params.contractId, msisdn: params.msisdn,
-        amountMinor: params.amountMinor, status: 'PENDING', channel: 'USSD',
+        amountMinor: params.amountMinor, status: 'PENDING', channel: params.channel ?? 'USSD',
         rawCallbackPayload: JSON.stringify({ checkout: true, addedToCartAt: new Date().toISOString() }),
       },
     });
   }
-  return { itemName: `Payment ${contract.contractNumber}`, amountMinor: params.amountMinor };
+  return { itemName: params.itemName ?? `Payment ${contract.contractNumber}`, amountMinor: params.amountMinor };
 }
 
 interface FulfilmentPayload {

@@ -2,16 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
 import { logAudit } from '@/lib/services/auditService';
+import { cleanStaffPhone } from '@/lib/services/staffPhoneService';
+import { issueAgentPaymentPin } from '@/lib/services/agentPaymentPinService';
 import { agentOutstanding } from '@/lib/services/agentLedgerService';
 import { assignStock } from '@/lib/services/stockAssignmentService';
 
 function toUserResponse(user: {
-  id: string; email: string; firstName: string; lastName: string; isActive: boolean;
+  id: string; email: string; phone: string | null; firstName: string; lastName: string; isActive: boolean;
   mustChangePassword: boolean; branchId: string | null; role: { name: string };
 }) {
   return {
     id: user.id,
     email: user.email,
+    phone: user.phone,
     firstName: user.firstName,
     lastName: user.lastName,
     isActive: user.isActive,
@@ -28,12 +31,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!perm.authorized) return perm.error;
 
   const { id } = await params;
-  const { firstName, lastName, role, branchId, isActive, acknowledgeOutstanding } = (await req.json()) as {
-    firstName?: string; lastName?: string; role?: string; branchId?: string | null; isActive?: boolean; acknowledgeOutstanding?: boolean;
+  const { firstName, lastName, role, branchId, isActive, acknowledgeOutstanding, phone } = (await req.json()) as {
+    firstName?: string; lastName?: string; role?: string; branchId?: string | null; isActive?: boolean; acknowledgeOutstanding?: boolean; phone?: string;
   };
 
   const existing = await prisma.user.findUnique({ where: { id }, include: { role: true } });
   if (!existing) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+  const cleanedPhone = phone === undefined ? null : await cleanStaffPhone(phone, id);
+  if (cleanedPhone && 'error' in cleanedPhone) return NextResponse.json({ error: cleanedPhone.error }, { status: 400 });
 
   // An agent leaving — deactivated, or moved to another role, which also
   // stops their ledger following their contracts — while they still hold the
@@ -78,9 +84,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(roleId !== undefined && { roleId }),
       ...(branchId !== undefined && { branchId }),
       ...(isActive !== undefined && { isActive }),
+      ...(cleanedPhone && { phone: cleanedPhone.phone }),
     },
     include: { role: true },
   });
+  if (user.role.name === 'AGENT') await issueAgentPaymentPin(id);
   if (heldStock.length > 0) {
     await assignStock({
       inventoryItemIds: heldStock.map((i) => i.id), agentId: null, actor: { id: auth.user.id, branchId: null },
@@ -89,8 +97,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   await logAudit({
     userId: auth.user.id, action: 'USER_UPDATE', entityType: 'User', entityId: id,
-    oldValues: { roleId: existing.roleId, branchId: existing.branchId, isActive: existing.isActive },
-    newValues: { roleId: user.roleId, branchId: user.branchId, isActive: user.isActive },
+    oldValues: { roleId: existing.roleId, branchId: existing.branchId, isActive: existing.isActive, phone: existing.phone },
+    newValues: { roleId: user.roleId, branchId: user.branchId, isActive: user.isActive, phone: user.phone },
   });
 
   return NextResponse.json({ user: toUserResponse(user) });

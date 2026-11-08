@@ -13,6 +13,10 @@ import { MONEY_OUT_ENTRY_TYPES } from '../constants/contracts';
 import { verifyMobileMoneyNumber } from './hubtelVerificationService';
 import { getTemporaryUnlockOffer, requestTemporaryUnlock, TemporaryUnlockError } from '../paytrigger/temporaryUnlock';
 import { generateTransactionRef } from '../utils/idGenerators';
+import { agentDepositsToPay, failUssdRemittance, openUssdRemittance, AgentLedgerError } from './agentLedgerService';
+import { agentIdForPin, agentPinLockedOut, clearWrongAgentPins, recordWrongAgentPin } from './agentPaymentPinService';
+import { AGENT_DEPOSIT_CHANNEL } from '../constants/agents';
+import { MIN_PAYMENT_MINOR } from './paymentLimitsService';
 
 const SESSION_TTL_MINUTES = 5;
 // The gateway is waiting on the whole answer: a slow name lookup is dropped
@@ -31,6 +35,12 @@ interface UssdContext {
   heading?: string;
   /** Set when the amount being confirmed buys a temporary unlock: the tier's percentage. */
   unlockPercent?: number;
+  /** Set once the caller has entered an agent's payment PIN: whose deposits are being paid in. */
+  agentId?: string;
+  /** The sales listed on the agent's deposit screen, in screen order. */
+  ledgerIds?: string[];
+  /** The one sale being paid in on; none means all of them, oldest first. */
+  ledgerId?: string;
 }
 
 /**
@@ -53,8 +63,10 @@ export interface UssdResult {
   checkout?: { itemName: string; amountMinor: number };
 }
 
-const MAIN_MENU = '1. Self payment\n2. Pay for others';
+const MAIN_MENU = '1. Self payment\n2. Pay for others\n3. Agent deposits';
 const NO_CONTRACT_MENU = '1. Pay for others\n2. Cancel';
+/** Sales listed by name on an agent's deposit screen; Pay all covers any beyond these. */
+const AGENT_DEPOSITS_SHOWN = 4;
 const ALT_PHONE_PROMPT = 'Enter their registered phone number, or 0 to go back:';
 
 // A customer can dial in from any of their three registered numbers, not just
@@ -361,7 +373,8 @@ async function beginForCustomer(sessionId: string, customerId: string, heading: 
 
 /**
  * Every dial-in opens on the same menu, whoever is calling: "Welcome {name}",
- * then 1 to pay on their own account or 2 to pay on someone else's. The name
+ * then 1 to pay on their own account, 2 to pay on someone else's, or 3 for an
+ * agent paying in deposits, who proves it with their payment PIN. The name
  * is the one on the dialling phone's wallet (walletName), else the name the
  * number is registered under; a number Hubtel and this app both know nothing
  * about is welcomed to the company instead.
@@ -375,6 +388,123 @@ async function startSession(sessionId: string, msisdn: string, operator?: string
     data: { sessionId, msisdn, state: 'MAIN_MENU', context: JSON.stringify(context), expiresAt },
   });
   return mainMenu(name);
+}
+
+/** What the payer is told once a charge has been asked for. */
+function chargeOutcomeScreen(status: string): UssdResult {
+  if (status === 'PENDING') {
+    // Live mode: Hubtel has accepted the request and is prompting the
+    // customer's handset for their PIN; the callback records the payment.
+    return {
+      message: 'Payment request sent. Approve the prompt on your phone with your mobile money PIN to complete it.',
+      continueSession: false, label: 'Approve on your phone',
+    };
+  }
+  if (status === 'SUCCESS') {
+    return { message: 'Payment successful! You will receive an SMS confirmation shortly.', continueSession: false, label: 'Payment successful' };
+  }
+  if (status === 'NEEDS_REVIEW') {
+    // The money was taken but couldn't be applied automatically — never
+    // tell the customer it failed, or they may pay a second time.
+    return { message: 'Payment received. Our staff will apply it to your account shortly.', continueSession: false, label: 'Payment received' };
+  }
+  return { message: 'Payment failed. Please try again later.', continueSession: false, label: 'Payment failed' };
+}
+
+const AGENT_PIN_PROMPT = 'Enter your agent payment PIN, or 0 to go back:';
+
+async function askForAgentPin(sessionRowId: string, msisdn: string): Promise<UssdResult> {
+  if (await agentPinLockedOut(msisdn)) return tooManyAgentPinTries(sessionRowId);
+  await prisma.ussdSession.update({ where: { id: sessionRowId }, data: { state: 'AGENT_PIN' } });
+  return { message: AGENT_PIN_PROMPT, continueSession: true, label: 'Enter PIN', fieldType: 'number' };
+}
+
+async function tooManyAgentPinTries(sessionRowId: string): Promise<UssdResult> {
+  await endSession(sessionRowId);
+  return { message: 'Too many wrong PINs from this phone. Please try again in an hour.', continueSession: false, label: 'Try again later' };
+}
+
+type AgentDeposit = Awaited<ReturnType<typeof agentDepositsToPay>>[number];
+
+const depositCustomer = (d: AgentDeposit) => `${d.customer.firstName} ${d.customer.lastName.charAt(0)}`.slice(0, 12);
+
+async function nothingToPayIn(sessionRowId: string): Promise<UssdResult> {
+  await endSession(sessionRowId);
+  return { message: 'You have nothing to pay in right now. Any payment you have just approved is still being processed.', continueSession: false, label: 'Nothing to pay' };
+}
+
+function agentDepositList(deposits: AgentDeposit[], notice = ''): UssdResult {
+  const total = deposits.reduce((s, d) => s + d.payableMinor, 0);
+  const lines = deposits.slice(0, AGENT_DEPOSITS_SHOWN).map((d, i) => `${i + 2}. ${depositCustomer(d)} GHS${formatMoney(d.payableMinor)}`);
+  return { message: `${notice}You owe GHS${formatMoney(total)}\n1. Pay all\n${lines.join('\n')}\n0. Back`, continueSession: true, label: 'Choose option', fieldType: 'number' };
+}
+
+function agentAmountScreen(deposit: AgentDeposit, notice = ''): UssdResult {
+  return { message: `${notice}You owe GHS${formatMoney(deposit.payableMinor)} for ${depositCustomer(deposit)}.\nEnter amount to pay:`, continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+}
+
+/** An agent's first screen: straight to the amount for one sale, or a list when they owe on several. */
+async function beginAgentDeposit(sessionRowId: string, context: UssdContext): Promise<UssdResult> {
+  const deposits = await agentDepositsToPay(context.agentId!);
+  if (deposits.length === 0) return nothingToPayIn(sessionRowId);
+  if (deposits.length === 1) {
+    await prisma.ussdSession.update({ where: { id: sessionRowId }, data: { state: 'AGENT_AMOUNT', context: JSON.stringify({ ...context, ledgerId: deposits[0].ledgerId }) } });
+    return agentAmountScreen(deposits[0]);
+  }
+  const ledgerIds = deposits.slice(0, AGENT_DEPOSITS_SHOWN).map((d) => d.ledgerId);
+  await prisma.ussdSession.update({ where: { id: sessionRowId }, data: { state: 'AGENT_CHOOSE', context: JSON.stringify({ ...context, ledgerIds }) } });
+  return agentDepositList(deposits);
+}
+
+async function askToConfirmAgentDeposit(sessionRowId: string, context: UssdContext): Promise<UssdResult> {
+  await prisma.ussdSession.update({ where: { id: sessionRowId }, data: { state: 'AGENT_CONFIRM', context: JSON.stringify(context) } });
+  return { message: `Pay in GHS${formatMoney(context.amountMinor!)} of your deposits?\n1. Confirm\n2. Cancel`, continueSession: true, label: 'Confirm payment', fieldType: 'number' };
+}
+
+/**
+ * An agent's confirmed payment in: what it is for is recorded first, so a
+ * charge that settles at once still finds it, and it is credited to their
+ * ledger when the money arrives (agentLedgerService.settleUssdRemittance).
+ */
+async function takeAgentDeposit(params: { sessionId: string; msisdn: string; operator?: string; agentId: string; amountMinor: number; ledgerId?: string }): Promise<UssdResult> {
+  try {
+    await assertPaymentsAcceptedToday();
+  } catch (e) {
+    if (e instanceof PaymentsClosedError) {
+      return { message: 'We are closed today and cannot take payments. Please try again on a working day.', continueSession: false, label: 'Closed today' };
+    }
+    throw e;
+  }
+  const checkoutMode = ussdUsesHubtelCheckout();
+  const clientReference = checkoutMode ? params.sessionId : generateTransactionRef();
+  let contractId: string;
+  try {
+    ({ contractId } = await openUssdRemittance({ agentId: params.agentId, amountMinor: params.amountMinor, clientReference, ledgerId: params.ledgerId }));
+  } catch (e) {
+    if (!(e instanceof AgentLedgerError)) throw e;
+    return { message: e.message.slice(0, USSD_SCREEN_LIMIT), continueSession: false, label: 'Not available' };
+  }
+  try {
+    if (checkoutMode) {
+      const checkout = await beginUssdCheckout({
+        sessionId: params.sessionId, contractId, msisdn: params.msisdn, amountMinor: params.amountMinor, channel: AGENT_DEPOSIT_CHANNEL, itemName: 'Agent deposit',
+      });
+      return {
+        message: 'Your request has been submitted. Please wait for the payment prompt and approve it with your mobile money PIN.',
+        continueSession: false, label: 'Approve the payment prompt', checkout,
+      };
+    }
+    const agent = await prisma.user.findUniqueOrThrow({ where: { id: params.agentId }, select: { firstName: true, lastName: true } });
+    const txn = await initiateHubtelPayment({
+      contractId, msisdn: params.msisdn, amountMinor: params.amountMinor, network: networkForOperator(params.operator) ?? undefined, clientReference,
+      channel: AGENT_DEPOSIT_CHANNEL, payer: { name: `${agent.firstName} ${agent.lastName}`, description: 'Agent deposit' },
+    });
+    return chargeOutcomeScreen(txn.status);
+  } catch (e) {
+    if (!(e instanceof HubtelError)) throw e;
+    await failUssdRemittance(clientReference);
+    return { message: e.message.slice(0, 160), continueSession: false, label: 'Payment failed' };
+  }
 }
 
 /** "Pay for others": ask for the registered number of the account being paid on. */
@@ -441,6 +571,7 @@ export async function handleUssdInput(params: {
         return { message: `${why}\n${NO_CONTRACT_MENU}`, continueSession: true, label: 'Choose option', fieldType: 'number' };
       }
       if (choice === '2') return askForOthersNumber(existing.id);
+      if (choice === '3') return askForAgentPin(existing.id, params.msisdn);
       return mainMenu(context.name, 'Not an option.\n');
     }
 
@@ -623,6 +754,70 @@ export async function handleUssdInput(params: {
       };
     }
 
+    case 'AGENT_PIN': {
+      const entered = params.input.trim();
+      if (entered === '0') {
+        await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'MAIN_MENU' } });
+        return mainMenu(context.name);
+      }
+      if (await agentPinLockedOut(params.msisdn)) return tooManyAgentPinTries(existing.id);
+      const agentId = await agentIdForPin(entered);
+      if (!agentId) {
+        await recordWrongAgentPin(params.msisdn);
+        if (await agentPinLockedOut(params.msisdn)) return tooManyAgentPinTries(existing.id);
+        return { message: `Wrong PIN.\n${AGENT_PIN_PROMPT}`, continueSession: true, label: 'Enter PIN', fieldType: 'number' };
+      }
+      await clearWrongAgentPins(params.msisdn);
+      return beginAgentDeposit(existing.id, { ...context, agentId });
+    }
+
+    case 'AGENT_CHOOSE': {
+      const choice = params.input.trim();
+      if (choice === '0') {
+        await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'MAIN_MENU' } });
+        return mainMenu(context.name);
+      }
+      const deposits = await agentDepositsToPay(context.agentId!);
+      if (choice === '1') {
+        const amountMinor = deposits.reduce((s, d) => s + d.payableMinor, 0);
+        if (amountMinor < MIN_PAYMENT_MINOR) return nothingToPayIn(existing.id);
+        return askToConfirmAgentDeposit(existing.id, { ...context, ledgerId: undefined, amountMinor });
+      }
+      const ledgerId = /^\d+$/.test(choice) ? context.ledgerIds?.[parseInt(choice, 10) - 2] : undefined;
+      const deposit = deposits.find((d) => d.ledgerId === ledgerId);
+      if (!deposit) return agentDepositList(deposits, 'Not on the list.\n');
+      await prisma.ussdSession.update({ where: { id: existing.id }, data: { state: 'AGENT_AMOUNT', context: JSON.stringify({ ...context, ledgerId: deposit.ledgerId }) } });
+      return agentAmountScreen(deposit);
+    }
+
+    case 'AGENT_AMOUNT': {
+      const deposit = (await agentDepositsToPay(context.agentId!)).find((d) => d.ledgerId === context.ledgerId);
+      if (!deposit) return nothingToPayIn(existing.id);
+      const amountMinor = parseCedis(params.input);
+      if (amountMinor === null) {
+        return { message: 'Enter the amount in cedis, e.g. 50 or 50.50:', continueSession: true, label: 'Enter amount', fieldType: 'decimal' };
+      }
+      if (amountMinor < MIN_PAYMENT_MINOR || amountMinor > deposit.payableMinor) {
+        return agentAmountScreen(deposit, amountMinor < MIN_PAYMENT_MINOR ? `The smallest payment is GHS${formatMoney(MIN_PAYMENT_MINOR)}.\n` : 'That is more than you owe.\n');
+      }
+      return askToConfirmAgentDeposit(existing.id, { ...context, amountMinor });
+    }
+
+    case 'AGENT_CONFIRM': {
+      if (params.input === '2') {
+        await endSession(existing.id);
+        return { message: 'Payment cancelled.', continueSession: false, label: 'Payment cancelled' };
+      }
+      if (params.input !== '1') {
+        return { message: 'Invalid option.\n1. Confirm\n2. Cancel', continueSession: true, label: 'Confirm payment', fieldType: 'number' };
+      }
+      await endSession(existing.id);
+      if (!context.agentId || !context.amountMinor) {
+        return { message: 'Session error. Please try again.', continueSession: false, label: 'Session error' };
+      }
+      return takeAgentDeposit({ sessionId: params.sessionId, msisdn: params.msisdn, operator: params.operator, agentId: context.agentId, amountMinor: context.amountMinor, ledgerId: context.ledgerId });
+    }
+
     case 'CONFIRM': {
       if (params.input === '2') {
         await endSession(existing.id);
@@ -690,23 +885,7 @@ export async function handleUssdInput(params: {
         // charged. Its reason is cut to what a USSD screen holds.
         return { message: e.message.slice(0, 160), continueSession: false, label: 'Payment failed' };
       }
-      if (txn.status === 'PENDING') {
-        // Live mode: Hubtel has accepted the request and is prompting the
-        // customer's handset for their PIN; the callback records the payment.
-        return {
-          message: 'Payment request sent. Approve the prompt on your phone with your mobile money PIN to complete it.',
-          continueSession: false, label: 'Approve on your phone',
-        };
-      }
-      if (txn.status === 'SUCCESS') {
-        return { message: 'Payment successful! You will receive an SMS confirmation shortly.', continueSession: false, label: 'Payment successful' };
-      }
-      if (txn.status === 'NEEDS_REVIEW') {
-        // The money was taken but couldn't be applied automatically — never
-        // tell the customer it failed, or they may pay a second time.
-        return { message: 'Payment received. Our staff will apply it to your account shortly.', continueSession: false, label: 'Payment received' };
-      }
-      return { message: 'Payment failed. Please try again later.', continueSession: false, label: 'Payment failed' };
+      return chargeOutcomeScreen(txn.status);
     }
 
     default:

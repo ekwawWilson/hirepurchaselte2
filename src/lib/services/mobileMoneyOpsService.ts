@@ -1,6 +1,8 @@
 import { prisma } from '../db/prisma';
 import { recordSuccessfulHubtelCharge, HubtelError } from './hubtelPaymentService';
 import { closeAlert } from './alertService';
+import { failUssdRemittance } from './agentLedgerService';
+import { AGENT_DEPOSIT_CHANNEL } from '../constants/agents';
 
 export const MOBILE_MONEY_PAGE_SIZE = 50;
 
@@ -108,6 +110,8 @@ export async function resolveCollectedCharge(params: { txnId: string; userId: st
     where: { id: txn.id },
     data: { resolvedAt: new Date(), resolvedById: params.userId, resolutionNote: params.note.trim() },
   });
+  // Staff dealt with the money themselves, so an agent's deposit it was for can be paid in again.
+  if (txn.channel === AGENT_DEPOSIT_CHANNEL) await failUssdRemittance(txn.clientReference);
   await closeAlert(`payment-needs-review:${txn.id}`);
   return resolved;
 }

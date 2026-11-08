@@ -10,6 +10,7 @@ import { isOwnPhoneNumber } from './customerPortalService';
 import { networkForPhone } from '../constants/customers';
 import { TERMINAL_CONTRACT_STATUSES, PRE_APPROVAL_STATUSES, isInstalmentSale } from '../constants/contracts';
 import { paymentAmountProblem, waitingPromptProblem } from './paymentLimitsService';
+import { AGENT_DEPOSIT_CHANNEL } from '../constants/agents';
 
 /**
  * `message` is fit to show whoever is paying. `staffDetail`, when set, is
@@ -92,6 +93,10 @@ export async function initiateHubtelPayment(params: {
   network?: string;
   /** Set when something must be tied to this charge before it can settle (a temporary unlock). */
   clientReference?: string;
+  /** Set when the charge is not a customer's payment on the contract (an agent paying in a deposit). */
+  channel?: string;
+  /** Who is paying and for what, when that is not the contract's customer. */
+  payer?: { name: string; description: string };
 }) {
   const network = params.network ?? networkForPhone(params.msisdn);
   if (isHubtelLiveMode()) {
@@ -112,6 +117,7 @@ export async function initiateHubtelPayment(params: {
       msisdn: params.msisdn,
       amountMinor: params.amountMinor,
       status: 'PENDING',
+      ...(params.channel && { channel: params.channel }),
     },
   });
 
@@ -125,13 +131,13 @@ export async function initiateHubtelPayment(params: {
     let result;
     try {
       result = await callHubtelReceiveMoney({
-        customerName: `${contract.customer.firstName} ${contract.customer.lastName}`,
+        customerName: params.payer?.name ?? `${contract.customer.firstName} ${contract.customer.lastName}`,
         msisdn: params.msisdn,
-        customerEmail: contract.customer.email,
+        customerEmail: params.payer ? null : contract.customer.email,
         amountMinor: params.amountMinor,
         network: network!,
         isDirectDebit: false,
-        description: `Payment for ${contract.contractNumber}`,
+        description: params.payer?.description ?? `Payment for ${contract.contractNumber}`,
         clientReference,
         callbackUrl,
       });
@@ -208,6 +214,10 @@ export async function processHubtelCallback(params: {
   }
 
   if (params.status === 'SUCCESS') await recordSuccessfulHubtelCharge(txn.id, params.rawPayload);
+  else if (txn.channel === AGENT_DEPOSIT_CHANNEL) {
+    const { failUssdRemittance } = await import('./agentLedgerService');
+    await failUssdRemittance(txn.clientReference);
+  }
 
   return prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: txn.id } });
 }
@@ -242,9 +252,16 @@ export function claimableStatuses(incoming: 'SUCCESS' | 'FAILED'): string[] {
  */
 export async function recordSuccessfulHubtelCharge(txnId: string, rawPayload: string) {
   const txn = await prisma.hubtelTransaction.findUniqueOrThrow({ where: { id: txnId } });
-  if (txn.status !== 'SUCCESS' || txn.paymentId) return;
+  if (txn.status !== 'SUCCESS' || txn.paymentId || txn.resolvedAt) return;
 
   try {
+    if (txn.channel === AGENT_DEPOSIT_CHANNEL) {
+      // Settles against the agent's ledger: no Payment row, so resolvedAt is what marks it done for the sweep.
+      const { settleUssdRemittance } = await import('./agentLedgerService');
+      if (!(await settleUssdRemittance(txn.clientReference))) throw new HubtelError('the agent deposit it was for could not be found');
+      await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { resolvedAt: new Date() } });
+      return;
+    }
     const paymentId = await postHubtelCharge(txn, rawPayload);
     await prisma.hubtelTransaction.update({ where: { id: txn.id }, data: { paymentId } });
     // Imported here, like notifyPayTrigger's reconcile, to keep the phone-lock code out of this one's imports.
@@ -428,7 +445,7 @@ export async function reconcilePendingHubtelTransactions(staleAfterMinutes = 5, 
   // recordSuccessfulHubtelCharge). Retried here until they post or are
   // flagged NEEDS_REVIEW.
   const unrecorded = await prisma.hubtelTransaction.findMany({
-    where: { status: 'SUCCESS', paymentId: null, updatedAt: { lt: cutoff } },
+    where: { status: 'SUCCESS', paymentId: null, resolvedAt: null, updatedAt: { lt: cutoff } },
   });
   let recorded = 0;
   for (const txn of unrecorded) {

@@ -173,7 +173,7 @@ export default function MobileMoneyPage() {
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
                     <Link href={`/contracts/${a.contract.id}`} className="font-mono text-primary hover:underline">{a.contract.contractNumber}</Link>
-                    {' '}&middot; {a.channel === 'DIRECT_DEBIT' ? 'Direct debit' : 'Customer prompt'} &middot; {formatDateTime(a.createdAt)}
+                    {' '}&middot; {a.channel === 'DIRECT_DEBIT' ? 'Direct debit' : a.channel === 'AGENT_DEPOSIT' ? 'Agent deposit' : 'Customer prompt'} &middot; {formatDateTime(a.createdAt)}
                   </p>
                   {(a.resolutionNote || a.detail) && (
                     <p className={cn('text-xs mt-1', a.status === 'FAILED' || a.status === 'NEEDS_REVIEW' ? 'text-red-600' : 'text-gray-500')}>

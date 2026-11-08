@@ -3,14 +3,17 @@ import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission } from '@/lib/auth/rbac';
 import { hashPassword, staffPasswordProblem } from '@/lib/services/authService';
 import { logAudit } from '@/lib/services/auditService';
+import { cleanStaffPhone } from '@/lib/services/staffPhoneService';
+import { issueAgentPaymentPin } from '@/lib/services/agentPaymentPinService';
 
 function toUserResponse(user: {
-  id: string; email: string; firstName: string; lastName: string; isActive: boolean;
+  id: string; email: string; phone: string | null; firstName: string; lastName: string; isActive: boolean;
   mustChangePassword: boolean; branchId: string | null; role: { name: string };
 }) {
   return {
     id: user.id,
     email: user.email,
+    phone: user.phone,
     firstName: user.firstName,
     lastName: user.lastName,
     isActive: user.isActive,
@@ -36,8 +39,8 @@ export async function POST(req: NextRequest) {
   const perm = requirePermission(auth.user, 'user.manage');
   if (!perm.authorized) return perm.error;
 
-  const { email, password, firstName, lastName, role, branchId } = (await req.json()) as {
-    email?: string; password?: string; firstName?: string; lastName?: string; role?: string; branchId?: string | null;
+  const { email, password, firstName, lastName, role, branchId, phone } = (await req.json()) as {
+    email?: string; password?: string; firstName?: string; lastName?: string; role?: string; branchId?: string | null; phone?: string;
   };
 
   if (!email || !password || !firstName || !lastName || !role) {
@@ -55,9 +58,13 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
   if (existing) return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 });
 
+  const cleanedPhone = await cleanStaffPhone(phone ?? '');
+  if ('error' in cleanedPhone) return NextResponse.json({ error: cleanedPhone.error }, { status: 400 });
+
   const user = await prisma.user.create({
     data: {
       email: email.toLowerCase().trim(),
+      phone: cleanedPhone.phone,
       passwordHash: await hashPassword(password),
       // Whoever created the account chose this password, so it is theirs to
       // know only until the new user's first sign-in.
@@ -69,6 +76,7 @@ export async function POST(req: NextRequest) {
     },
     include: { role: true },
   });
+  if (user.role.name === 'AGENT') await issueAgentPaymentPin(user.id);
   await logAudit({ userId: auth.user.id, action: 'USER_CREATE', entityType: 'User', entityId: user.id, newValues: toUserResponse(user) });
 
   return NextResponse.json({ user: toUserResponse(user) }, { status: 201 });

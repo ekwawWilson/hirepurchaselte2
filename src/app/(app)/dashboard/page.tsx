@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AlertCircle, ArrowRight, Banknote, ChevronRight, FileText, Plus, Warehouse } from 'lucide-react';
+import { AlertCircle, ArrowRight, Banknote, ChevronRight, FileText, KeyRound, Plus, Warehouse } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { formatCurrency, formatDate, contractTypeLabel, getStatusColor, cn } from '@/lib/utils';
@@ -250,6 +250,30 @@ export default function DashboardPage() {
   );
 }
 
+/** The PIN an agent enters on the short code to pay in the deposit cash they hold. */
+function AgentPaymentPin() {
+  const [pin, setPin] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<{ pin: string }>('/agent/payment-pin')
+      .then((r) => setPin(r.pin))
+      .catch(() => setPin(null));
+  }, []);
+
+  if (!pin) return null;
+
+  return (
+    <div className="flex items-center gap-4 rounded-2xl border border-blue-100 bg-blue-50/80 p-4">
+      <KeyRound className="h-6 w-6 text-blue-600 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-gray-900">Your payment PIN</p>
+        <p className="text-xs text-gray-600 mt-0.5">To pay in your deposits, dial the short code, choose 3. Agent deposits and enter this PIN. Keep it to yourself.</p>
+      </div>
+      <p className="font-mono text-2xl font-bold tracking-widest text-gray-900 shrink-0">{pin}</p>
+    </div>
+  );
+}
+
 /**
  * The Agent module's own-portfolio dashboard — shown instead of the
  * branch-wide one above to anyone who can create contracts but has no
@@ -258,6 +282,8 @@ export default function DashboardPage() {
  * their own book (rbac.ts's OWN_SCOPED_ROLES / ownRecordsWhere).
  */
 function AgentDashboard({ contracts }: { contracts: RecentContract[] | null }) {
+  const isAgent = useAuthStore((s) => s.user?.role === 'AGENT');
+
   if (!contracts) {
     return (
       <div className="flex h-40 items-center justify-center">
@@ -276,6 +302,8 @@ function AgentDashboard({ contracts }: { contracts: RecentContract[] | null }) {
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-sm text-gray-500 mt-0.5">Your own contracts</p>
       </div>
+
+      {isAgent && <AgentPaymentPin />}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard title="Total portfolio" value={String(contracts.length)} icon={FileText} iconClass="text-blue-600" iconBg="bg-blue-50" href="/contracts" />

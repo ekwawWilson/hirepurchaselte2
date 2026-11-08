@@ -4,6 +4,9 @@ import { commissionForContract } from './commissionSettingsService';
 import { AGENT_CASH_HOLD_ALERT_DAYS } from '../constants/agents';
 import { isMoneyOut, isInstalmentSale } from '../constants/contracts';
 import { notifyPayTrigger } from '../paytrigger/notify';
+import { logAudit } from './auditService';
+import { getOrgSettings } from './orgSettingsService';
+import { deliverQueuedSms } from './smsService';
 
 export class AgentLedgerError extends Error {}
 
@@ -121,6 +124,13 @@ async function effectivePayments(db: Db, contractId: string) {
 export const REMITTANCE_METHODS = ['CASH', 'MOBILE_MONEY', 'BANK_TRANSFER'] as const;
 export type RemittanceMethod = (typeof REMITTANCE_METHODS)[number];
 
+// A remittance made on the short code never waits for a person: it waits for
+// the mobile money, and is confirmed by the charge settling.
+const AWAITING_PAYMENT = 'AWAITING_PAYMENT';
+const PAYMENT_FAILED = 'PAYMENT_FAILED';
+/** Remittances that have not reached the ledger but may yet: they count against what can still be paid in. */
+const IN_FLIGHT_REMITTANCES = ['PENDING', AWAITING_PAYMENT];
+
 /**
  * The agent's claim that they have paid some of what they owe on one ledger
  * entry — cash handed over at the branch, or a mobile money/bank transfer
@@ -148,7 +158,7 @@ export async function fileRemittance(params: {
   // Claims still waiting count against what is owed, so an agent can't file
   // two overlapping claims that together overshoot it.
   const pending = await prisma.agentRemittance.aggregate({
-    where: { ledgerId: ledger.id, status: 'PENDING' },
+    where: { ledgerId: ledger.id, status: { in: IN_FLIGHT_REMITTANCES } },
     _sum: { amountMinor: true },
   });
   const remaining = balance - (pending._sum.amountMinor ?? 0);
@@ -165,6 +175,17 @@ export async function fileRemittance(params: {
       reference: params.reference?.trim() || null,
     },
   });
+}
+
+/** Moves a confirmed remittance onto its ledger entry. Returns the entry's contract. */
+async function creditRemittance(tx: Tx, remittance: { ledgerId: string; amountMinor: number }): Promise<string> {
+  await tx.agentDepositLedger.update({
+    where: { id: remittance.ledgerId },
+    data: { amountRemittedMinor: { increment: remittance.amountMinor } },
+  });
+  const ledger = await tx.agentDepositLedger.findUniqueOrThrow({ where: { id: remittance.ledgerId } });
+  await syncAgentLedger(tx, ledger.contractId);
+  return ledger.contractId;
 }
 
 /** Whether `user` may act on an entry for this agent: same branch, or a user who covers every branch. */
@@ -193,13 +214,7 @@ export async function confirmRemittance(params: { remittanceId: string; confirme
     });
     if (claimed.count === 0) throw new AgentLedgerError(`This remittance was already ${remittance.status.toLowerCase()}`);
 
-    await tx.agentDepositLedger.update({
-      where: { id: remittance.ledgerId },
-      data: { amountRemittedMinor: { increment: remittance.amountMinor } },
-    });
-    const ledger = await tx.agentDepositLedger.findUniqueOrThrow({ where: { id: remittance.ledgerId } });
-    await syncAgentLedger(tx, ledger.contractId);
-    contractId = ledger.contractId;
+    contractId = await creditRemittance(tx, remittance);
     return tx.agentRemittance.findUniqueOrThrow({ where: { id: remittance.id } });
   });
   // A Device Financing phone held for the agent's deposit can open now.
@@ -217,6 +232,96 @@ export async function rejectRemittance(params: { remittanceId: string; confirmed
     where: { id: remittance.id },
     data: { status: 'REJECTED', rejectionReason: params.reason.trim(), confirmedById: params.confirmedById, confirmedAt: new Date() },
   });
+}
+
+/** What an agent can pay in now, oldest first: what they owe on each sale, less what is already on its way. */
+export async function agentDepositsToPay(agentId: string) {
+  const entries = await prisma.agentDepositLedger.findMany({
+    where: { agentId, status: { not: 'SETTLED' } },
+    include: {
+      contract: { select: { id: true, customer: { select: { firstName: true, lastName: true } } } },
+      remittances: { where: { status: { in: IN_FLIGHT_REMITTANCES } }, select: { amountMinor: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+  return entries
+    .map((e) => ({
+      ledgerId: e.id,
+      contractId: e.contract.id,
+      customer: e.contract.customer,
+      payableMinor: ledgerBalance(e) - e.remittances.reduce((s, r) => s + r.amountMinor, 0),
+    }))
+    .filter((d) => d.payableMinor > 0);
+}
+
+/**
+ * An agent has confirmed paying in on the short code: records what the charge
+ * is for, before any money moves, so a charge that settles at once still
+ * finds it. On one sale, or across all of them oldest first. Returns the
+ * contract the charge is filed under.
+ */
+export async function openUssdRemittance(params: { agentId: string; amountMinor: number; clientReference: string; ledgerId?: string }) {
+  const deposits = (await agentDepositsToPay(params.agentId)).filter((d) => !params.ledgerId || d.ledgerId === params.ledgerId);
+  let left = params.amountMinor;
+  const parts: { ledgerId: string; amountMinor: number }[] = [];
+  for (const d of deposits) {
+    if (left <= 0) break;
+    const amountMinor = Math.min(left, d.payableMinor);
+    parts.push({ ledgerId: d.ledgerId, amountMinor });
+    left -= amountMinor;
+  }
+  if (parts.length === 0 || left > 0) throw new AgentLedgerError('That is more than you owe. Please dial again.');
+  await prisma.agentRemittance.createMany({
+    data: parts.map((p) => ({ ...p, agentId: params.agentId, method: 'MOBILE_MONEY', reference: params.clientReference, status: AWAITING_PAYMENT })),
+  });
+  return { contractId: deposits[0].contractId };
+}
+
+/** The charge did not go through: nothing is credited, and the amount can be paid in again. */
+export async function failUssdRemittance(clientReference: string): Promise<void> {
+  await prisma.agentRemittance.updateMany({ where: { reference: clientReference, status: AWAITING_PAYMENT }, data: { status: PAYMENT_FAILED } });
+}
+
+/**
+ * The money has arrived: credits the agent's ledger with no one having to
+ * confirm it, since the charge itself is the proof. A late success lands too
+ * (hubtelPaymentService.claimableStatuses). Each row is claimed, so a callback
+ * and the sweep cannot both credit it. False when the charge is for nothing
+ * on record.
+ */
+export async function settleUssdRemittance(clientReference: string): Promise<boolean> {
+  const unsettled = [AWAITING_PAYMENT, PAYMENT_FAILED];
+  const credited = await prisma.$transaction(async (tx) => {
+    const rows = await tx.agentRemittance.findMany({ where: { reference: clientReference, method: 'MOBILE_MONEY', status: { in: unsettled } } });
+    const done: { contractId: string; agentId: string; amountMinor: number }[] = [];
+    for (const row of rows) {
+      const claimed = await tx.agentRemittance.updateMany({ where: { id: row.id, status: { in: unsettled } }, data: { status: 'CONFIRMED', confirmedAt: new Date() } });
+      if (claimed.count > 0) done.push({ contractId: await creditRemittance(tx, row), agentId: row.agentId, amountMinor: row.amountMinor });
+    }
+    return done;
+  });
+  if (credited.length === 0) return (await prisma.agentRemittance.count({ where: { reference: clientReference, status: 'CONFIRMED' } })) > 0;
+
+  // A Device Financing phone held for the agent's deposit can open now.
+  for (const c of credited) notifyPayTrigger(c.contractId, 'DEPOSIT_REMITTED');
+  const agentId = credited[0].agentId;
+  const amountMinor = credited.reduce((s, c) => s + c.amountMinor, 0);
+  await logAudit({ userId: agentId, action: 'AGENT_REMITTANCE_USSD', entityType: 'User', entityId: agentId, newValues: { clientReference, amountMinor, contractIds: credited.map((c) => c.contractId) } });
+  await tellAgentPaymentReceived(agentId, credited[0].contractId, amountMinor, clientReference).catch((e) => console.error('[agent] remittance text failed (non-blocking):', e));
+  return true;
+}
+
+async function tellAgentPaymentReceived(agentId: string, contractId: string, amountMinor: number, clientReference: string) {
+  const agent = await prisma.user.findUniqueOrThrow({ where: { id: agentId }, select: { firstName: true, phone: true } });
+  // No number on record: the phone that paid is told instead.
+  const recipient = agent.phone ?? (await prisma.hubtelTransaction.findUnique({ where: { clientReference }, select: { msisdn: true } }))?.msisdn;
+  if (!recipient) return;
+  const leftMinor = (await agentDepositsToPay(agentId)).reduce((s, d) => s + d.payableMinor, 0);
+  const cedis = (minor: number) => `GHS ${(minor / 100).toFixed(2)}`;
+  const { companyName } = await getOrgSettings();
+  const body = `Hi ${agent.firstName}, we have received your deposit payment of ${cedis(amountMinor)}. ${leftMinor > 0 ? `You still have ${cedis(leftMinor)} to pay in.` : 'You have nothing more to pay in.'} ${companyName}`;
+  const sms = await prisma.smsMessage.create({ data: { recipient, templateKey: 'agent.remittance_received', body, relatedContractId: contractId, status: 'QUEUED' } });
+  await deliverQueuedSms(sms.id);
 }
 
 /**

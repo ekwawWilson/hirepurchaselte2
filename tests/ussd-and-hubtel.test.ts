@@ -59,7 +59,7 @@ describe('USSD + Hubtel payments', () => {
   /** Dial in and choose 1, Self payment: what follows is the caller's own account. */
   async function dialSelf(sessionId: string, msisdn: string) {
     const menu = await handleUssdInput({ sessionId, msisdn, input: '', isNewSession: true });
-    expect(menu.message).toMatch(/\n1\. Self payment\n2\. Pay for others$/);
+    expect(menu.message).toMatch(/\n1\. Self payment\n2\. Pay for others\n3\. Agent deposits$/);
     return handleUssdInput({ sessionId, msisdn, input: '1', isNewSession: false });
   }
 
@@ -68,10 +68,10 @@ describe('USSD + Hubtel payments', () => {
     await setupContract(phone);
     const menu = await handleUssdInput({ sessionId: `sess-${runId}-menu`, msisdn: phone, input: '', isNewSession: true });
     expect(menu).toMatchObject({ continueSession: true, fieldType: 'number' });
-    expect(menu.message).toBe('Welcome Ussd Tester\n1. Self payment\n2. Pay for others'); // mock mode: the registered name stands in for the wallet's
+    expect(menu.message).toBe('Welcome Ussd Tester\n1. Self payment\n2. Pay for others\n3. Agent deposits'); // mock mode: the registered name stands in for the wallet's
 
     const again = await handleUssdInput({ sessionId: `sess-${runId}-menu`, msisdn: phone, input: '7', isNewSession: false });
-    expect(again.message).toBe('Not an option.\nWelcome Ussd Tester\n1. Self payment\n2. Pay for others');
+    expect(again.message).toBe('Not an option.\nWelcome Ussd Tester\n1. Self payment\n2. Pay for others\n3. Agent deposits');
   });
 
   it('Self payment from a registered number with nothing to pay offers to pay for someone else instead, or to cancel', async () => {
@@ -208,7 +208,7 @@ describe('USSD + Hubtel payments', () => {
     const sessionId = `sess-${runId}-unknown`;
     const ask = (input: string, isNewSession = false) => handleUssdInput({ sessionId, msisdn: '0200000000', input, isNewSession });
     const { companyName } = await getOrgSettings();
-    expect((await ask('', true)).message).toBe(`Welcome to ${companyName.length > 22 ? `${companyName.slice(0, 21).trimEnd()}.` : companyName}\n1. Self payment\n2. Pay for others`);
+    expect((await ask('', true)).message).toBe(`Welcome to ${companyName.length > 22 ? `${companyName.slice(0, 21).trimEnd()}.` : companyName}\n1. Self payment\n2. Pay for others\n3. Agent deposits`);
 
     const self = await ask('1');
     expect(self.continueSession).toBe(true);
@@ -217,7 +217,7 @@ describe('USSD + Hubtel payments', () => {
     expect((await ask('1')).message).toMatch(/enter their registered phone number/i);
     const back = await ask('0');
     expect(back.continueSession).toBe(true);
-    expect(back.message).toMatch(/\n1\. Self payment\n2\. Pay for others$/);
+    expect(back.message).toMatch(/\n1\. Self payment\n2\. Pay for others\n3\. Agent deposits$/);
   });
 
   it('Pay for others: anyone can pay on an account by typing its registered number, and is billed on the phone they dialled from', async () => {
