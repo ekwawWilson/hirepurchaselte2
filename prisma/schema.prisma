@@ -1183,6 +1183,13 @@ model PayTriggerDevice {
   licenceConsumedAt DateTime?
   lastStatusReadAt  DateTime?
   pinUnlocksUsed    Int       @default(0)
+  // Set by staff on the phone's page (admin.setManualLock): LOCKED keeps it
+  // locked whatever is paid until cleared; OPEN keeps it open until manualUntil.
+  manualState       String?
+  manualUntil       DateTime?
+  manualReason      String?
+  manualById        String?
+  manualAt          DateTime?
   // Paid, so it should be open, but the phone still reports locked.
   awaitingPinSince  DateTime?
   lastError         String?

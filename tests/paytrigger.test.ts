@@ -14,7 +14,7 @@ import { fileRemittance, confirmRemittance } from '@/lib/services/agentLedgerSer
 import { signBody, signContent, jsonList } from '@/lib/paytrigger/client';
 import { notifyPayTrigger, payTriggerIdle, payTriggerHookStats, registryAdd } from '@/lib/paytrigger/notify';
 import { reconcileContract } from '@/lib/paytrigger/reconcile';
-import { enrolPhones, issueOfflinePin, releaseDevice, setProductBrand } from '@/lib/paytrigger/admin';
+import { enrolPhones, issueOfflinePin, releaseDevice, setProductBrand, setManualLock } from '@/lib/paytrigger/admin';
 import { runPayTriggerSweep } from '@/lib/paytrigger/sweep';
 import { clearPayTriggerSettingsCache } from '@/lib/paytrigger/settings';
 import { POST as webhookPOST } from '@/app/api/paytrigger/webhook/route';
@@ -285,6 +285,65 @@ describe('Device Financing with PayTrigger', () => {
     expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe('AVAILABLE');
     const next = await sell(item.id);
     expect(await device(item.id)).toMatchObject({ contractId: next.id });
+  });
+
+  it('staff lock a phone by hand whatever is paid, open it for a set time, and return it to the rules', async () => {
+    const item = await phone();
+    await withPayTrigger({}, async () => {
+      await enrolPhones([item.id], adminId);
+      const contract = await sell(item.id);
+      await postPayment({ contractId: contract.id, amountMinor: 12000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminId });
+      await payTriggerIdle();
+      await activate(item, 'TAG-HAND');
+      const normal = (await device(item.id)).providerExpiresAt!;
+      expect(normal.getTime()).toBeGreaterThan(Date.now() + DAY);
+
+      const before = await device(item.id);
+      await expect(setManualLock(before.id, { state: 'LOCKED', reason: '  ' }, adminId)).rejects.toThrow('Say why');
+      await setManualLock(before.id, { state: 'LOCKED', reason: 'Customer reported the phone stolen' }, adminId);
+      let d = await device(item.id);
+      expect(d).toMatchObject({ manualState: 'LOCKED', manualReason: 'Customer reported the phone stolen', manualById: adminId });
+      expect(Math.abs(d.providerExpiresAt!.getTime() - (Date.now() + 60_000))).toBeLessThan(10_000);
+
+      // A payment does not open it.
+      await pay(contract.id, 12000);
+      expect((await device(item.id)).providerExpiresAt!.getTime()).toBeLessThan(Date.now() + 120_000);
+
+      // Back to the rules: open again to its schedule.
+      await setManualLock(d.id, { state: null }, adminId);
+      d = await device(item.id);
+      expect(d.manualState).toBeNull();
+      expect(d.providerExpiresAt!.getTime()).toBeGreaterThan(Date.now() + DAY);
+
+      // Behind on payments, opened by hand for a day.
+      await prisma.instalment.updateMany({ where: { contractId: contract.id, status: { not: 'PAID' } }, data: { dueDate: new Date(Date.now() - 10 * DAY), status: 'OVERDUE' } });
+      await reconcileContract(contract.id, { reasons: ['CONTRACT_CHANGED'] });
+      expect((await device(item.id)).providerExpiresAt!.getTime()).toBeLessThan(Date.now() + 120_000);
+      await expect(setManualLock(d.id, { state: 'OPEN', hours: 0, reason: 'x' }, adminId)).rejects.toThrow(/Open it for 1 to/);
+      await setManualLock(d.id, { state: 'OPEN', hours: 24, reason: 'Paying on Friday' }, adminId);
+      d = await device(item.id);
+      expect(Math.abs(d.providerExpiresAt!.getTime() - (Date.now() + DAY))).toBeLessThan(10_000);
+
+      const logged = await prisma.payTriggerActionLog.findMany({ where: { deviceId: d.id, action: { startsWith: 'MANUAL_' } } });
+      expect(logged.map((l) => l.action).sort()).toEqual(['MANUAL_CLEAR', 'MANUAL_LOCK', 'MANUAL_OPEN']);
+      expect(await prisma.auditLog.count({ where: { entityId: d.id, action: { startsWith: 'PAYTRIGGER_MANUAL_' } } })).toBe(3);
+    });
+  });
+
+  it('only those allowed lock by hand, and only a switched-on phone', async () => {
+    const { POST } = await import('@/app/api/paytrigger/devices/[id]/[action]/route');
+    const item = await phone();
+    await withPayTrigger({}, async () => {
+      await enrolPhones([item.id], adminId);
+      await sell(item.id);
+    });
+    const d = await device(item.id);
+    const login = async (email: string) => (await (await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email, password: 'Passw0rd!123' } }))).json()).token as string;
+    const lock = async (email: string) => POST(makeRequest('POST', `/api/paytrigger/devices/${d.id}/lock`, { token: await login(email), body: { reason: 'Test' } }), makeParams({ id: d.id, action: 'lock' }));
+    expect((await lock('storekeeper@example.test')).status).toBe(403);
+    const notOn = await lock('admin@example.test');
+    expect(notOn.status).toBe(400);
+    expect((await notOn.json()).error).toMatch(/switched on/);
   });
 
   describe('live', () => {

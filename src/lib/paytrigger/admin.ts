@@ -316,6 +316,47 @@ export async function sendPhoneMessage(deviceId: string, message: { title: strin
   return { dryRun: result.dryRun };
 }
 
+/**
+ * Staff locking or opening a phone by hand. LOCKED keeps it locked, whatever
+ * the customer pays, until cleared. OPEN keeps it open for `hours` (at most
+ * the furthest a phone is ever opened ahead); then the normal rules apply.
+ * Null clears either. Takes effect the next time the phone is online.
+ */
+export async function setManualLock(deviceId: string, change: { state: 'LOCKED' | 'OPEN' | null; hours?: number; reason?: string }, actorId: string) {
+  const device = await deviceOrThrow(deviceId);
+  if (device.enrollmentStatus !== 'ACTIVE') throw new PayTriggerError('Only a phone that has been switched on can be locked or opened by hand');
+  const contract = device.contractId ? await prisma.contract.findUnique({ where: { id: device.contractId }, select: { id: true, status: true, contractNumber: true } }) : null;
+  if (!contract) throw new PayTriggerError('This phone has no contract');
+  if (contract.status === 'COMPLETED') throw new PayTriggerError('This contract is paid off: the lock is being removed for good');
+
+  const reason = (change.reason ?? '').trim();
+  let data: { manualState: string | null; manualUntil: Date | null; manualReason: string | null; manualById: string | null; manualAt: Date | null };
+  if (change.state === null) {
+    if (!device.manualState) throw new PayTriggerError('This phone is already on the normal rules');
+    data = { manualState: null, manualUntil: null, manualReason: null, manualById: null, manualAt: null };
+  } else {
+    if (!reason) throw new PayTriggerError('Say why');
+    if (reason.length > 200) throw new PayTriggerError('Keep the reason to 200 characters');
+    let until: Date | null = null;
+    if (change.state === 'OPEN') {
+      const maxHours = (await getPayTriggerSettings()).maxUnlockHorizonDays * 24;
+      if (!Number.isInteger(change.hours) || change.hours! < 1 || change.hours! > maxHours) throw new PayTriggerError(`Open it for 1 to ${maxHours} hours`);
+      until = new Date(Date.now() + change.hours! * 3_600_000);
+    }
+    data = { manualState: change.state, manualUntil: until, manualReason: reason, manualById: actorId, manualAt: new Date() };
+  }
+
+  await prisma.payTriggerDevice.update({ where: { id: device.id }, data });
+  const action = change.state === 'LOCKED' ? 'MANUAL_LOCK' : change.state === 'OPEN' ? 'MANUAL_OPEN' : 'MANUAL_CLEAR';
+  await logAction({ deviceId: device.id, contractId: contract.id, action, success: true, dryRun: false, actorId, response: { reason, until: data.manualUntil } });
+  await logAudit({
+    userId: actorId, action: `PAYTRIGGER_${action}`, entityType: 'PayTriggerDevice', entityId: device.id,
+    oldValues: { manualState: device.manualState, manualUntil: device.manualUntil, manualReason: device.manualReason },
+    newValues: { contractNumber: contract.contractNumber, manualState: data.manualState, manualUntil: data.manualUntil, reason },
+  });
+  return reconcileContract(contract.id, { reasons: ['ADMIN'], actorId, force: true });
+}
+
 // ---------------------------------------------------------------------------
 // Reading
 // ---------------------------------------------------------------------------
@@ -346,7 +387,8 @@ export async function deviceDetail(deviceId: string) {
     prisma.inventoryItem.findUnique({ where: { id: device.inventoryItemId }, select: { serialNumber: true, status: true, product: { select: { name: true } } } }),
     prisma.payTriggerActionLog.findMany({ where: { deviceId }, orderBy: { createdAt: 'desc' }, take: 100 }),
   ]);
-  return { device, contract, item, timeline };
+  const manualBy = device.manualById ? await prisma.user.findUnique({ where: { id: device.manualById }, select: { firstName: true, lastName: true } }) : null;
+  return { device, contract, item, timeline, manualBy };
 }
 
 const HOUR = 3_600_000;

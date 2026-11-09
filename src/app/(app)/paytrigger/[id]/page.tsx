@@ -20,11 +20,16 @@ interface Detail {
     id: string; imei: string; deviceTag: string | null; enrollmentStatus: string; committedState: string;
     providerExpiresAt: string | null; scheduleExpiresAt: string | null; releaseAfter: string | null; releaseHeld: boolean;
     lastConnectAt: string | null; apkVersion: string | null; pinUnlocksUsed: number; awaitingPinSince: string | null; lastError: string | null;
+    manualState: string | null; manualUntil: string | null; manualReason: string | null; manualAt: string | null;
   };
   contract: { id: string; contractNumber: string; status: string; balanceMinor: number | null; customer: { firstName: string; lastName: string; phone: string | null } } | null;
   item: { serialNumber: string; status: string; product: { name: string } } | null;
   timeline: Array<{ id: string; action: string; success: boolean; dryRun: boolean; providerCode: string | null; skippedReason: string | null; createdAt: string }>;
+  manualBy: { firstName: string; lastName: string } | null;
 }
+
+/** How long staff can open a phone for by hand; the server refuses more than the furthest a phone is ever opened ahead. */
+const OPEN_FOR = [{ hours: 1, label: '1 hour' }, { hours: 6, label: '6 hours' }, { hours: 24, label: '1 day' }, { hours: 72, label: '3 days' }, { hours: 168, label: '7 days' }];
 
 const STATE_LABELS: Record<string, string> = { LOCKED: 'Locked', UNLOCKED: 'Open', PENDING: 'Sent, not yet confirmed by the phone', UNKNOWN: 'Not heard from yet' };
 
@@ -40,10 +45,12 @@ export default function PayTriggerDevicePage({ params }: { params: Promise<{ id:
   const canManage = hasPermission('paytrigger.manage');
   const canPin = hasPermission('paytrigger.pin');
   const canRelease = hasPermission('paytrigger.release');
+  const canLock = hasPermission('paytrigger.lock');
   const { toast } = useToast();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [busy, setBusy] = useState(false);
-  const [dialog, setDialog] = useState<'message' | 'pin' | 'release' | null>(null);
+  const [dialog, setDialog] = useState<'message' | 'pin' | 'release' | 'lock' | 'open' | null>(null);
+  const [hand, setHand] = useState({ reason: '', hours: 24 });
   const [message, setMessage] = useState({ title: '', content: '', pushType: 1 });
   const [pin, setPin] = useState<{ pin: string | null; message: string; needsKey?: boolean } | null>(null);
   const [key, setKey] = useState('');
@@ -71,6 +78,10 @@ export default function PayTriggerDevicePage({ params }: { params: Promise<{ id:
   if (!detail) return <div className="flex justify-center py-16"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>;
   const { device, contract, item, timeline } = detail;
   const active = device.enrollmentStatus === 'ACTIVE';
+  const byHand = device.manualState && (!device.manualUntil || new Date(device.manualUntil) > new Date()) ? device.manualState : null;
+  const handStaff = detail.manualBy ? `${detail.manualBy.firstName} ${detail.manualBy.lastName}` : 'staff';
+  const canHand = canLock && active && !!contract && contract.status !== 'COMPLETED';
+  const handDone = (r: { outcome: { outcome: string; reason: string } }) => { setDialog(null); toast({ title: r.outcome.outcome === 'SIMULATED' ? 'Simulated (dry run)' : 'Sent to PayTrigger', description: `${r.outcome.reason}. The phone changes the next time it is online.` }); };
 
   return (
     <div className="space-y-5">
@@ -84,6 +95,17 @@ export default function PayTriggerDevicePage({ params }: { params: Promise<{ id:
       {device.awaitingPinSince && (
         <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           Paid up, but the phone still reports locked (since {formatDateTime(device.awaitingPinSince)}): it has not been online to hear. Ask the customer to turn on data, or give them an offline PIN.
+        </div>
+      )}
+
+      {byHand && (
+        <div className={cn('flex flex-wrap items-center justify-between gap-3 rounded border p-3 text-sm', byHand === 'LOCKED' ? 'border-red-200 bg-red-50 text-red-900' : 'border-blue-200 bg-blue-50 text-blue-900')}>
+          <span>
+            {byHand === 'LOCKED'
+              ? <>Locked by hand by {handStaff}{device.manualAt && ` on ${formatDateTime(device.manualAt)}`}: {device.manualReason}. It stays locked, even if the customer pays, until you return it to the normal rules.</>
+              : <>Opened by hand by {handStaff} until {formatDateTime(device.manualUntil!)}: {device.manualReason}. After that the normal rules apply.</>}
+          </span>
+          {canLock && <Button size="sm" variant="outline" disabled={busy} onClick={() => act('normal-rules', {}, handDone)}>Return to normal rules</Button>}
         </div>
       )}
 
@@ -110,6 +132,8 @@ export default function PayTriggerDevicePage({ params }: { params: Promise<{ id:
 
       <div className="flex flex-wrap gap-2">
         {canManage && contract && <Button size="sm" disabled={busy} onClick={() => act<{ outcome: { outcome: string; reason: string } }>('reconcile', { force: true }, (r) => toast({ title: r.outcome.outcome, description: r.outcome.reason }))}>Reconcile now</Button>}
+        {canHand && byHand !== 'LOCKED' && <Button size="sm" variant="destructive" disabled={busy} onClick={() => { setHand({ reason: '', hours: 24 }); setDialog('lock'); }}>Lock now</Button>}
+        {canHand && <Button size="sm" variant="outline" disabled={busy} onClick={() => { setHand({ reason: '', hours: 24 }); setDialog('open'); }}>Unlock</Button>}
         {canManage && <Button size="sm" variant="outline" disabled={busy} onClick={() => act<{ message: string }>('verify', {}, (r) => toast({ title: 'PayTrigger says', description: r.message }))}>Check with PayTrigger</Button>}
         {canManage && active && <Button size="sm" variant="outline" disabled={busy} onClick={() => setDialog('message')}>Send a message</Button>}
         {canPin && active && contract && <Button size="sm" variant="outline" disabled={busy} onClick={() => { setPin(null); setKey(''); setDialog('pin'); }}>Offline PIN</Button>}
@@ -152,6 +176,34 @@ export default function PayTriggerDevicePage({ params }: { params: Promise<{ id:
           </div>
           <DialogFooter>
             <Button disabled={busy} onClick={() => act<{ dryRun: boolean }>('message', message, (r) => { setDialog(null); toast({ title: r.dryRun ? 'Simulated (dry run)' : 'Sent' }); })}>Send</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialog === 'lock'} onOpenChange={(o) => !o && setDialog(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Lock this phone now</DialogTitle></DialogHeader>
+          <p className="text-sm text-gray-600">The phone locks the next time it is online, and its lock screen says it was locked by the company. It stays locked even if the customer pays, until you press Return to normal rules.</p>
+          <div><Label>Why</Label><Textarea className="mt-1.5" maxLength={200} rows={3} value={hand.reason} onChange={(e) => setHand({ ...hand, reason: e.target.value })} /></div>
+          <DialogFooter>
+            <Button variant="destructive" disabled={busy || !hand.reason.trim()} onClick={() => act('lock', { reason: hand.reason }, handDone)}>Lock the phone</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialog === 'open'} onOpenChange={(o) => !o && setDialog(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Unlock this phone</DialogTitle></DialogHeader>
+          <p className="text-sm text-gray-600">The phone opens the next time it is online and stays open for the time you choose, even if payments are behind. After that the normal rules apply: it locks again if anything is overdue.</p>
+          <div>
+            <Label>Open for</Label>
+            <select className="mt-1.5 h-10 w-full border border-input bg-white px-2 text-sm" value={hand.hours} onChange={(e) => setHand({ ...hand, hours: Number(e.target.value) })}>
+              {OPEN_FOR.map((o) => <option key={o.hours} value={o.hours}>{o.label}</option>)}
+            </select>
+          </div>
+          <div><Label>Why</Label><Textarea className="mt-1.5" maxLength={200} rows={3} value={hand.reason} onChange={(e) => setHand({ ...hand, reason: e.target.value })} /></div>
+          <DialogFooter>
+            <Button disabled={busy || !hand.reason.trim()} onClick={() => act('open', { hours: hand.hours, reason: hand.reason }, handDone)}>Unlock the phone</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

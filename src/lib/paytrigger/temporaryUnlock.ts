@@ -98,7 +98,7 @@ export async function getTemporaryUnlockOffer(contractId: string, now: Date = ne
     },
   });
   if (!contract || contract.contractType !== 'DEVICE_FINANCING' || !['ACTIVE', 'DEFAULTED'].includes(contract.status)) return null;
-  const device = await prisma.payTriggerDevice.findUnique({ where: { contractId }, select: { enrollmentStatus: true } });
+  const device = await prisma.payTriggerDevice.findUnique({ where: { contractId }, select: { enrollmentStatus: true, manualState: true, manualUntil: true } });
   if (device?.enrollmentStatus !== 'ACTIVE') return null;
 
   const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -118,6 +118,10 @@ export async function getTemporaryUnlockOffer(contractId: string, now: Date = ne
   const usesLeft = Math.max(0, settings.temporaryUnlockMaxUses - used);
   const closed = (message: string): TemporaryUnlockOffer => ({ available: false, message, overdueMinor, options: [], activeUntil, usesLeft });
 
+  // Locked by staff by hand: only they can open it, so paying here would not.
+  if (device.manualState === 'LOCKED' && (!device.manualUntil || device.manualUntil > now)) {
+    return closed('Your phone has been locked by the office. Please contact us.');
+  }
   // The agent's deposit hold outranks any window: paying here would not open it.
   if (settings.lockOnUnpaidAgentDeposit && contract.createdBy.role.name === 'AGENT') {
     const owed = contract.agentDepositLedger ? ledgerBalance(contract.agentDepositLedger) : null;

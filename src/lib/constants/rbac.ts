@@ -15,7 +15,7 @@ export const PERMISSIONS = [
   'user.manage', 'role.manage', 'audit.view',
   'settings.manage',
   'agent.ledger.view', 'agent.ledger.remit', 'agent.ledger.manage',
-  'paytrigger.view', 'paytrigger.manage', 'paytrigger.pin', 'paytrigger.release',
+  'paytrigger.view', 'paytrigger.manage', 'paytrigger.pin', 'paytrigger.release', 'paytrigger.lock',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -55,6 +55,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'paytrigger.manage': 'Enrol, verify and reconcile PayTrigger phones',
   'paytrigger.pin': 'Issue offline PayTrigger unlock PINs',
   'paytrigger.release': 'Remove a PayTrigger lock for good',
+  'paytrigger.lock': 'Lock or open a PayTrigger phone by hand',
 };
 
 /** Permissions grouped for display — the Roles admin UI's checkbox grid, in this order. */
@@ -66,7 +67,7 @@ export const PERMISSION_GROUPS: Array<{ label: string; permissions: Permission[]
   { label: 'Inventory', permissions: ['inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view'] },
   { label: 'Reports', permissions: ['report.view.branch', 'report.view.all', 'report.export'] },
   { label: 'Agent ledger', permissions: ['agent.ledger.view', 'agent.ledger.remit', 'agent.ledger.manage'] },
-  { label: 'PayTrigger', permissions: ['paytrigger.view', 'paytrigger.manage', 'paytrigger.pin', 'paytrigger.release'] },
+  { label: 'PayTrigger', permissions: ['paytrigger.view', 'paytrigger.manage', 'paytrigger.pin', 'paytrigger.release', 'paytrigger.lock'] },
   { label: 'Administration', permissions: ['user.manage', 'role.manage', 'audit.view'] },
   { label: 'Settings', permissions: ['settings.manage'] },
 ];

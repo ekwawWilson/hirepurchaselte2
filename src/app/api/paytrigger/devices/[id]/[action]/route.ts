@@ -4,7 +4,7 @@ import type { Permission } from '@/lib/constants/rbac';
 import { prisma } from '@/lib/db/prisma';
 import { reconcileContract } from '@/lib/paytrigger/reconcile';
 import {
-  verifyDevice, cancelEnrolment, setReleaseHeld, sendPhoneMessage, issueOfflinePin, releaseDevice, PayTriggerError,
+  verifyDevice, cancelEnrolment, setReleaseHeld, sendPhoneMessage, issueOfflinePin, releaseDevice, setManualLock, PayTriggerError,
 } from '@/lib/paytrigger/admin';
 
 /** Who may do what to a phone. Removing a lock cannot be undone, so it needs the strongest permission. */
@@ -16,6 +16,9 @@ const ACTIONS: Record<string, Permission> = {
   'hold-release': 'paytrigger.manage',
   pin: 'paytrigger.pin',
   release: 'paytrigger.release',
+  lock: 'paytrigger.lock',
+  open: 'paytrigger.lock',
+  'normal-rules': 'paytrigger.lock',
 };
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; action: string }> }) {
@@ -51,6 +54,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         return NextResponse.json({ ok: true });
       case 'pin':
         return NextResponse.json(await issueOfflinePin(id, userId, typeof body.key === 'string' && body.key.trim() ? body.key.trim() : undefined));
+      case 'lock':
+        return NextResponse.json({ outcome: await setManualLock(id, { state: 'LOCKED', reason: String(body.reason ?? '') }, userId) });
+      case 'open':
+        return NextResponse.json({ outcome: await setManualLock(id, { state: 'OPEN', hours: Number(body.hours), reason: String(body.reason ?? '') }, userId) });
+      case 'normal-rules':
+        return NextResponse.json({ outcome: await setManualLock(id, { state: null }, userId) });
       case 'release':
         // Uninstalls PayTrigger from the phone: typed out, not a single click.
         if (body.confirm !== 'RELEASE') return NextResponse.json({ error: 'Type RELEASE to confirm: removing the lock cannot be undone' }, { status: 400 });

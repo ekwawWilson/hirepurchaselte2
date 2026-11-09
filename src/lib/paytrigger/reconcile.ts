@@ -271,6 +271,12 @@ async function lockScreenText(contract: LoadedContract | null, decision: Decisio
   const settings = await getPayTriggerSettings();
   const org = await getOrgSettings();
   const base = { companyName: org.companyName, supportPhone: org.phone ?? '' };
+  if (decision?.manualLock) {
+    return {
+      title: `Locked by ${base.companyName}`.slice(0, 80),
+      tips: `This phone has been locked by ${base.companyName}.${base.supportPhone ? ` Please call ${base.supportPhone}.` : ' Please contact us.'}`,
+    };
+  }
   if (!contract || !['ACTIVE', 'DEFAULTED'].includes(contract.status)) {
     return { title: fillTemplate(settings.unlinkedTitle, base), tips: fillTemplate(settings.unlinkedTips, base) };
   }
@@ -338,6 +344,7 @@ export async function reconcileContract(contractId: string, opts: {
     device: { activated, providerExpiresAt: device.providerExpiresAt },
     settings,
     temporaryUnlockUntil: await temporaryUnlockUntil(contract.id, now),
+    manual: device.manualState ? { state: device.manualState as 'LOCKED' | 'OPEN', until: device.manualUntil } : null,
   });
 
   const update: Prisma.PayTriggerDeviceUpdateInput = { scheduleExpiresAt: decision.scheduleExpiresAt };

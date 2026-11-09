@@ -32,6 +32,8 @@ export interface DecisionInput {
   settings: { lockAfterOverdueDays: number; maxUnlockHorizonDays: number };
   /** The end of a temporary unlock the customer has paid for (temporaryUnlock.ts), if any. */
   temporaryUnlockUntil?: Date | null;
+  /** Staff locking or opening the phone by hand (admin.setManualLock). OPEN always has an end. */
+  manual?: { state: 'LOCKED' | 'OPEN'; until: Date | null } | null;
 }
 
 export interface LockAmounts {
@@ -55,6 +57,8 @@ export interface Decision {
   amounts: LockAmounts | null;
   /** The next unpaid instalment, for the lock-screen text. */
   next: { instalmentNo: number; dueDate: Date; remainingMinor: number } | null;
+  /** Locked by staff by hand: the lock screen says so rather than naming a payment. */
+  manualLock?: boolean;
   fingerprint: string;
 }
 
@@ -77,7 +81,33 @@ function fingerprintOf(parts: { action: LockAction; target: string | null; hold:
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
 
+/**
+ * The decision, with staff's hand on it. A phone locked by hand stays locked
+ * whatever is paid, until staff clear it. One opened by hand stays open to
+ * the time they chose, or later if its payments carry it further; after that
+ * the rules apply again. A paid-off phone is released regardless.
+ */
 export function decide(input: DecisionInput): Decision {
+  const decision = decideByRules(input);
+  const { now, manual } = input;
+  if (!manual || input.contract.status === 'COMPLETED') return decision;
+  if (manual.until && manual.until.getTime() <= now.getTime() + LOCK_NOW_MS) return decision;
+
+  const shaped = (action: LockAction, reason: string, nextRepayTime: Date | null, lockNow: boolean): Decision => ({
+    ...decision, action, reason, nextRepayTime, lockNow, depositHold: false, manualLock: action === 'LOCK',
+    fingerprint: fingerprintOf({ action, target: lockNow ? 'NOW' : nextRepayTime?.toISOString() ?? null, hold: false, amounts: decision.amounts }),
+  });
+  if (manual.state === 'LOCKED') {
+    const isOpen = input.device.activated && !!input.device.providerExpiresAt && input.device.providerExpiresAt.getTime() > now.getTime();
+    return isOpen
+      ? shaped('LOCK', 'Locked by staff by hand', new Date(now.getTime() + LOCK_NOW_MS), true)
+      : shaped('LOCK', 'Locked by staff by hand (the phone is already past its lock date)', null, true);
+  }
+  if (decision.action === 'EXTEND' && decision.nextRepayTime && decision.nextRepayTime.getTime() >= manual.until!.getTime()) return decision;
+  return shaped('EXTEND', `Opened by staff until ${manual.until!.toISOString().slice(0, 16).replace('T', ' ')} UTC`, manual.until, false);
+}
+
+function decideByRules(input: DecisionInput): Decision {
   const { now, contract, device, settings } = input;
   const isOpen = device.activated && !!device.providerExpiresAt && device.providerExpiresAt.getTime() > now.getTime();
 
