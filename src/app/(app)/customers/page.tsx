@@ -36,6 +36,7 @@ interface Branch { id: string; name: string; code: string; isActive: boolean }
 const EMPTY_FORM = {
   firstName: '', lastName: '', phone: '', photoUrl: '',
   address: '', occupation: '', workAddress: '', nationalId: '',
+  guarantorName: '', guarantorPhone: '',
 };
 
 export default function CustomersPage() {
@@ -175,6 +176,21 @@ export default function CustomersPage() {
                 <Label>Work address</Label>
                 <Textarea required rows={2} className="mt-1.5" value={form.workAddress} onChange={(e) => set('workAddress', e.target.value)} placeholder="Business or employer name, and where it is" />
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Guarantor (optional)</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label>Guarantor&apos;s full name</Label>
+                <Input className="mt-1.5" value={form.guarantorName} onChange={(e) => set('guarantorName', e.target.value)} required={!!form.guarantorPhone.trim()} />
+              </div>
+              <div>
+                <Label>Guarantor&apos;s phone number</Label>
+                <Input type="tel" className="mt-1.5" value={form.guarantorPhone} onChange={(e) => set('guarantorPhone', e.target.value)} required={!!form.guarantorName.trim()} placeholder="e.g. 0241234567" />
+              </div>
+              <p className="sm:col-span-2 text-xs text-gray-500">Someone who will vouch for the customer and can be called if payments stop. Not the customer&apos;s own number.</p>
             </CardContent>
           </Card>
 
