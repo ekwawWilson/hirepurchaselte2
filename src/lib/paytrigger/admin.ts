@@ -89,7 +89,7 @@ export async function enrolmentCandidates(branchId?: string) {
     .filter((c) => c.needsEnrolment);
 }
 
-interface EnrolOutcome { inventoryItemId: string; imei: string; ok: boolean; message: string; dryRun: boolean; modelWarning?: string }
+export interface EnrolOutcome { inventoryItemId: string; imei: string; ok: boolean; message: string; dryRun: boolean; modelWarning?: string }
 
 /**
  * Enrols phones with PayTrigger so each locks itself on first switch-on

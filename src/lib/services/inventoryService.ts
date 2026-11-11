@@ -12,7 +12,7 @@ const TRANSITIONS: Record<string, { from: string[]; to?: string }> = {
   ADJUSTMENT: { from: ['AVAILABLE', 'RESERVED', 'ISSUED', 'RETURNED', 'WRITTEN_OFF'] },
 };
 
-export async function receiveInventoryItem(params: {
+export interface ReceiveParams {
   productId: string;
   branchId: string;
   serialNumber: string;
@@ -22,8 +22,15 @@ export async function receiveInventoryItem(params: {
   /** Its specification, e.g. 15" screen, 200 GB HDD, 6 GB RAM. */
   description?: string;
   reason?: string;
-}) {
-  return prisma.$transaction(async (tx) => {
+}
+
+export async function receiveInventoryItem(params: ReceiveParams) {
+  return prisma.$transaction((tx) => receiveInventoryItemInTx(tx, params));
+}
+
+/** The same, inside a transaction the caller holds: a batch received all together or not at all. */
+export async function receiveInventoryItemInTx(tx: Prisma.TransactionClient, params: ReceiveParams) {
+  {
     const item = await tx.inventoryItem.create({
       data: {
         productId: params.productId,
@@ -45,7 +52,7 @@ export async function receiveInventoryItem(params: {
       },
     });
     return item;
-  });
+  }
 }
 
 /** Contract states in which the unit belongs to that sale: awaiting it, out with the customer, or theirs. */

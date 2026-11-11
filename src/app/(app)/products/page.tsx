@@ -14,7 +14,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
-import { DeviceFinancingBadge, DeviceFinancingField, FinancingFilterSelect, matchesFinancing, ALL_FINANCING, NOT_DEVICE_FINANCING } from '@/components/DeviceFinancing';
+import { DeviceFinancingBadge } from '@/components/DeviceFinancing';
 
 interface Product {
   id: string;
@@ -38,17 +38,17 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryFilter, setCategoryFilter] = useState('__all__');
-  const [financingFilter, setFinancingFilter] = useState(ALL_FINANCING);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '', categoryId: '', cashPrice: '', deviceFinancing: NOT_DEVICE_FINANCING });
+  const [form, setForm] = useState({ name: '', description: '', categoryId: '', cashPrice: '' });
   const [newCategoryName, setNewCategoryName] = useState('');
   const [saving, setSaving] = useState(false);
 
   async function load() {
     setIsLoading(true);
     try {
-      const { products } = await api.get<{ products: Product[] }>('/products');
+      // Device Financing phones have their own page (device-financing/phones).
+      const { products } = await api.get<{ products: Product[] }>('/products?financing=regular');
       setProducts(products);
     } catch (e) {
       toast({ title: 'Error', description: e instanceof ApiError ? e.message : 'Failed to load products', variant: 'destructive' });
@@ -68,7 +68,7 @@ export default function ProductsPage() {
   }, [showForm]);
 
   function resetForm() {
-    setForm({ name: '', description: '', categoryId: '', cashPrice: '', deviceFinancing: NOT_DEVICE_FINANCING });
+    setForm({ name: '', description: '', categoryId: '', cashPrice: '' });
     setNewCategoryName('');
   }
 
@@ -94,7 +94,6 @@ export default function ProductsPage() {
       const cashPriceMinor = Math.round(parseFloat(form.cashPrice) * 100);
       await api.post('/products', {
         name: form.name, description: form.description, categoryId, cashPriceMinor,
-        deviceFinancingBrand: form.deviceFinancing === NOT_DEVICE_FINANCING ? null : form.deviceFinancing,
       });
       toast({ title: 'Product created', description: `${form.name} was added to the catalogue.` });
       resetForm();
@@ -154,8 +153,6 @@ export default function ProductsPage() {
                 </div>
               </div>
 
-              <DeviceFinancingField value={form.deviceFinancing} onChange={(v) => setForm({ ...form, deviceFinancing: v })} nameHint={`${form.name} ${form.description}`} />
-
               <div className="flex gap-2 pt-2">
                 <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Create product'}</Button>
                 <Button type="button" variant="outline" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</Button>
@@ -183,7 +180,7 @@ export default function ProductsPage() {
         )}
       </div>
 
-      <FinancingFilterSelect value={financingFilter} onChange={setFinancingFilter} className="w-full sm:w-56" />
+      <p className="text-xs text-gray-500">TECNO, Infinix and itel phones sold on Device Financing are under <Link href="/device-financing/phones" className="text-primary hover:underline">Device Financing &gt; Phones</Link>.</p>
 
       {categories.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -221,7 +218,7 @@ export default function ProductsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {products.filter((p) => (categoryFilter === '__all__' || p.categoryId === categoryFilter) && matchesFinancing(financingFilter, p.deviceFinancingBrand)).map((p) => (
+                {products.filter((p) => (categoryFilter === '__all__' || p.categoryId === categoryFilter)).map((p) => (
                   <TableRow key={p.id}>
                     <TableCell><Link href={`/products/${p.id}`} className="font-mono text-xs text-blue-700 hover:underline">{p.sku}</Link></TableCell>
                     <TableCell className="text-gray-600">{p.category?.name ?? '—'}</TableCell>

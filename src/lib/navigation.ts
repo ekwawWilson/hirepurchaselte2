@@ -80,7 +80,15 @@ export const navGroups: NavGroup[] = [
       { name: 'Products', href: '/products', icon: Package, perms: ['inventory.view'] },
       { name: 'Inventory', href: '/inventory', icon: Warehouse, perms: ['inventory.view'] },
       { name: 'Price Chart', href: '/price-chart', icon: Tags, perms: ['pricechart.view'] },
-      // Device Financing phone locks: enrolling TECNO/Infinix/itel stock, and what needs a person.
+    ],
+  },
+  {
+    // TECNO, Infinix and itel phones sold on Device Financing: their own models
+    // (with price plans), their own stock by IMEI, and their PayTrigger locks.
+    label: 'Device Financing',
+    items: [
+      { name: 'Phones', href: '/device-financing/phones', icon: Smartphone, perms: ['inventory.view'] },
+      { name: 'Phone Stock', href: '/device-financing/stock', icon: Warehouse, perms: ['inventory.view'] },
       { name: 'PayTrigger', href: '/paytrigger', icon: Lock, perms: ['paytrigger.view'] },
     ],
   },
