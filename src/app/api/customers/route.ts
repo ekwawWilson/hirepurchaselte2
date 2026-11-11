@@ -65,9 +65,9 @@ export async function POST(req: NextRequest) {
   const { phone } = cleaned;
   const guarantor = body.guarantorPhone?.trim() ? cleanContactNumber(body.guarantorPhone, "The guarantor's phone number") : null;
   if (guarantor && 'error' in guarantor) return NextResponse.json({ error: guarantor.error }, { status: 400 });
-  // Both or neither: a name with no number, or a number with no name, cannot be followed up.
-  if (!!body.guarantorName?.trim() !== !!guarantor) {
-    return NextResponse.json({ error: "Give the guarantor's name and phone number, or leave both empty" }, { status: 400 });
+  // Every customer has someone who vouches for them and can be called if payments stop.
+  if (!body.guarantorName?.trim() || !guarantor) {
+    return NextResponse.json({ error: "The guarantor's name and phone number are required" }, { status: 400 });
   }
   if (guarantor && guarantor.phone === phone) return NextResponse.json({ error: "The guarantor's phone number cannot be the customer's own" }, { status: 400 });
 

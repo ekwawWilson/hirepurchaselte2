@@ -180,15 +180,15 @@ export default function CustomersPage() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>Guarantor (optional)</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Guarantor</CardTitle></CardHeader>
             <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label>Guarantor&apos;s full name</Label>
-                <Input className="mt-1.5" value={form.guarantorName} onChange={(e) => set('guarantorName', e.target.value)} required={!!form.guarantorPhone.trim()} />
+                <Input className="mt-1.5" value={form.guarantorName} onChange={(e) => set('guarantorName', e.target.value)} required />
               </div>
               <div>
                 <Label>Guarantor&apos;s phone number</Label>
-                <Input type="tel" className="mt-1.5" value={form.guarantorPhone} onChange={(e) => set('guarantorPhone', e.target.value)} required={!!form.guarantorName.trim()} placeholder="e.g. 0241234567" />
+                <Input type="tel" className="mt-1.5" value={form.guarantorPhone} onChange={(e) => set('guarantorPhone', e.target.value)} required placeholder="e.g. 0241234567" />
               </div>
               <p className="sm:col-span-2 text-xs text-gray-500">Someone who will vouch for the customer and can be called if payments stop. Not the customer&apos;s own number.</p>
             </CardContent>
@@ -286,8 +286,8 @@ export default function CustomersPage() {
 
       <OneTimePasswordDialog password={issued?.password ?? null} title="Customer portal password" onClose={() => setIssued(null)}>
         <p>
-          <strong>{issued?.name}</strong> can sign in to the customer portal with their phone number ({issued?.phone}) and this
-          one-time password. They will be asked to choose their own when they first sign in.
+          <strong>{issued?.name}</strong> signs in to the customer app or portal with their phone number ({issued?.phone}) as
+          both the number and the password. They must choose their own password the first time they sign in.
         </p>
       </OneTimePasswordDialog>
     </div>

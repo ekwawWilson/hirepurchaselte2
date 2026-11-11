@@ -57,9 +57,9 @@ describe('Customer portal', () => {
     expect(asBefore.status).toBe(401);
     expect(asBefore.body.error).toMatch(/Invalid phone number or password/);
 
+    // The starting password is the customer's own number.
     const password = await issuePortalPassword(customer.id);
-    expect(password).toMatch(/^\d{6}$/);
-    expect((await signIn(phone, phone)).status).toBe(401);
+    expect(password).toBe(phone);
     expect((await signIn(phone, 'not-my-password')).status).toBe(401);
 
     const ok = await signIn(phone, password);

@@ -98,11 +98,11 @@ describe('Sign-in attempt limits', () => {
     for (const number of spellings) expect(await signIn(number, '000000')).toBe(401);
     expect(await signIn(phone, password)).toBe(429);
 
-    // A new one-time password from staff also lifts the lock.
+    // Staff resetting the password (back to the phone number) also lifts the lock.
     const token = await login('cashier@example.test');
     const issued = await portalPasswordIssuePOST(makeRequest('POST', `/api/customers/${customer.id}/portal-password`, { token }), makeParams({ id: customer.id }));
     const { portalPassword } = await issued.json();
-    expect(await signIn(phone, password)).toBe(401); // the old one is gone
+    expect(portalPassword).toBe(phone);
     expect(await signIn(phone, portalPassword)).toBe(200);
   });
 });
@@ -216,10 +216,10 @@ describe('Registration checks', () => {
     expect((await register({ phone: `233${phone.slice(1)}` })).status).toBe(409);
   });
 
-  it('gives each new customer a one-time portal password, shown once and never stored in the clear', async () => {
+  it('gives each new customer their phone number as a starting password, to be replaced, never stored in the clear', async () => {
     const phone = await freshPhone();
     const res = await register({ phone });
-    expect(res.body.portalPassword).toMatch(/^\d{6}$/);
+    expect(res.body.portalPassword).toBe(phone);
     expect(res.body.customer).not.toHaveProperty('passwordHash');
     const stored = await prisma.customer.findUniqueOrThrow({ where: { id: res.body.customer.id } });
     expect(stored.passwordHash).not.toContain(res.body.portalPassword);

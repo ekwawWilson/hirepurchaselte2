@@ -212,12 +212,12 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               {customer.isActivated ? '' : ' · has not yet chosen their own password'}
             </p>
             <p className="text-xs text-gray-500 mt-0.5">
-              The customer signs in with their phone number. If they have no password or have forgotten it, issue a one-time one.
+              The customer signs in with their phone number. Their first password is their phone number too; if they have forgotten theirs, reset it to that.
             </p>
           </div>
           {canIssuePassword && (
             <Button variant="outline" size="sm" disabled={issuing} onClick={issuePortalPassword}>
-              {issuing ? 'Issuing...' : 'Issue one-time password'}
+              {issuing ? 'Resetting...' : 'Reset password to phone number'}
             </Button>
           )}
         </CardContent>
@@ -225,8 +225,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
       <OneTimePasswordDialog password={portalPassword} title="Customer portal password" onClose={() => { setPortalPassword(null); void load(); }}>
         <p>
-          <strong>{customer.firstName} {customer.lastName}</strong> can now sign in to the customer portal with their phone number and
-          this one-time password. Any password they had before no longer works, and they will be asked to choose a new one.
+          <strong>{customer.firstName} {customer.lastName}</strong>&apos;s password is back to their phone number. Any password they had
+          before no longer works, and they must choose a new one when they next sign in.
         </p>
       </OneTimePasswordDialog>
 

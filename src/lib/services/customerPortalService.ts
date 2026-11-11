@@ -11,7 +11,8 @@ import { prisma } from '../db/prisma';
 import { phoneVariants } from './hubtelClient';
 import { getDeviceLoanState } from './paymentService';
 import { PRE_APPROVAL_STATUSES } from '../constants/contracts';
-import { generatePortalPassword, hashPassword } from './authService';
+import { hashPassword } from './authService';
+import { primaryPhone } from './customerService';
 
 export class PortalError extends Error {}
 
@@ -31,13 +32,16 @@ export async function findCustomerByPhone(phone: string) {
 }
 
 /**
- * Gives a customer a one-time portal password — at registration, or when
- * they ask staff for one — returned in the clear exactly once for staff to
- * hand over, and replaced by the customer at their first sign-in. Issuing a
- * new one signs out anyone already in on the old one.
+ * Sets a customer's starting password to their own phone number, as written
+ * on their record (0241234567) — at registration, or when staff reset it.
+ * It opens nothing but choosing their own password (mustChangePassword, held
+ * by the server), and their own number is refused as that new password.
+ * Setting it signs out anyone already in on the old one.
  */
 export async function issuePortalPassword(customerId: string): Promise<string> {
-  const password = generatePortalPassword();
+  const customer = await prisma.customer.findUniqueOrThrow({ where: { id: customerId }, select: { phone: true, phone2: true, phone3: true } });
+  const password = primaryPhone(customer);
+  if (!password) throw new PortalError('This customer has no phone number to sign in with');
   await prisma.customer.update({
     where: { id: customerId },
     data: { passwordHash: await hashPassword(password), mustChangePassword: true, passwordChangedAt: new Date() },
@@ -46,9 +50,9 @@ export async function issuePortalPassword(customerId: string): Promise<string> {
 }
 
 /**
- * Sign-in. A customer who has never been issued a password cannot sign in:
- * a phone number is known to everyone who has ever called it, so it is never
- * accepted in a password's place.
+ * Sign-in. A customer who has never been issued a password cannot sign in.
+ * One whose starting password (their phone number) has not yet been replaced
+ * can do nothing but replace it.
  */
 export async function authenticateCustomer(phone: string, password: string) {
   const customer = await findCustomerByPhone(phone);

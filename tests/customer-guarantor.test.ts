@@ -1,4 +1,4 @@
-/** A guarantor's name and phone number, taken when the customer is registered. */
+/** A guarantor's name and phone number, required when the customer is registered. */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { makeRequest, freshPhone, registrationFields } from './helpers';
 import { POST as loginPOST } from '@/app/api/auth/login/route';
@@ -18,12 +18,12 @@ describe('Guarantor at registration', () => {
     expect((await res.json()).customer).toMatchObject({ guarantorName: 'Efua Mensah', guarantorPhone: '0241112233' });
   });
 
-  it('is optional, but needs both the name and the number when given', async () => {
-    expect((await register({})).status).toBe(201);
-    const nameOnly = await register({ guarantorName: 'Efua Mensah' });
-    expect(nameOnly.status).toBe(400);
-    expect((await nameOnly.json()).error).toMatch(/name and phone number/);
-    expect((await register({ guarantorPhone: '0241112233' })).status).toBe(400);
+  it('is required: both the name and a valid number', async () => {
+    const none = await register({ guarantorName: '', guarantorPhone: '' });
+    expect(none.status).toBe(400);
+    expect((await none.json()).error).toMatch(/guarantor's name and phone number are required/);
+    expect((await register({ guarantorName: 'Efua Mensah', guarantorPhone: '' })).status).toBe(400);
+    expect((await register({ guarantorName: '', guarantorPhone: '0241112233' })).status).toBe(400);
     expect((await register({ guarantorName: 'Efua Mensah', guarantorPhone: '12' })).status).toBe(400);
   });
 

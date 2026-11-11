@@ -39,11 +39,6 @@ export function generateTemporaryPassword(length = 10): string {
   }
 }
 
-/** A one-time portal password: six digits, easy to read out to a customer. */
-export function generatePortalPassword(): string {
-  return String(randomInt(1_000_000)).padStart(6, '0');
-}
-
 /**
  * A member of staff choosing their own password. Stamps passwordChangedAt, so
  * every token issued before now stops working (rbac.ts) — the caller signs a

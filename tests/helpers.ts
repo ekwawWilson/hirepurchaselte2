@@ -100,6 +100,8 @@ export function registrationFields() {
     occupation: 'Trader',
     workAddress: 'Makola Market, Accra',
     photoUrl: TEST_PHOTO_DATA_URL,
+    guarantorName: 'Test Guarantor',
+    guarantorPhone: '0302000000',
   };
 }
 
