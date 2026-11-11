@@ -367,7 +367,7 @@ function ProductsTab({ onError, canEdit }: { onError: OnError; canEdit: boolean 
 }
 
 const NUMBER_FIELDS: Array<{ key: string; label: string; hint: string }> = [
-  { key: 'lockAfterOverdueDays', label: 'Days after the grace period', hint: 'The phone locks at 08:30 this many days after the contract\'s grace period ends (1: the morning after).' },
+  { key: 'lockAfterOverdueDays', label: 'Extra days before locking', hint: 'An unpaid phone locks at 23:59 this many days after the due date (0: at the end of the due day). The contract\'s grace period does not apply to phone locks.' },
   { key: 'maxUnlockHorizonDays', label: 'Furthest a phone is opened ahead (days)', hint: 'Caps how long any one payment keeps a phone open, so a mistake can never open one for long.' },
   { key: 'releaseHoldHours', label: 'Hours before a paid-off phone is released', hint: 'Time to catch a payment that bounces before the lock is removed for good.' },
   { key: 'extendBreakerPercent', label: 'Most phones one sweep may open (%)', hint: 'A safety stop: past this share of phones (and at least 5), the sweep stops opening them.' },

@@ -62,15 +62,19 @@ export interface Decision {
   fingerprint: string;
 }
 
-/** Ghana keeps UTC all year: the lock moment is 08:30 there, after the 08:00 overdue sweep. */
-const LOCK_HOUR_UTC = 8;
-const LOCK_MINUTE_UTC = 30;
+/**
+ * Ghana keeps UTC all year: a phone locks at 23:59 there at the end of the
+ * day its payment was due, if it is still unpaid. No grace period applies:
+ * the customer has the whole due day to pay, and no more.
+ */
+const LOCK_HOUR_UTC = 23;
+const LOCK_MINUTE_UTC = 59;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOCK_NOW_MS = 60_000;
 /** A held date this close to "now + cap" is kept, so every event does not resend a slightly later one. */
 const HORIZON_STABILITY_MS = 7 * DAY_MS;
 
-/** 08:30 on the day `days` after a due date. */
+/** 23:59 on the day `days` after a due date (0: the due date itself). */
 export function lockMomentAfter(dueDate: Date, days: number): Date {
   return new Date(Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate() + days, LOCK_HOUR_UTC, LOCK_MINUTE_UTC));
 }
@@ -168,7 +172,7 @@ function decideByRules(input: DecisionInput): Decision {
 
   const horizon = new Date(now.getTime() + settings.maxUnlockHorizonDays * DAY_MS);
   const schedule = next
-    ? lockMomentAfter(next.dueDate, contract.gracePeriodDays + settings.lockAfterOverdueDays)
+    ? lockMomentAfter(next.dueDate, settings.lockAfterOverdueDays)
     : horizon;
 
   if (input.agentDeposit && (input.agentDeposit.owedMinor === null || input.agentDeposit.owedMinor > 0)) {

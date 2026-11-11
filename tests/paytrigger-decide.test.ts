@@ -24,22 +24,23 @@ function input(overrides: { contract?: Partial<DecisionInput['contract']>; devic
     },
     agentDeposit: overrides.agentDeposit ?? null,
     device: { activated: true, providerExpiresAt: new Date(NOW.getTime() + 5 * DAY), ...overrides.device },
-    settings: { lockAfterOverdueDays: 1, maxUnlockHorizonDays: 45, ...overrides.settings },
+    settings: { lockAfterOverdueDays: 0, maxUnlockHorizonDays: 45, ...overrides.settings },
     temporaryUnlockUntil: overrides.temporaryUnlockUntil,
     manual: overrides.manual,
   };
 }
 
 describe('PayTrigger lock decision', () => {
-  it('locks at 08:30 (Ghana, UTC) on the day after the grace period ends', () => {
-    expect(lockMomentAfter(new Date('2026-11-02T00:00:00Z'), 8).toISOString()).toBe('2026-11-10T08:30:00.000Z');
+  it('locks at 23:59 (Ghana, UTC) at the end of the due day, or that many extra days later', () => {
+    expect(lockMomentAfter(new Date('2026-11-02T00:00:00Z'), 0).toISOString()).toBe('2026-11-02T23:59:00.000Z');
+    expect(lockMomentAfter(new Date('2026-11-02T00:00:00Z'), 2).toISOString()).toBe('2026-11-04T23:59:00.000Z');
   });
 
-  it('an active contract with nothing overdue opens the phone until the next instalment\'s grace period has run out', () => {
+  it('an active contract with nothing overdue opens the phone until the end of the next instalment\'s due day', () => {
     const d = decide(input());
     expect(d.action).toBe('EXTEND');
-    // Due 31 Oct, 7 days' grace, locks the day after: 8 Nov 08:30.
-    expect(d.nextRepayTime?.toISOString()).toBe('2026-11-08T08:30:00.000Z');
+    // Due 31 Oct: locks at the end of that day, whatever the contract's grace period.
+    expect(d.nextRepayTime?.toISOString()).toBe('2026-10-31T23:59:00.000Z');
     expect(d.lockNow).toBe(false);
     expect(d.amounts).toEqual({ repayedAmt: '120.00', totalAmt: '600.00', nextRepayAmt: '120.00', currentTerm: 1, totalTerm: 4 });
   });
@@ -66,10 +67,12 @@ describe('PayTrigger lock decision', () => {
     expect(d.nextRepayTime).toBeNull();
   });
 
-  it('within the grace period the phone stays open', () => {
-    const d = decide(input({ contract: { instalments: [{ instalmentNo: 1, dueDate: day(-3), amountDueMinor: 12000, amountPaidMinor: 0, status: 'OVERDUE' }] } }));
-    expect(d.action).toBe('EXTEND');
-    expect(d.nextRepayTime?.toISOString()).toBe('2026-11-02T08:30:00.000Z');
+  it('no grace period: a payment unpaid at the end of its due day locks the phone, and one due today keeps it open until tonight', () => {
+    const late = decide(input({ contract: { instalments: [{ instalmentNo: 1, dueDate: day(-1), amountDueMinor: 12000, amountPaidMinor: 0, status: 'OVERDUE' }] } }));
+    expect(late).toMatchObject({ action: 'LOCK', lockNow: true });
+    const today = decide(input({ contract: { instalments: [{ instalmentNo: 1, dueDate: day(0), amountDueMinor: 12000, amountPaidMinor: 0, status: 'OVERDUE' }] } }));
+    expect(today.action).toBe('EXTEND');
+    expect(today.nextRepayTime?.toISOString()).toBe('2026-10-28T23:59:00.000Z');
   });
 
   it('never opens a phone more than the cap ahead', () => {
@@ -162,7 +165,7 @@ describe('PayTrigger lock decision', () => {
     it('never cuts short a normal schedule that runs later than the window', () => {
       const d = decide(input({ temporaryUnlockUntil: new Date(NOW.getTime() + HOUR_MS) }));
       expect(d.action).toBe('EXTEND');
-      expect(d.nextRepayTime).toEqual(lockMomentAfter(day(3), 8));
+      expect(d.nextRepayTime).toEqual(lockMomentAfter(day(3), 0));
     });
     it('an unremitted agent deposit outranks a window', () => {
       expect(decide(input({ contract: overdue, device: shut, agentDeposit: { owedMinor: 500 }, temporaryUnlockUntil: until })).action).toBe('HOLD');
@@ -190,7 +193,7 @@ describe('PayTrigger lock decision', () => {
 
     it('opened by hand never shortens a schedule that runs later, and overrides an agent deposit hold', () => {
       const soon = new Date(NOW.getTime() + 2 * HOUR_MS);
-      expect(decide(input({ manual: { state: 'OPEN', until: soon } })).nextRepayTime?.toISOString()).toBe('2026-11-08T08:30:00.000Z');
+      expect(decide(input({ manual: { state: 'OPEN', until: soon } })).nextRepayTime?.toISOString()).toBe('2026-10-31T23:59:00.000Z');
       const held = decide(input({ agentDeposit: { owedMinor: 5000 }, manual: { state: 'OPEN', until: soon } }));
       expect(held).toMatchObject({ action: 'EXTEND', depositHold: false, nextRepayTime: soon });
     });

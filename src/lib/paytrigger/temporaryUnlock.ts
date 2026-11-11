@@ -109,7 +109,7 @@ export async function getTemporaryUnlockOffer(contractId: string, now: Date = ne
   const paid = await paidUnlocks(contractId);
   const running = paid.map((r) => r.expiresAt!.getTime()).filter((t) => t > now.getTime());
   const activeUntil = running.length > 0 ? new Date(Math.max(...running)) : null;
-  const lockedSince = lockMomentAfter(overdue[0].dueDate, contract.gracePeriodDays + settings.lockAfterOverdueDays);
+  const lockedSince = lockMomentAfter(overdue[0].dueDate, settings.lockAfterOverdueDays);
   if (contract.status !== 'DEFAULTED' && lockedSince > now && !activeUntil) return null;
 
   // Uses since the customer last had nothing overdue: only clearing the arrears starts the count afresh.

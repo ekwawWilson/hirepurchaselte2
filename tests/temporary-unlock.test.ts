@@ -85,7 +85,15 @@ describe('Temporary unlock', () => {
       expect(await getTemporaryUnlockOffer(s.contract.id)).toBeNull();
       await settings({ temporaryUnlockEnabled: true });
       await prisma.instalment.updateMany({ where: { contractId: s.contract.id, instalmentNo: 1 }, data: { dueDate: new Date(Date.now() - 2 * DAY) } });
-      expect(await getTemporaryUnlockOffer(s.contract.id)).toBeNull(); // still within the grace period
+      // No grace period: two days late is locked, and can be opened.
+      expect(await getTemporaryUnlockOffer(s.contract.id)).toMatchObject({ available: true });
+      // With extra days set before locking, not yet.
+      await settings({ lockAfterOverdueDays: 3 });
+      try {
+        expect(await getTemporaryUnlockOffer(s.contract.id)).toBeNull();
+      } finally {
+        await settings({ lockAfterOverdueDays: 0 });
+      }
     });
 
     it('prices each tier from what is overdue, leaving late charges out', async () => {

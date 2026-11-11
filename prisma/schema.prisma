@@ -1262,8 +1262,8 @@ model PayTriggerWebhookEvent {
 model PayTriggerSettings {
   id                       String    @id @default("singleton")
   defaultRuleNum           Int       @default(0)
-  // Days after the grace period ends before the phone locks.
-  lockAfterOverdueDays     Int       @default(1)
+  // Extra days after the due date before the phone locks; 0 locks it at the end of the due day.
+  lockAfterOverdueDays     Int       @default(0)
   // An agent's contract stays locked until the deposit cash they took is remitted.
   lockOnUnpaidAgentDeposit Boolean   @default(true)
   maxUnlockHorizonDays     Int       @default(45)
