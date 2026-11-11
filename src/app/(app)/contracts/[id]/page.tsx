@@ -64,6 +64,9 @@ interface ContractDetail {
   createdBy: { firstName: string; lastName: string; role: { name: string } } | null;
   revisionReason: string | null;
   termWeeks: number | null;
+  /** Device Financing: the plan's length in months. */
+  termMonths: number | null;
+  productId: string | null;
   // What cancelling left owed back to the customer, and what was recorded as handed over.
   refundDueMinor: number | null; refundedMinor: number | null; refundedAt: string | null; refundNote: string | null;
   gracePeriodDays: number;
@@ -129,8 +132,9 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [revisionReasonInput, setRevisionReasonInput] = useState('');
   const [revisionSaving, setRevisionSaving] = useState(false);
   const [resubmitDialogOpen, setResubmitDialogOpen] = useState(false);
+  const [resubmitPlans, setResubmitPlans] = useState<Array<{ months: number; totalPriceMinor: number; depositMinor: number }>>([]);
   const [resubmitForm, setResubmitForm] = useState({
-    totalPayable: '', deposit: '', termWeeks: '', paymentFrequency: 'WEEKLY', gracePeriodDays: '', penaltyRateBps: '', loanAmount: '',
+    totalPayable: '', deposit: '', termWeeks: '', planMonths: '', paymentFrequency: 'WEEKLY', gracePeriodDays: '', penaltyRateBps: '', loanAmount: '',
   });
   const [resubmitSaving, setResubmitSaving] = useState(false);
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
@@ -171,12 +175,17 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       totalPayable: contract.totalPayableMinor !== null ? (contract.totalPayableMinor / 100).toString() : '',
       deposit: (contract.depositAmountMinor / 100).toString(),
       termWeeks: contract.termWeeks?.toString() ?? '',
+      planMonths: contract.termMonths?.toString() ?? '',
       paymentFrequency: contract.paymentFrequency,
       gracePeriodDays: contract.gracePeriodDays.toString(),
       penaltyRateBps: contract.penaltyRateBps.toString(),
       loanAmount: contract.principalMinor !== null ? (contract.principalMinor / 100).toString() : '',
     });
     setResubmitDialogOpen(true);
+    if (contract.contractType === 'DEVICE_FINANCING' && contract.productId) {
+      api.get<{ plans: Array<{ months: number; totalPriceMinor: number; depositMinor: number }> }>(`/products/${contract.productId}/plans`)
+        .then((r) => setResubmitPlans(r.plans)).catch(() => setResubmitPlans([]));
+    }
   }
 
   async function approveContractNow() {
@@ -213,7 +222,11 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     setResubmitSaving(true);
     try {
       const body: Record<string, unknown> = {};
-      if (isInstalmentSale(contract.contractType)) {
+      if (contract.contractType === 'DEVICE_FINANCING') {
+        // The plan sets the price and deposit (contractService.deviceFinancingTerms).
+        body.planMonths = parseInt(resubmitForm.planMonths, 10);
+        body.paymentFrequency = resubmitForm.paymentFrequency;
+      } else if (isInstalmentSale(contract.contractType)) {
         body.totalPayableMinor = Math.round(parseFloat(resubmitForm.totalPayable) * 100);
         body.depositAmountMinor = Math.round(parseFloat(resubmitForm.deposit) * 100);
         body.termWeeks = parseInt(resubmitForm.termWeeks, 10);
@@ -1280,7 +1293,33 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         <DialogContent>
           <DialogHeader><DialogTitle>Edit terms &amp; resubmit</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-4">
-            {isInstalmentSale(contract.contractType) && (
+            {contract.contractType === 'DEVICE_FINANCING' && (
+              <>
+                <div>
+                  <Label>Plan</Label>
+                  <select
+                    className="mt-1.5 flex h-10 w-full rounded-xl border border-input bg-white/90 px-3 text-sm"
+                    value={resubmitForm.planMonths}
+                    onChange={(e) => setResubmitForm({ ...resubmitForm, planMonths: e.target.value })}
+                  >
+                    <option value="">Choose a plan</option>
+                    {resubmitPlans.map((p) => <option key={p.months} value={p.months}>{p.months} months: {formatCurrency(p.totalPriceMinor)}, deposit {formatCurrency(p.depositMinor)}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <Label>Frequency</Label>
+                  <select
+                    className="mt-1.5 flex h-10 w-full rounded-xl border border-input bg-white/90 px-3 text-sm"
+                    value={resubmitForm.paymentFrequency}
+                    onChange={(e) => setResubmitForm({ ...resubmitForm, paymentFrequency: e.target.value })}
+                  >
+                    <option value="DAILY">Daily</option>
+                    <option value="WEEKLY">Weekly</option>
+                  </select>
+                </div>
+              </>
+            )}
+            {isInstalmentSale(contract.contractType) && contract.contractType !== 'DEVICE_FINANCING' && (
               <>
                 <div>
                   <Label>Total price (GHS)</Label>

@@ -21,6 +21,23 @@ export function suggestDeviceFinancingBrand(text: string): DeviceFinancingBrand 
   return match ? (match[1].toUpperCase() as DeviceFinancingBrand) : null;
 }
 
+/** Plan lengths a phone can be priced at, in months. */
+export const PLAN_MONTHS_MIN = 1;
+export const PLAN_MONTHS_MAX = 12;
+
+/** Instalments in a plan: a month is 30 daily or 4 weekly instalments. */
+export function planInstalments(months: number, frequency: string): number {
+  return frequency === 'DAILY' ? months * 30 : months * 4;
+}
+
+/** What each instalment is, rounded up to the pesewa; the last one takes what is left. */
+export function planInstalmentMinor(plan: { totalPriceMinor: number; depositMinor: number; months: number }, frequency: string): number {
+  return Math.ceil((plan.totalPriceMinor - plan.depositMinor) / planInstalments(plan.months, frequency));
+}
+
+/** The highest late-charge rate a contract may carry: 50%, in basis points. */
+export const MAX_PENALTY_RATE_BPS = 5000;
+
 export function isDeviceFinancingBrand(value: unknown): value is DeviceFinancingBrand {
   return typeof value === 'string' && (DEVICE_FINANCING_BRANDS as readonly string[]).includes(value);
 }

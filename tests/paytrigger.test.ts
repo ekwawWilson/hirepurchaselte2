@@ -102,7 +102,11 @@ describe('Device Financing with PayTrigger', () => {
 
   async function phone(opts: { mark?: boolean } = {}) {
     const product = await prisma.product.create({ data: { sku: `PT-${runId}-${++counter}`, name: 'TECNO Spark 30', brand: 'TECNO', cashPriceMinor: 60000 } });
-    if (opts.mark !== false) await setProductBrand(product.id, 'TECNO', adminId);
+    if (opts.mark !== false) {
+      await setProductBrand(product.id, 'TECNO', adminId);
+      // One plan: a month of four weekly GHS 120 instalments after a GHS 120 deposit, GHS 600 in all.
+      await prisma.deviceFinancingPlan.create({ data: { productId: product.id, months: 1, totalPriceMinor: 60000, depositMinor: 12000, updatedById: adminId } });
+    }
     return prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: imei() } });
   }
   async function customer() {
@@ -112,7 +116,7 @@ describe('Device Financing with PayTrigger', () => {
   async function sell(itemId: string, opts: { createdById?: string; requiresApproval?: boolean } = {}) {
     const contract = await createContract({
       contractType: 'DEVICE_FINANCING', customerId: (await customer()).id, inventoryItemId: itemId, branchId, createdById: opts.createdById ?? adminId,
-      requiresApproval: opts.requiresApproval, totalPayableMinor: 60000, depositAmountMinor: 12000, termWeeks: 4, paymentFrequency: 'WEEKLY',
+      requiresApproval: opts.requiresApproval, planMonths: 1, paymentFrequency: 'WEEKLY',
     });
     await payTriggerIdle();
     return contract;

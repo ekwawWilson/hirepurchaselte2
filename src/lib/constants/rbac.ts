@@ -7,7 +7,7 @@
 export const PERMISSIONS = [
   'customer.create', 'customer.view', 'customer.update',
   'contract.create', 'contract.view', 'contract.cancel', 'contract.writeoff', 'contract.reschedule',
-  'contract.approve',
+  'contract.approve', 'contract.price.override',
   'payment.cash.record', 'payment.reverse', 'payment.view',
   'pricechart.view', 'pricechart.edit',
   'inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view',
@@ -28,6 +28,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'contract.create': 'Create contracts',
   'contract.view': 'View contracts',
   'contract.cancel': 'Cancel contracts',
+  'contract.price.override': 'Sell a phone at a price or deposit other than its plan\'s',
   'contract.writeoff': 'Write off contracts',
   'contract.reschedule': 'Reschedule contracts',
   'contract.approve': 'Approve agent-submitted contracts',
@@ -61,7 +62,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
 /** Permissions grouped for display — the Roles admin UI's checkbox grid, in this order. */
 export const PERMISSION_GROUPS: Array<{ label: string; permissions: Permission[] }> = [
   { label: 'Customers', permissions: ['customer.create', 'customer.view', 'customer.update'] },
-  { label: 'Contracts', permissions: ['contract.create', 'contract.view', 'contract.cancel', 'contract.writeoff', 'contract.reschedule', 'contract.approve'] },
+  { label: 'Contracts', permissions: ['contract.create', 'contract.view', 'contract.cancel', 'contract.writeoff', 'contract.reschedule', 'contract.approve', 'contract.price.override'] },
   { label: 'Payments', permissions: ['payment.cash.record', 'payment.reverse', 'payment.view'] },
   { label: 'Price Chart', permissions: ['pricechart.view', 'pricechart.edit'] },
   { label: 'Inventory', permissions: ['inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view'] },

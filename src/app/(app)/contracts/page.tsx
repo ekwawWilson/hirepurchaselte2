@@ -15,6 +15,7 @@ import {
 } from '@/lib/constants/contracts';
 import { generateStraightLineSchedule, type GeneratedInstalment } from '@/lib/services/scheduleService';
 import { DEFAULT_WORKING_DAYS, type WorkingDays } from '@/lib/workingDays';
+import { planInstalments, planInstalmentMinor } from '@/lib/constants/deviceFinancing';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,6 +24,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { AccessDenied } from '@/components/AccessDenied';
+
+interface Plan { months: number; totalPriceMinor: number; depositMinor: number }
 
 interface Customer {
   id: string; firstName: string; lastName: string; phone: string | null; phone2?: string | null; phone3?: string | null;
@@ -53,6 +56,7 @@ const CONTRACT_TYPE_OPTIONS = [
 export default function ContractsPage() {
   const canView = useAuthStore((s) => s.hasPermission('contract.view'));
   const canCreate = useAuthStore((s) => s.hasPermission('contract.create'));
+  const canOverridePrice = useAuthStore((s) => s.hasPermission('contract.price.override'));
   const isAgent = useAuthStore((s) => s.user?.role === 'AGENT');
   const { toast } = useToast();
   const router = useRouter();
@@ -101,6 +105,9 @@ export default function ContractsPage() {
   const [totalPrice, setTotalPrice] = useState('');
   const [depositAmount, setDepositAmount] = useState('');
   const [termWeeks, setTermWeeks] = useState('4');
+  // Device Financing: the phone's plans, and the one chosen.
+  const [plans, setPlans] = useState<Plan[] | null>(null);
+  const [planMonths, setPlanMonths] = useState<number | null>(null);
 
   // DEVICE_LOAN: just the amount disbursed — the daily 1% rate and grace period
   // are global settings (Settings → Loan payment terms), snapshotted server-side.
@@ -127,9 +134,12 @@ export default function ContractsPage() {
   const parsedTermWeeks = parseInt(termWeeks, 10);
   const parsedLoanAmount = Math.round(parseFloat(loanAmount || '0') * 100);
   const financeAmountMinor = isInstalment && parsedTotalPrice > parsedDeposit ? parsedTotalPrice - parsedDeposit : 0;
-  const instalmentCount = isInstalment && Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
-    ? (paymentFrequency === 'DAILY' ? parsedTermWeeks * 7 : parsedTermWeeks)
-    : 0;
+  const isDeviceFinancing = contractType === 'DEVICE_FINANCING';
+  const instalmentCount = isDeviceFinancing
+    ? (planMonths ? planInstalments(planMonths, paymentFrequency) : 0)
+    : isInstalment && Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
+      ? (paymentFrequency === 'DAILY' ? parsedTermWeeks * 7 : parsedTermWeeks)
+      : 0;
   const instalmentAmountMinor = instalmentCount > 0 ? Math.ceil(financeAmountMinor / instalmentCount) : 0;
 
   // "Deposit + Instalment contracts", or "Save to Own and Deposit + Instalment
@@ -143,7 +153,9 @@ export default function ContractsPage() {
   const step2Valid = isInstalment ? !!inventoryItemId : true;
   const depositTermsValid = Number.isFinite(parsedTotalPrice) && parsedTotalPrice > 0
     && Number.isFinite(parsedDeposit) && parsedDeposit >= 0 && parsedDeposit < parsedTotalPrice
-    && Number.isInteger(parsedTermWeeks) && parsedTermWeeks >= DEPOSIT_INSTALMENT_MIN_TERM_WEEKS && parsedTermWeeks <= DEPOSIT_INSTALMENT_MAX_TERM_WEEKS
+    && (isDeviceFinancing
+      ? planMonths !== null
+      : Number.isInteger(parsedTermWeeks) && parsedTermWeeks >= DEPOSIT_INSTALMENT_MIN_TERM_WEEKS && parsedTermWeeks <= DEPOSIT_INSTALMENT_MAX_TERM_WEEKS)
     && (DEPOSIT_INSTALMENT_FREQUENCIES as readonly string[]).includes(paymentFrequency);
   const loanTermsValid = Number.isFinite(parsedLoanAmount) && parsedLoanAmount > 0;
   // What the sale will meet before it is submitted (POST /contracts/preflight):
@@ -156,13 +168,28 @@ export default function ContractsPage() {
         contractType, customerId, inventoryItemId: inventoryItemId || undefined,
         totalPayableMinor: isInstalment && parsedTotalPrice > 0 ? parsedTotalPrice : undefined,
         depositAmountMinor: isInstalment ? parsedDeposit : undefined,
-        termWeeks: isInstalment && Number.isInteger(parsedTermWeeks) ? parsedTermWeeks : undefined,
+        termWeeks: isInstalment && !isDeviceFinancing && Number.isInteger(parsedTermWeeks) ? parsedTermWeeks : undefined,
+        planMonths: isDeviceFinancing && planMonths ? planMonths : undefined,
         paymentMethod, directDebitMsisdn: directDebitMsisdn.trim() || undefined, startDate,
       }).then((r) => setPreflight(r.checks)).catch(() => setPreflight(null)); // the server checks again on submit
     }, 400);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, customerId, contractType, inventoryItemId, parsedTotalPrice, parsedDeposit, parsedTermWeeks, paymentMethod, directDebitMsisdn, startDate]);
+  }, [step, customerId, contractType, inventoryItemId, parsedTotalPrice, parsedDeposit, parsedTermWeeks, planMonths, paymentMethod, directDebitMsisdn, startDate]);
+
+  // A phone's plans, once it is chosen for a Device Financing sale.
+  const planProductId = isDeviceFinancing ? selectedItem?.product.id : undefined;
+  useEffect(() => {
+    setPlans(null); setPlanMonths(null);
+    if (!planProductId) return;
+    api.get<{ plans: Plan[] }>(`/products/${planProductId}/plans`).then((r) => setPlans(r.plans)).catch(() => setPlans([]));
+  }, [planProductId]);
+
+  function choosePlan(plan: Plan) {
+    setPlanMonths(plan.months);
+    setTotalPrice((plan.totalPriceMinor / 100).toFixed(2));
+    setDepositAmount((plan.depositMinor / 100).toFixed(2));
+  }
 
   const step3Valid = !saving && !preflight?.blockers.length && (
     isSaveToOwn ? true
@@ -315,7 +342,7 @@ export default function ContractsPage() {
       }>('/contracts', {
         contractType, customerId, inventoryItemId,
         totalPayableMinor: parsedTotalPrice, depositAmountMinor: parsedDeposit,
-        termWeeks: parsedTermWeeks, paymentFrequency,
+        ...(isDeviceFinancing ? { planMonths } : { termWeeks: parsedTermWeeks }), paymentFrequency,
         startDate,
         gracePeriodDays: Number(gracePeriodDays || '0'), penaltyRateBps: Math.round(parseFloat(penaltyPercent || '0') * 100),
         paymentMethod,
@@ -584,19 +611,40 @@ export default function ContractsPage() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                {isDeviceFinancing && (
                   <div>
-                    <Label>Total Price (GHS) *</Label>
-                    <Input required type="number" step="0.01" min={0} className="mt-1.5" value={totalPrice} onChange={(e) => setTotalPrice(e.target.value)} />
+                    <Label>Plan *</Label>
+                    {plans === null ? <p className="text-sm text-gray-500 mt-1.5">Loading the phone&apos;s plans...</p>
+                      : plans.length === 0 ? <p className="text-sm text-red-600 mt-1.5">This phone has no price plans yet. Add them on its product page before selling it.</p>
+                      : (
+                        <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {plans.map((p) => (
+                            <button key={p.months} type="button" onClick={() => choosePlan(p)}
+                              className={`rounded-lg border p-2 text-left text-sm ${planMonths === p.months ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-gray-200 hover:border-gray-300'}`}>
+                              <span className="block font-semibold text-gray-900">{p.months} months</span>
+                              <span className="block text-xs text-gray-600">{formatCurrency(p.totalPriceMinor)} &middot; deposit {formatCurrency(p.depositMinor)}</span>
+                              <span className="block text-xs text-gray-500">{formatCurrency(planInstalmentMinor(p, paymentFrequency))} {paymentFrequency === 'DAILY' ? 'a day' : 'a week'}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                   </div>
-                  <div>
-                    <Label>Deposit Amount (GHS) *</Label>
-                    <Input required type="number" step="0.01" min={0} className="mt-1.5" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} />
-                  </div>
-                </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
+                    <Label>Total Price (GHS) *</Label>
+                    <Input required type="number" step="0.01" min={0} className="mt-1.5" value={totalPrice} readOnly={isDeviceFinancing && !canOverridePrice} onChange={(e) => setTotalPrice(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>Deposit Amount (GHS) *</Label>
+                    <Input required type="number" step="0.01" min={0} className="mt-1.5" value={depositAmount} readOnly={isDeviceFinancing && !canOverridePrice} onChange={(e) => setDepositAmount(e.target.value)} />
+                  </div>
+                  {isDeviceFinancing && <p className="col-span-2 -mt-2 text-xs text-gray-400">{canOverridePrice ? 'From the plan. You may change them for this sale.' : 'Set by the plan.'}</p>}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {!isDeviceFinancing && <div>
                     <Label>Installment Period (weeks) *</Label>
                     <Input
                       required type="number" step="1"
@@ -604,7 +652,7 @@ export default function ContractsPage() {
                       className="mt-1.5" value={termWeeks} onChange={(e) => setTermWeeks(e.target.value)}
                     />
                     <p className="text-xs text-gray-400 mt-1">{DEPOSIT_INSTALMENT_MIN_TERM_WEEKS} to {DEPOSIT_INSTALMENT_MAX_TERM_WEEKS} weeks.</p>
-                  </div>
+                  </div>}
                   <div>
                     <Label>Payment Frequency *</Label>
                     <Select value={paymentFrequency} onValueChange={(v) => setPaymentFrequency(v as PaymentFrequencyName)}>
@@ -614,7 +662,9 @@ export default function ContractsPage() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-gray-400 mt-1">
-                      {paymentFrequency === 'DAILY' && Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
+                      {isDeviceFinancing
+                        ? (planMonths ? `${planMonths} months = ${instalmentCount} ${paymentFrequency === 'DAILY' ? 'daily' : 'weekly'} installments` : '')
+                        : paymentFrequency === 'DAILY' && Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
                         ? `${parsedTermWeeks} weeks = ${parsedTermWeeks * 7} daily installments`
                         : Number.isInteger(parsedTermWeeks) && parsedTermWeeks > 0
                           ? `${parsedTermWeeks} weekly installments`

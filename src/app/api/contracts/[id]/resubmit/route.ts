@@ -38,6 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         totalPayableMinor: body.totalPayableMinor as number | undefined,
         depositAmountMinor: body.depositAmountMinor as number | undefined,
         termWeeks: body.termWeeks as number | undefined,
+        planMonths: body.planMonths as number | undefined,
         paymentFrequency: paymentFrequency as PaymentFrequencyName | undefined,
         gracePeriodDays: body.gracePeriodDays as number | undefined,
         penaltyRateBps: body.penaltyRateBps as number | undefined,

@@ -53,6 +53,7 @@ describe('Temporary unlock', () => {
   async function lockedSale(opts: { createdById?: string } = {}) {
     const product = await prisma.product.create({ data: { sku: `TU-${runId}-${++counter}`, name: 'TECNO Spark 30', brand: 'TECNO', cashPriceMinor: 60000 } });
     await setProductBrand(product.id, 'TECNO', adminId);
+    await prisma.deviceFinancingPlan.create({ data: { productId: product.id, months: 1, totalPriceMinor: 60000, depositMinor: 12000, updatedById: adminId } });
     const createdById = opts.createdById ?? adminId;
     const imei = `36${runId.padStart(7, '0').slice(-7)}${String(++counter).padStart(6, '0')}`;
     const item = await prisma.inventoryItem.create({ data: { productId: product.id, branchId, serialNumber: imei, assignedAgentId: opts.createdById ?? null } });
@@ -61,7 +62,7 @@ describe('Temporary unlock', () => {
     const customer = await prisma.customer.create({ data: { membershipId: `TU-${runId}-${++counter}`, firstName: 'Abena', lastName: `Mensah${counter}`, phone, branchId, createdById } });
     const contract = await createContract({
       contractType: 'DEVICE_FINANCING', customerId: customer.id, inventoryItemId: item.id, branchId, createdById,
-      totalPayableMinor: 60000, depositAmountMinor: 12000, termWeeks: 4, paymentFrequency: 'WEEKLY',
+      planMonths: 1, paymentFrequency: 'WEEKLY',
       startDate: new Date(Date.now() - 20 * DAY),
     });
     await postPayment({ contractId: contract.id, amountMinor: 12000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminId, collectedByAgentId: opts.createdById });

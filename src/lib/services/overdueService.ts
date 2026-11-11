@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma';
 import { defaultCutoffDate, INSTALMENT_SALE_TYPES } from '../constants/contracts';
 import { notifyPayTrigger } from '../paytrigger/notify';
+import { MAX_PENALTY_RATE_BPS } from '../constants/deviceFinancing';
 import { sendContractSms } from './smsService';
 
 /**
@@ -88,7 +89,8 @@ export async function applyLatePenalties() {
     if (daysPastDue <= instalment.contract.gracePeriodDays) continue;
     if (instalment.penalties.some((p) => p.reason === 'LATE_PENALTY')) continue;
 
-    const amountMinor = Math.round((instalment.amountDueMinor * instalment.contract.penaltyRateBps) / 10000);
+    // Never above the limit, whatever a contract carries: a rate typed in error must not become a charge.
+    const amountMinor = Math.round((instalment.amountDueMinor * Math.min(instalment.contract.penaltyRateBps, MAX_PENALTY_RATE_BPS)) / 10000);
     if (amountMinor <= 0) continue;
 
     await prisma.penalty.create({

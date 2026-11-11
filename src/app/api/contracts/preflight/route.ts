@@ -18,12 +18,18 @@ export async function POST(req: NextRequest) {
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
   const inventoryItemId = str(body.inventoryItemId);
   const item = inventoryItemId ? await prisma.inventoryItem.findUnique({ where: { id: inventoryItemId }, select: { productId: true } }) : null;
+  // A phone sale is checked at its plan's figures, as it will be sold.
+  const planMonths = num(body.planMonths);
+  const plan = body.contractType === 'DEVICE_FINANCING' && item && planMonths !== undefined
+    ? await prisma.deviceFinancingPlan.findUnique({ where: { productId_months: { productId: item.productId, months: planMonths } } })
+    : null;
   const startDate = str(body.startDate) ? new Date(body.startDate as string) : undefined;
   return NextResponse.json({
     checks: await evaluateSaleChecks({
       createdById: auth.user.id, creatorRole: auth.user.roleName, contractType: str(body.contractType), customerId: str(body.customerId),
-      productId: item?.productId ?? null, totalPayableMinor: num(body.totalPayableMinor), depositAmountMinor: num(body.depositAmountMinor),
-      termWeeks: num(body.termWeeks), paymentMethod: str(body.paymentMethod), directDebitMsisdn: str(body.directDebitMsisdn),
+      productId: item?.productId ?? null,
+      totalPayableMinor: num(body.totalPayableMinor) ?? plan?.totalPriceMinor, depositAmountMinor: num(body.depositAmountMinor) ?? plan?.depositMinor,
+      termWeeks: plan ? Math.round((plan.months * 30) / 7) : num(body.termWeeks), paymentMethod: str(body.paymentMethod), directDebitMsisdn: str(body.directDebitMsisdn),
       startDate: startDate && !Number.isNaN(startDate.getTime()) ? startDate : undefined,
     }),
   });

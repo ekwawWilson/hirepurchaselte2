@@ -218,6 +218,7 @@ model Product {
   inventoryItems    InventoryItem[]
   priceChartEntries PriceChartEntry[]
   contracts         Contract[]
+  financingPlans    DeviceFinancingPlan[]
 
   @@map("products")
 }
@@ -304,6 +305,25 @@ model StockMovement {
 // the legacy hirepurchase app's fixed pricing tiers exactly (its ProductPricing model);
 // enforced in priceChartService.validateEntryBody, not a DB constraint (existing/test
 // data at other terms stays valid, only new admin-entered rows are constrained).
+// A Device Financing phone's price for one plan length: what the customer
+// pays in all, deposit included, and the deposit. A sale copies the figures
+// and never reads them again, so changing a plan affects new sales only.
+model DeviceFinancingPlan {
+  id              String   @id @default(uuid())
+  productId       String
+  months          Int
+  totalPriceMinor Int
+  depositMinor    Int
+  updatedById     String
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([productId, months])
+  @@map("device_financing_plans")
+}
+
 model PriceChartEntry {
   id                    String    @id @default(uuid())
   productId             String

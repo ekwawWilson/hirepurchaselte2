@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DeviceFinancingPriceList } from '@/components/DeviceFinancingPriceList';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
@@ -301,6 +302,8 @@ export default function PriceChartPage() {
           </Button>
         )}
       </div>
+
+      <DeviceFinancingPriceList />
 
       <FinancingFilterSelect value={financingFilter} onChange={setFinancingFilter} className="w-full sm:w-56" />
 

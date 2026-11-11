@@ -1,5 +1,6 @@
 import { contractSearchWhere } from '@/lib/utils/search';
 import { NextRequest, NextResponse } from 'next/server';
+import { MAX_PENALTY_RATE_BPS } from '@/lib/constants/deviceFinancing';
 import { CUSTOMER_SUMMARY_SELECT } from '@/lib/services/customerService';
 import { prisma } from '@/lib/db/prisma';
 import { requireAuth, requirePermission, branchScopeWhere, ownRecordsWhere } from '@/lib/auth/rbac';
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
   const {
     contractType, customerId, inventoryItemId, startDate,
     gracePeriodDays, penaltyRateBps, paymentMethod, directDebitNetwork, directDebitMsisdn,
-    totalPayableMinor, depositAmountMinor, termWeeks, paymentFrequency, loanAmountMinor,
+    totalPayableMinor, depositAmountMinor, termWeeks, paymentFrequency, loanAmountMinor, planMonths,
   } = body;
 
   if (!(CONTRACT_TYPES as readonly string[]).includes(contractType as string)) {
@@ -98,14 +99,19 @@ export async function POST(req: NextRequest) {
     if (!inventoryItemId) {
       return NextResponse.json({ error: 'inventoryItemId is required for this contract type' }, { status: 400 });
     }
-    if (typeof totalPayableMinor !== 'number' || totalPayableMinor <= 0) {
-      return NextResponse.json({ error: 'a positive totalPayableMinor is required for this contract type' }, { status: 400 });
-    }
-    if (typeof depositAmountMinor !== 'number' || depositAmountMinor < 0) {
-      return NextResponse.json({ error: 'a non-negative depositAmountMinor is required for this contract type' }, { status: 400 });
-    }
-    if (typeof termWeeks !== 'number') {
-      return NextResponse.json({ error: 'termWeeks is required for this contract type' }, { status: 400 });
+    if (contractType === 'DEVICE_FINANCING') {
+      // Price, deposit and length come from the phone's plan (contractService.deviceFinancingTerms).
+      if (typeof planMonths !== 'number') return NextResponse.json({ error: 'Choose a plan: planMonths is required for Device Financing' }, { status: 400 });
+    } else {
+      if (typeof totalPayableMinor !== 'number' || totalPayableMinor <= 0) {
+        return NextResponse.json({ error: 'a positive totalPayableMinor is required for this contract type' }, { status: 400 });
+      }
+      if (typeof depositAmountMinor !== 'number' || depositAmountMinor < 0) {
+        return NextResponse.json({ error: 'a non-negative depositAmountMinor is required for this contract type' }, { status: 400 });
+      }
+      if (typeof termWeeks !== 'number') {
+        return NextResponse.json({ error: 'termWeeks is required for this contract type' }, { status: 400 });
+      }
     }
     if (paymentFrequency !== undefined && !(DEPOSIT_INSTALMENT_FREQUENCIES as readonly string[]).includes(paymentFrequency as string)) {
       return NextResponse.json({ error: `paymentFrequency must be one of: ${DEPOSIT_INSTALMENT_FREQUENCIES.join(', ')}` }, { status: 400 });
@@ -115,8 +121,8 @@ export async function POST(req: NextRequest) {
   if (gracePeriodDays !== undefined && (typeof gracePeriodDays !== 'number' || gracePeriodDays < 0)) {
     return NextResponse.json({ error: 'gracePeriodDays must be a non-negative integer' }, { status: 400 });
   }
-  if (penaltyRateBps !== undefined && (typeof penaltyRateBps !== 'number' || penaltyRateBps < 0)) {
-    return NextResponse.json({ error: 'penaltyRateBps must be a non-negative integer' }, { status: 400 });
+  if (penaltyRateBps !== undefined && (typeof penaltyRateBps !== 'number' || !Number.isInteger(penaltyRateBps) || penaltyRateBps < 0 || penaltyRateBps > MAX_PENALTY_RATE_BPS)) {
+    return NextResponse.json({ error: `The late charge must be 0% to ${MAX_PENALTY_RATE_BPS / 100}%` }, { status: 400 });
   }
   if (paymentMethod !== undefined && !(PAYMENT_METHODS as readonly string[]).includes(paymentMethod as string)) {
     return NextResponse.json({ error: `paymentMethod must be one of: ${PAYMENT_METHODS.join(', ')}` }, { status: 400 });
@@ -151,6 +157,8 @@ export async function POST(req: NextRequest) {
       totalPayableMinor: totalPayableMinor as number | undefined,
       depositAmountMinor: depositAmountMinor as number | undefined,
       termWeeks: termWeeks as number | undefined,
+      planMonths: planMonths as number | undefined,
+      allowPriceOverride: requirePermission(user, 'contract.price.override').authorized,
       paymentFrequency: paymentFrequency as PaymentFrequencyName | undefined,
       loanAmountMinor: loanAmountMinor as number | undefined,
       startDate: startDate ? new Date(startDate as string) : undefined,

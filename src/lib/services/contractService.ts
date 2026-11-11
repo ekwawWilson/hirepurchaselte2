@@ -15,6 +15,8 @@ import { evaluateSaleChecks, type SaleDraft } from './saleChecksService';
 import { agentSaleProblem } from './stockAssignmentService';
 import { accrueCompletionCommission } from './completionCommissionService';
 import { notifyPayTrigger } from '../paytrigger/notify';
+import { planForSale, describePlan, PlanError } from './deviceFinancingPlanService';
+import { planInstalments, MAX_PENALTY_RATE_BPS } from '../constants/deviceFinancing';
 import {
   CONTRACT_STATUSES_BY_TYPE, DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES,
   DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
@@ -56,6 +58,13 @@ export interface CreateContractParams {
   paymentFrequency?: PaymentFrequencyName; // DAILY | WEEKLY only for this type
   gracePeriodDays?: number;
   penaltyRateBps?: number;
+  // DEVICE_FINANCING only: the phone's plan, in months. Price and deposit
+  // come from it; a different one is taken only with allowPriceOverride,
+  // which the route sets from the seller's contract.price.override permission.
+  planMonths?: number;
+  allowPriceOverride?: boolean;
+  /** Set from the plan (DEVICE_FINANCING): the instalment count is months × 30 daily or × 4 weekly. */
+  termMonths?: number;
 
   // DEVICE_LOAN only — not linked to a product at all. The loan amount is
   // entered directly; the daily interest rate and the grace period before
@@ -99,6 +108,13 @@ export async function createContract(params: CreateContractParams) {
   const saleItem = params.inventoryItemId
     ? await prisma.inventoryItem.findUnique({ where: { id: params.inventoryItemId }, select: { productId: true } })
     : null;
+  if (params.contractType === 'DEVICE_FINANCING' && saleItem) {
+    // Whether the phone can be sold on Device Financing at all is said before its plans are.
+    const notSellable = await payTriggerSaleProblem(params.contractType, (await prisma.inventoryItem.findUniqueOrThrow({ where: { id: params.inventoryItemId! } })));
+    if (notSellable) throw new ContractError(notSellable);
+    params = { ...params, ...(await deviceFinancingTerms(saleItem.productId, params)) };
+  }
+  penaltyRateProblem(params.penaltyRateBps);
   await assertSaleAllowed({
     createdById: params.createdById, contractType: params.contractType, customerId: params.customerId, productId: saleItem?.productId ?? null,
     totalPayableMinor: params.totalPayableMinor, depositAmountMinor: params.depositAmountMinor, termWeeks: params.termWeeks,
@@ -204,10 +220,10 @@ export async function createContract(params: CreateContractParams) {
   if (params.depositAmountMinor >= params.totalPayableMinor) {
     throw new ContractError('depositAmountMinor must be less than totalPayableMinor — there has to be something left to finance');
   }
-  if (
+  if (params.termMonths === undefined && (
     params.termWeeks === undefined || !Number.isInteger(params.termWeeks) ||
     params.termWeeks < DEPOSIT_INSTALMENT_MIN_TERM_WEEKS || params.termWeeks > DEPOSIT_INSTALMENT_MAX_TERM_WEEKS
-  ) {
+  )) {
     throw new ContractError(`termWeeks must be an integer between ${DEPOSIT_INSTALMENT_MIN_TERM_WEEKS} and ${DEPOSIT_INSTALMENT_MAX_TERM_WEEKS}`);
   }
   const frequency = params.paymentFrequency ?? 'WEEKLY';
@@ -227,6 +243,42 @@ export async function createContract(params: CreateContractParams) {
     }
   }
   throw new ContractError('Could not create contract after multiple attempts, please retry');
+}
+
+/**
+ * A Device Financing sale's terms, from the phone's plan: its price, its
+ * deposit, its length, and no grace period (a phone locks at the end of the
+ * due day). A price or deposit other than the plan's is refused unless the
+ * seller may override it.
+ */
+async function deviceFinancingTerms(productId: string, params: CreateContractParams) {
+  let plan;
+  try {
+    plan = await planForSale(productId, params.planMonths);
+  } catch (e) {
+    if (e instanceof PlanError) throw new ContractError(e.message);
+    throw e;
+  }
+  const totalPayableMinor = params.totalPayableMinor ?? plan.totalPriceMinor;
+  const depositAmountMinor = params.depositAmountMinor ?? plan.depositMinor;
+  if ((totalPayableMinor !== plan.totalPriceMinor || depositAmountMinor !== plan.depositMinor) && !params.allowPriceOverride) {
+    throw new ContractError(`The price and deposit come from ${describePlan(plan)}.`);
+  }
+  return { totalPayableMinor, depositAmountMinor, termMonths: plan.months, termWeeks: Math.round((plan.months * 30) / 7), gracePeriodDays: 0 };
+}
+
+/** The late-charge rate is at most 50%: a figure typed into the wrong box must never become a charge. */
+function penaltyRateProblem(penaltyRateBps: number | undefined) {
+  if (penaltyRateBps === undefined) return;
+  if (!Number.isInteger(penaltyRateBps) || penaltyRateBps < 0 || penaltyRateBps > MAX_PENALTY_RATE_BPS) {
+    throw new ContractError(`The late charge must be 0% to ${MAX_PENALTY_RATE_BPS / 100}%`);
+  }
+}
+
+/** Instalments on a schedule: a plan in months (Device Financing), else weeks. */
+function instalmentCountFor(termMonths: number | null | undefined, termWeeks: number, frequency: PaymentFrequencyName): number {
+  if (termMonths) return planInstalments(termMonths, frequency);
+  return frequency === 'DAILY' ? termWeeks * 7 : termWeeks;
 }
 
 /** Refuses a sale the checks block (saleChecksService.ts), with every reason at once. */
@@ -340,7 +392,7 @@ async function runDepositInstalmentTransaction(
   const financeAmountMinor = totalPayableMinor - depositAmountMinor;
   // WEEKLY collects one instalment per week (count == termWeeks); DAILY
   // collects one per day across that same span (count == termWeeks * 7).
-  const instalmentCount = frequency === 'DAILY' ? termWeeks * 7 : termWeeks;
+  const instalmentCount = instalmentCountFor(params.termMonths, termWeeks, frequency);
   const instalmentAmountMinor = Math.ceil(financeAmountMinor / instalmentCount);
   const requiresApproval = params.requiresApproval ?? false;
 
@@ -356,6 +408,7 @@ async function runDepositInstalmentTransaction(
         totalPriceMinor: totalPayableMinor,
         depositAmountMinor,
         termWeeks,
+        termMonths: params.termMonths ?? null,
         paymentFrequency: frequency,
         instalmentAmountMinor,
         gracePeriodDays: params.gracePeriodDays ?? 7,
@@ -718,6 +771,8 @@ export interface ResubmitContractUpdates {
   totalPayableMinor?: number;
   depositAmountMinor?: number;
   termWeeks?: number;
+  /** DEVICE_FINANCING: the plan to move to; price and deposit are read from it again. */
+  planMonths?: number;
   paymentFrequency?: PaymentFrequencyName;
   gracePeriodDays?: number;
   penaltyRateBps?: number;
@@ -736,6 +791,16 @@ export interface ResubmitContractUpdates {
  */
 export async function resubmitContract(params: { contractId: string; updates: ResubmitContractUpdates }) {
   const submitted = await prisma.contract.findUniqueOrThrow({ where: { id: params.contractId } });
+  penaltyRateProblem(params.updates.penaltyRateBps);
+  // A phone sale on a plan takes its plan's figures again: the agent cannot price it themselves.
+  if (submitted.contractType === 'DEVICE_FINANCING' && submitted.productId && (params.updates.planMonths !== undefined || submitted.termMonths)) {
+    const terms = await deviceFinancingTerms(submitted.productId, {
+      contractType: 'DEVICE_FINANCING', customerId: submitted.customerId, branchId: submitted.branchId, createdById: submitted.createdById,
+      planMonths: params.updates.planMonths ?? submitted.termMonths ?? undefined,
+    });
+    params = { ...params, updates: { ...params.updates, totalPayableMinor: terms.totalPayableMinor, depositAmountMinor: terms.depositAmountMinor, termWeeks: terms.termWeeks, gracePeriodDays: 0 } };
+    params.updates.planMonths = terms.termMonths;
+  }
   await assertSaleAllowed({
     createdById: submitted.createdById, contractType: submitted.contractType, customerId: submitted.customerId, productId: submitted.productId,
     totalPayableMinor: params.updates.totalPayableMinor ?? submitted.totalPayableMinor, depositAmountMinor: params.updates.depositAmountMinor ?? submitted.depositAmountMinor,
@@ -763,6 +828,7 @@ export async function resubmitContract(params: { contractId: string; updates: Re
       const totalPayableMinor = params.updates.totalPayableMinor ?? contract.totalPayableMinor!;
       const depositAmountMinor = params.updates.depositAmountMinor ?? contract.depositAmountMinor;
       const termWeeks = params.updates.termWeeks ?? contract.termWeeks!;
+      const termMonths = params.updates.planMonths ?? (params.updates.termWeeks !== undefined ? null : contract.termMonths);
       const frequency = (params.updates.paymentFrequency ?? contract.paymentFrequency) as PaymentFrequencyName;
       const startDate = params.updates.startDate ?? contract.startDate;
 
@@ -770,7 +836,7 @@ export async function resubmitContract(params: { contractId: string; updates: Re
       if (depositAmountMinor < 0 || depositAmountMinor >= totalPayableMinor) {
         throw new ContractError('depositAmountMinor must be non-negative and less than totalPayableMinor');
       }
-      if (termWeeks < DEPOSIT_INSTALMENT_MIN_TERM_WEEKS || termWeeks > DEPOSIT_INSTALMENT_MAX_TERM_WEEKS) {
+      if (!termMonths && (termWeeks < DEPOSIT_INSTALMENT_MIN_TERM_WEEKS || termWeeks > DEPOSIT_INSTALMENT_MAX_TERM_WEEKS)) {
         throw new ContractError(`termWeeks must be between ${DEPOSIT_INSTALMENT_MIN_TERM_WEEKS} and ${DEPOSIT_INSTALMENT_MAX_TERM_WEEKS}`);
       }
       if (!(DEPOSIT_INSTALMENT_FREQUENCIES as readonly string[]).includes(frequency)) {
@@ -778,7 +844,7 @@ export async function resubmitContract(params: { contractId: string; updates: Re
       }
 
       const financeAmountMinor = totalPayableMinor - depositAmountMinor;
-      const instalmentCount = frequency === 'DAILY' ? termWeeks * 7 : termWeeks;
+      const instalmentCount = instalmentCountFor(termMonths, termWeeks, frequency);
       const instalmentAmountMinor = Math.ceil(financeAmountMinor / instalmentCount);
 
       Object.assign(data, {
@@ -787,6 +853,7 @@ export async function resubmitContract(params: { contractId: string; updates: Re
         balanceMinor: totalPayableMinor,
         depositAmountMinor,
         termWeeks,
+        termMonths,
         paymentFrequency: frequency,
         instalmentAmountMinor,
         startDate,

@@ -14,6 +14,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { DeviceFinancingBadge, DeviceFinancingField, NOT_DEVICE_FINANCING } from '@/components/DeviceFinancing';
+import { DeviceFinancingPlans } from '@/components/DeviceFinancingPlans';
 
 interface PriceChartEntry {
   id: string; contractType: string; termMonths: number; paymentFrequency: string;
@@ -277,6 +278,8 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           )}
         </CardContent>
       </Card>
+
+      {product.deviceFinancingBrand && <DeviceFinancingPlans productId={product.id} canEdit={canEditPricing} />}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
