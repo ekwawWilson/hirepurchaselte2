@@ -65,7 +65,7 @@ export async function registerScheduledJobs() {
   });
 
   // Daily at 08:36 — PayTrigger phone locks, after the 08:00 sweep has marked
-  // today's arrears and defaults. Phones lock themselves at 23:59 when a date
+  // today's arrears and defaults. Phones lock themselves at 00:00 when a date
   // passes; this sends whatever the day's hooks missed, releases paid-off
   // phones, and reads the state of phones in doubt.
   cron.schedule('36 8 * * *', () => job('runPayTriggerSweep', 'bring PayTrigger phone locks up to date', runPayTriggerSweep, describeSweep));

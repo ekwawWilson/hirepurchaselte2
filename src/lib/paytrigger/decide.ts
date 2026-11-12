@@ -63,20 +63,19 @@ export interface Decision {
 }
 
 /**
- * Ghana keeps UTC all year: a phone locks at 23:59 there at the end of the
- * day its payment was due, if it is still unpaid. No grace period applies:
- * the customer has the whole due day to pay, and no more.
+ * Ghana keeps UTC all year: a phone locks at 00:00 there at the start of the
+ * day after its payment was due, if it is still unpaid, so the lock date it
+ * shows is the day after the due date. No grace period applies: the customer
+ * has the whole due day to pay, and no more.
  */
-const LOCK_HOUR_UTC = 23;
-const LOCK_MINUTE_UTC = 59;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOCK_NOW_MS = 60_000;
 /** A held date this close to "now + cap" is kept, so every event does not resend a slightly later one. */
 const HORIZON_STABILITY_MS = 7 * DAY_MS;
 
-/** 23:59 on the day `days` after a due date (0: the due date itself). */
+/** 00:00 at the start of the day after the due date, plus `days` extra days (0: the moment the due day ends). */
 export function lockMomentAfter(dueDate: Date, days: number): Date {
-  return new Date(Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate() + days, LOCK_HOUR_UTC, LOCK_MINUTE_UTC));
+  return new Date(Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate() + days + 1));
 }
 
 const cedis = (minor: number) => (minor / 100).toFixed(2);

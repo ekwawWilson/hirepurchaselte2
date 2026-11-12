@@ -186,7 +186,7 @@ describe('Device Financing with PayTrigger', () => {
       let d = await device(item.id);
       expect(d).toMatchObject({ enrollmentStatus: 'ACTIVE', deviceTag: 'TAG-A', committedState: 'PENDING' });
       const first = await prisma.instalment.findFirstOrThrow({ where: { contractId: contract.id, instalmentNo: 1 } });
-      const expected = new Date(Date.UTC(first.dueDate.getUTCFullYear(), first.dueDate.getUTCMonth(), first.dueDate.getUTCDate(), 23, 59));
+      const expected = new Date(Date.UTC(first.dueDate.getUTCFullYear(), first.dueDate.getUTCMonth(), first.dueDate.getUTCDate() + 1));
       expect(d.providerExpiresAt).toEqual(expected);
       expect(d.lockMessageKey).toMatch(/^dry:/); // the lock-screen text, simulated
 
@@ -200,7 +200,7 @@ describe('Device Financing with PayTrigger', () => {
       const { payment } = await pay(contract.id, 12000);
       d = await device(item.id);
       const second = await prisma.instalment.findFirstOrThrow({ where: { contractId: contract.id, instalmentNo: 2 } });
-      expect(d.providerExpiresAt).toEqual(new Date(Date.UTC(second.dueDate.getUTCFullYear(), second.dueDate.getUTCMonth(), second.dueDate.getUTCDate(), 23, 59)));
+      expect(d.providerExpiresAt).toEqual(new Date(Date.UTC(second.dueDate.getUTCFullYear(), second.dueDate.getUTCMonth(), second.dueDate.getUTCDate() + 1)));
 
       // The payment reversed: locked again.
       await reversePayment({ paymentId: payment.id, reason: 'bounced', reversedById: adminId });

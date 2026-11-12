@@ -31,16 +31,16 @@ function input(overrides: { contract?: Partial<DecisionInput['contract']>; devic
 }
 
 describe('PayTrigger lock decision', () => {
-  it('locks at 23:59 (Ghana, UTC) at the end of the due day, or that many extra days later', () => {
-    expect(lockMomentAfter(new Date('2026-11-02T00:00:00Z'), 0).toISOString()).toBe('2026-11-02T23:59:00.000Z');
-    expect(lockMomentAfter(new Date('2026-11-02T00:00:00Z'), 2).toISOString()).toBe('2026-11-04T23:59:00.000Z');
+  it('locks at 00:00 (Ghana, UTC) on the day after the due date, or that many extra days later', () => {
+    expect(lockMomentAfter(new Date('2026-11-02T00:00:00Z'), 0).toISOString()).toBe('2026-11-03T00:00:00.000Z');
+    expect(lockMomentAfter(new Date('2026-11-02T00:00:00Z'), 2).toISOString()).toBe('2026-11-05T00:00:00.000Z');
   });
 
   it('an active contract with nothing overdue opens the phone until the end of the next instalment\'s due day', () => {
     const d = decide(input());
     expect(d.action).toBe('EXTEND');
-    // Due 31 Oct: locks at the end of that day, whatever the contract's grace period.
-    expect(d.nextRepayTime?.toISOString()).toBe('2026-10-31T23:59:00.000Z');
+    // Due 31 Oct: locks as that day ends (00:00 on 1 Nov), whatever the contract's grace period.
+    expect(d.nextRepayTime?.toISOString()).toBe('2026-11-01T00:00:00.000Z');
     expect(d.lockNow).toBe(false);
     expect(d.amounts).toEqual({ repayedAmt: '120.00', totalAmt: '600.00', nextRepayAmt: '120.00', currentTerm: 1, totalTerm: 4 });
   });
@@ -72,7 +72,7 @@ describe('PayTrigger lock decision', () => {
     expect(late).toMatchObject({ action: 'LOCK', lockNow: true });
     const today = decide(input({ contract: { instalments: [{ instalmentNo: 1, dueDate: day(0), amountDueMinor: 12000, amountPaidMinor: 0, status: 'OVERDUE' }] } }));
     expect(today.action).toBe('EXTEND');
-    expect(today.nextRepayTime?.toISOString()).toBe('2026-10-28T23:59:00.000Z');
+    expect(today.nextRepayTime?.toISOString()).toBe('2026-10-29T00:00:00.000Z');
   });
 
   it('never opens a phone more than the cap ahead', () => {
@@ -193,7 +193,7 @@ describe('PayTrigger lock decision', () => {
 
     it('opened by hand never shortens a schedule that runs later, and overrides an agent deposit hold', () => {
       const soon = new Date(NOW.getTime() + 2 * HOUR_MS);
-      expect(decide(input({ manual: { state: 'OPEN', until: soon } })).nextRepayTime?.toISOString()).toBe('2026-10-31T23:59:00.000Z');
+      expect(decide(input({ manual: { state: 'OPEN', until: soon } })).nextRepayTime?.toISOString()).toBe('2026-11-01T00:00:00.000Z');
       const held = decide(input({ agentDeposit: { owedMinor: 5000 }, manual: { state: 'OPEN', until: soon } }));
       expect(held).toMatchObject({ action: 'EXTEND', depositHold: false, nextRepayTime: soon });
     });

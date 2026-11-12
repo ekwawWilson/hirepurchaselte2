@@ -105,7 +105,7 @@ model TemporaryUnlock {
 
 1. Return null if the feature is off, the contract or its status doesn't qualify, or the device isn't active.
 2. Take instalments with a due date before the start of today and not fully paid. Return null if the overdue total is 0.
-3. `lockedSince` = the lock moment for the oldest overdue due date, using the same function the lock decision uses (in the original project, 23:59 at the end of the due day plus any extra days in settings, with no grace period). Return null if the contract isn't defaulted, `lockedSince` is in the future, and no window is running.
+3. `lockedSince` = the lock moment for the oldest overdue due date, using the same function the lock decision uses (in the original project, 00:00 at the start of the day after the due date plus any extra days in settings, with no grace period). Return null if the contract isn't defaulted, `lockedSince` is in the future, and no window is running.
 4. Find the last moment nothing was overdue: the latest instalment `paidAt` after which every instalment due before that day had been paid. `used` = paid unlocks activated after that moment, or all of them if there is no such moment. `usesLeft` = cap minus `used`, not below 0.
 5. If the contract was sold by an agent, the deposit-hold setting is on, and the agent's balance is unknown or above 0: closed, "Your phone is held until your agent finishes registering your payment. Please contact your agent."
 6. If `usesLeft` is 0: closed, "You have used all your temporary unlocks. Pay the full overdue amount of {amount} to open your phone."
