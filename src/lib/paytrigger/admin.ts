@@ -232,6 +232,28 @@ export async function cancelEnrolment(deviceId: string, actorId: string) {
   await logAudit({ userId: actorId, action: 'PAYTRIGGER_CANCEL_ENROLMENT', entityType: 'PayTriggerDevice', entityId: deviceId, newValues: { imei: device.imei } });
 }
 
+/**
+ * A paid-off phone leaves PayTrigger: a switched-on phone has its lock
+ * removed for good (releaseDevice), and one never switched on has its
+ * enrolment cancelled, so it never locks. Called by the reconcile as soon
+ * as the contract is completed and any hold has run out.
+ */
+export async function unenrolPaidOff(deviceId: string, actorId: string | null): Promise<{ message: string; dryRun: boolean }> {
+  const device = await deviceOrThrow(deviceId);
+  if (device.enrollmentStatus === 'ACTIVE') {
+    const { message } = await releaseDevice(deviceId, actorId);
+    return { message, dryRun: message.startsWith('Dry run') };
+  }
+  const result = await payTriggerAction(PAYTRIGGER_PATHS.cancelEnrolment, { imeiInfo: device.imei });
+  await logAction({ deviceId, contractId: device.contractId, action: 'CANCEL_ENROLMENT', result, actorId });
+  if (!result.success) throw new PayTriggerError(result.error ?? 'PayTrigger refused');
+  if (!result.dryRun) {
+    await prisma.payTriggerDevice.update({ where: { id: deviceId }, data: { enrollmentStatus: 'CANCELLED', releaseAfter: null } });
+    if (device.contractId) registryRemove(device.contractId);
+  }
+  return { message: result.dryRun ? 'Dry run: the enrolment was not really cancelled.' : 'Paid off before it was switched on: its enrolment is cancelled.', dryRun: result.dryRun };
+}
+
 // ---------------------------------------------------------------------------
 // Offline PIN and release
 // ---------------------------------------------------------------------------

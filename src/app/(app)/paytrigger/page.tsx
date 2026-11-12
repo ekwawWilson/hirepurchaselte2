@@ -369,7 +369,7 @@ function ProductsTab({ onError, canEdit }: { onError: OnError; canEdit: boolean 
 const NUMBER_FIELDS: Array<{ key: string; label: string; hint: string }> = [
   { key: 'lockAfterOverdueDays', label: 'Extra days before locking', hint: 'An unpaid phone locks at 00:00 at the start of the day after its due date, plus this many extra days (0: the moment the due day ends). The contract\'s grace period does not apply to phone locks.' },
   { key: 'maxUnlockHorizonDays', label: 'Furthest a phone is opened ahead (days)', hint: 'Caps how long any one payment keeps a phone open, so a mistake can never open one for long.' },
-  { key: 'releaseHoldHours', label: 'Hours before a paid-off phone is released', hint: 'Time to catch a payment that bounces before the lock is removed for good.' },
+  { key: 'releaseHoldHours', label: 'Hours before a paid-off phone is released', hint: '0: the lock is removed the moment the contract is paid off. More gives time to catch a payment that bounces first.' },
   { key: 'extendBreakerPercent', label: 'Most phones one sweep may open (%)', hint: 'A safety stop: past this share of phones (and at least 5), the sweep stops opening them.' },
   { key: 'defaultRuleNum', label: 'Lock rule number (0 to 5)', hint: 'The ladder of restrictions configured on the PayTrigger portal.' },
 ];

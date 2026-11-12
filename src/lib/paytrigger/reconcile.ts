@@ -355,9 +355,22 @@ export async function reconcileContract(contractId: string, opts: {
   if (activated) await syncLockText(device, contract, decision, opts.actorId);
 
   if (decision.action === 'RELEASE') {
-    if (!device.releaseAfter) {
-      await prisma.payTriggerDevice.update({ where: { id: device.id }, data: { releaseAfter: new Date(now.getTime() + settings.releaseHoldHours * 3_600_000) } });
+    let releaseAfter = device.releaseAfter;
+    if (!releaseAfter) {
+      releaseAfter = new Date(now.getTime() + settings.releaseHoldHours * 3_600_000);
+      await prisma.payTriggerDevice.update({ where: { id: device.id }, data: { releaseAfter } });
       await logAction({ deviceId: device.id, contractId, action: 'RELEASE_SCHEDULED', success: true, actorId: opts.actorId, response: { releaseHoldHours: settings.releaseHoldHours } });
+    }
+    // Paid off and any hold run out: the phone leaves PayTrigger now, not at the next sweep.
+    if (releaseAfter.getTime() <= now.getTime() && !device.releaseHeld) {
+      // Imported here: admin.ts imports this file.
+      const { unenrolPaidOff } = await import('./admin');
+      try {
+        const done = await unenrolPaidOff(device.id, opts.actorId ?? null);
+        return out(device.id, 'RELEASE', done.dryRun ? 'SIMULATED' : 'SENT', done.message);
+      } catch (e) {
+        return out(device.id, 'RELEASE', 'FAILED', e instanceof Error ? e.message : 'PayTrigger refused');
+      }
     }
     // Kept open meanwhile: a 14-day date, topped up once a third of it is left.
     const held = device.providerExpiresAt?.getTime() ?? 0;

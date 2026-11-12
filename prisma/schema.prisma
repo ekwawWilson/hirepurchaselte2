@@ -1287,7 +1287,7 @@ model PayTriggerSettings {
   // An agent's contract stays locked until the deposit cash they took is remitted.
   lockOnUnpaidAgentDeposit Boolean   @default(true)
   maxUnlockHorizonDays     Int       @default(45)
-  releaseHoldHours         Int       @default(24)
+  releaseHoldHours         Int       @default(0)
   extendBreakerPercent     Int       @default(20)
   // Temporary unlock (paytrigger/temporaryUnlock.ts): off until the tiers are reviewed.
   temporaryUnlockEnabled   Boolean   @default(false)

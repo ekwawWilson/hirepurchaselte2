@@ -15,7 +15,6 @@ import { signBody, signContent, jsonList } from '@/lib/paytrigger/client';
 import { notifyPayTrigger, payTriggerIdle, payTriggerHookStats, registryAdd } from '@/lib/paytrigger/notify';
 import { reconcileContract } from '@/lib/paytrigger/reconcile';
 import { enrolPhones, issueOfflinePin, releaseDevice, setProductBrand, setManualLock } from '@/lib/paytrigger/admin';
-import { runPayTriggerSweep } from '@/lib/paytrigger/sweep';
 import { clearPayTriggerSettingsCache } from '@/lib/paytrigger/settings';
 import { POST as webhookPOST } from '@/app/api/paytrigger/webhook/route';
 import { GET as inventoryGET } from '@/app/api/inventory/route';
@@ -451,7 +450,7 @@ describe('Device Financing with PayTrigger', () => {
       });
     });
 
-    it('paid off: the lock is removed after the hold period by the sweep, checking the contract again first', async () => {
+    it('paid off: the contract completes and the lock is removed at once', async () => {
       const item = await phone();
       await withPayTrigger({ live: true }, async () => {
         await enrolPhones([item.id], adminId);
@@ -463,13 +462,53 @@ describe('Device Financing with PayTrigger', () => {
 
         await pay(contract.id, 48000);
         expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).status).toBe('COMPLETED');
-        const d = await device(item.id);
-        expect(d.releaseAfter).not.toBeNull();
-        await prisma.payTriggerDevice.update({ where: { id: d.id }, data: { releaseAfter: new Date(Date.now() - 1000) } });
-        const summary = await runPayTriggerSweep();
-        expect(summary.released).toBeGreaterThanOrEqual(1);
       });
       expect(await device(item.id)).toMatchObject({ enrollmentStatus: 'REMOVED', committedState: 'UNLOCKED' });
+      const removed = await prisma.payTriggerActionLog.findFirst({ where: { deviceId: (await device(item.id)).id, action: 'RELEASE', success: true } });
+      expect(removed).not.toBeNull();
+    });
+
+    it('paid off with a hold set: removed once the hold has run out, and never while staff hold it', async () => {
+      await prisma.payTriggerSettings.update({ where: { id: 'singleton' }, data: { releaseHoldHours: 24 } });
+      clearPayTriggerSettingsCache();
+      try {
+        const item = await phone();
+        await withPayTrigger({ live: true }, async () => {
+          await enrolPhones([item.id], adminId);
+          const contract = await sell(item.id);
+          await postPayment({ contractId: contract.id, amountMinor: 12000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminId });
+          await payTriggerIdle();
+          await activate(item, 'TAG-HOLD');
+          await pay(contract.id, 48000);
+          let d = await device(item.id);
+          expect(d).toMatchObject({ enrollmentStatus: 'ACTIVE' });
+          expect(d.releaseAfter!.getTime()).toBeGreaterThan(Date.now() + 23 * 3_600_000);
+
+          await prisma.payTriggerDevice.update({ where: { id: d.id }, data: { releaseAfter: new Date(Date.now() - 1000), releaseHeld: true } });
+          await reconcileContract(contract.id, { reasons: ['ADMIN'], force: true });
+          expect((await device(item.id)).enrollmentStatus).toBe('ACTIVE');
+
+          await prisma.payTriggerDevice.update({ where: { id: d.id }, data: { releaseHeld: false } });
+          await reconcileContract(contract.id, { reasons: ['ADMIN'], force: true });
+          d = await device(item.id);
+          expect(d.enrollmentStatus).toBe('REMOVED');
+        });
+      } finally {
+        await prisma.payTriggerSettings.update({ where: { id: 'singleton' }, data: { releaseHoldHours: 0 } });
+        clearPayTriggerSettingsCache();
+      }
+    });
+
+    it('paid off before it was ever switched on: its enrolment is cancelled', async () => {
+      const item = await phone();
+      const calls = await withPayTrigger({ live: true }, async () => {
+        await enrolPhones([item.id], adminId);
+        const contract = await sell(item.id);
+        await postPayment({ contractId: contract.id, amountMinor: 12000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminId });
+        await pay(contract.id, 48000);
+      });
+      expect(calls.some((c) => c.path.endsWith('/imei/cancel'))).toBe(true);
+      expect(await device(item.id)).toMatchObject({ enrollmentStatus: 'CANCELLED' });
     });
   });
 });
