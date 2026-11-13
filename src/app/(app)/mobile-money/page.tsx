@@ -7,13 +7,14 @@ import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { AccessDenied } from '@/components/AccessDenied';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency, formatDateTime, getStatusColor, cn } from '@/lib/utils';
+import { formatCurrency, formatDateTime, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { StatusBadge } from '@/components/StatusBadge';
 
 interface Attempt {
   id: string;
@@ -187,9 +188,7 @@ export default function MobileMoneyPage() {
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-gray-900">{formatCurrency(a.amountMinor)}</span>
-                    <span className={cn('text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full', getStatusColor(a.status === 'NEEDS_REVIEW' ? 'OVERDUE' : a.status === 'RESOLVED' ? 'RELEASED' : a.status))}>
-                      {STATUS_LABELS[a.status] ?? a.status}
-                    </span>
+                    <StatusBadge status={a.status === 'NEEDS_REVIEW' ? 'OVERDUE' : a.status === 'RESOLVED' ? 'RELEASED' : a.status} label={STATUS_LABELS[a.status]} />
                   </div>
                   {a.status === 'NEEDS_REVIEW' && (
                     <div className="flex gap-2">

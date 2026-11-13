@@ -6,14 +6,15 @@ import { useParams } from 'next/navigation';
 import { ArrowLeft, CreditCard, FileText } from 'lucide-react';
 import { portalApi, ApiError } from '@/lib/portalApi';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency, contractTypeLabel, formatDate, getStatusColor, cn } from '@/lib/utils';
+import { formatCurrency, contractTypeLabel, formatDate, cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import type { PortalContractDetail } from '@/lib/portalTypes';
 import { amountOwed, progressPercent, paymentLabel } from '@/lib/portalTypes';
 import { unitTitle } from '@/lib/unitLabel';
 import { isMoneyOut } from '@/lib/constants/contracts';
+import { StatusBadge } from '@/components/StatusBadge';
 
 export default function PortalContractDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -70,7 +71,7 @@ export default function PortalContractDetailPage() {
           <Link href={`/portal/contracts/${contract.id}/statement`} className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50">
             <FileText className="h-3.5 w-3.5" /> Statement
           </Link>
-          <Badge className={getStatusColor(contract.status)}>{contract.status.replace(/_/g, ' ')}</Badge>
+          <StatusBadge status={contract.status} />
         </div>
       </div>
 
@@ -143,7 +144,7 @@ export default function PortalContractDetailPage() {
                     <TableCell>{formatDate(inst.dueDate)}</TableCell>
                     <TableCell className="text-right">{formatCurrency(inst.amountDueMinor)}</TableCell>
                     <TableCell className="text-right text-emerald-600">{formatCurrency(inst.amountPaidMinor)}</TableCell>
-                    <TableCell><Badge className={getStatusColor(inst.status)}>{inst.status}</Badge></TableCell>
+                    <TableCell><StatusBadge status={inst.status} /></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -8,7 +8,8 @@ import { ReportLetterhead } from '@/components/ReportLetterhead';
 import { StatTile } from '@/components/StatTile';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils';
+import { formatCurrency, formatDate } from '@/lib/utils';
+import { StatusBadge } from '@/components/StatusBadge';
 
 interface Row {
   contractId: string; contractNumber: string; customerName: string; status: string;
@@ -59,7 +60,7 @@ export default function LoanBookReportPage() {
                     <TableRow key={r.contractId}>
                       <TableCell className="font-mono text-xs">{r.contractNumber}</TableCell>
                       <TableCell className="font-medium text-gray-900">{r.customerName}</TableCell>
-                      <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(r.status)}`}>{r.status}</span></TableCell>
+                      <TableCell><StatusBadge status={r.status} /></TableCell>
                       <TableCell>{formatDate(r.disbursedAt)}</TableCell>
                       <TableCell>{formatCurrency(r.principalMinor)}</TableCell>
                       <TableCell>{formatCurrency(r.principalOutstandingMinor)}</TableCell>

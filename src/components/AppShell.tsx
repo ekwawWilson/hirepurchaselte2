@@ -8,7 +8,6 @@ import AppSidebar from './AppSidebar';
 import AppTopBar from './AppTopBar';
 import { MobileTabBar } from './MobileTabBar';
 import { MoreSheet } from './MoreSheet';
-import { TodaysPaymentsBanner } from './notifications/TodaysPaymentsBanner';
 import { ChangePasswordForm } from './ChangePasswordForm';
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -72,7 +71,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* pb-16 clears the fixed mobile tab bar; lg:pb-0 since desktop has no bottom bar */}
         <main data-print-flow className="flex-1 overflow-y-auto surface-grid pb-16 lg:pb-0">
           <div className="page-shell mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-            <div className="print:hidden"><TodaysPaymentsBanner /></div>
             {children}
           </div>
         </main>

@@ -8,7 +8,7 @@ import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { unitTitle } from '@/lib/unitLabel';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency, contractTypeLabel, getStatusColor } from '@/lib/utils';
+import { formatCurrency, contractTypeLabel } from '@/lib/utils';
 import {
   DEPOSIT_INSTALMENT_FREQUENCIES, DEPOSIT_INSTALMENT_MIN_TERM_WEEKS, DEPOSIT_INSTALMENT_MAX_TERM_WEEKS,
   DIRECT_DEBIT_ELIGIBLE_CONTRACT_TYPES, DIRECT_DEBIT_NETWORKS, isInstalmentSale, type PaymentFrequencyName,
@@ -24,6 +24,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { AccessDenied } from '@/components/AccessDenied';
+import { StatusBadge } from '@/components/StatusBadge';
+import { PaidProgress } from '@/components/PaidProgress';
+
+/** Closed before being paid off: a balance "left" would mislead, so what was paid is shown. */
+const CLOSED_EARLY = ['CANCELLED', 'WRITTEN_OFF'];
 
 interface Plan { months: number; totalPriceMinor: number; depositMinor: number }
 
@@ -842,6 +847,30 @@ export default function ContractsPage() {
               {canCreate && !listSearch.trim() && <Button onClick={() => { resetWizard(); setShowForm(true); }}><Plus className="mr-2 h-4 w-4" />Create First Contract</Button>}
             </div>
           ) : (
+            <>
+            {/* Phones: one tappable card per contract instead of a table that scrolls sideways. */}
+            <ul className="divide-y divide-gray-100 sm:hidden">
+              {contracts.map((c) => (
+                <li key={c.id}>
+                  <Link href={`/contracts/${c.id}`} className="flex items-center gap-3 px-4 py-3 active:bg-gray-50">
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate font-semibold text-gray-900">{c.customer.firstName} {c.customer.lastName}</p>
+                        <StatusBadge status={c.status} size="sm" />
+                      </div>
+                      <p className="truncate text-xs text-gray-500">
+                        <span className="font-mono">{c.contractNumber}</span> &middot; {c.product?.name ?? contractTypeLabel(c.contractType)}
+                      </p>
+                      {c.contractType === 'SAVE_TO_OWN' || c.contractType === 'DEVICE_LOAN' || CLOSED_EARLY.includes(c.status)
+                        ? <p className="text-xs text-gray-600">{c.contractType === 'SAVE_TO_OWN' ? 'Saved' : 'Paid'}: {formatCurrency(c.totalPaidMinor)}</p>
+                        : <PaidProgress paidMinor={c.totalPaidMinor} totalMinor={c.totalPayableMinor ?? 0} />}
+                    </div>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            <div className="hidden sm:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -850,26 +879,26 @@ export default function ContractsPage() {
                   <TableHead>Product</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Balance</TableHead>
+                  <TableHead>Paid</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {contracts.map((c) => (
                   <TableRow key={c.id}>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap">
                       <Link href={`/contracts/${c.id}`} className="font-mono text-xs text-blue-700 hover:underline">{c.contractNumber}</Link>
                     </TableCell>
-                    <TableCell>{c.customer.firstName} {c.customer.lastName}</TableCell>
+                    <TableCell className="font-medium text-gray-900">{c.customer.firstName} {c.customer.lastName}</TableCell>
                     <TableCell>{c.product?.name ?? '—'}</TableCell>
                     <TableCell>{contractTypeLabel(c.contractType)}</TableCell>
-                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
+                    <TableCell><StatusBadge status={c.status} /></TableCell>
                     <TableCell>
                       {c.contractType === 'SAVE_TO_OWN'
                         ? `Saved: ${formatCurrency(c.totalPaidMinor)}`
-                        : c.contractType === 'DEVICE_LOAN'
+                        : c.contractType === 'DEVICE_LOAN' || CLOSED_EARLY.includes(c.status)
                           ? `Paid: ${formatCurrency(c.totalPaidMinor)}`
-                          : `${formatCurrency(c.balanceMinor ?? 0)} / ${formatCurrency(c.totalPayableMinor ?? 0)}`}
+                          : <PaidProgress paidMinor={c.totalPaidMinor} totalMinor={c.totalPayableMinor ?? 0} />}
                     </TableCell>
                     <TableCell>
                       <Link href={`/contracts/${c.id}`}><ChevronRight className="h-4 w-4 text-gray-300" /></Link>
@@ -878,6 +907,8 @@ export default function ContractsPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
+            </>
           )}
           {contracts.length > 0 && contracts.length < listTotal && (
             <div className="flex items-center justify-between gap-3 border-t border-gray-100 p-4 text-sm text-gray-500">

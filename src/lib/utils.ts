@@ -68,6 +68,12 @@ export function getStatusColor(status: string): string {
   return colors[status] || "bg-gray-100 text-gray-600 ring-1 ring-gray-200/60";
 }
 
+/** A status as people read it: "PENDING_APPROVAL" becomes "Pending approval". */
+export function statusLabel(status: string): string {
+  const words = status.replace(/_/g, ' ').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export function contractTypeLabel(type: string): string {
   const labels: Record<string, string> = {
     SAVE_TO_OWN: "Save to Own",

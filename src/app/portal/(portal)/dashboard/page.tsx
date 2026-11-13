@@ -6,11 +6,12 @@ import { AlertCircle, ArrowRight, CheckCircle, ChevronRight, CreditCard, FileTex
 import { portalApi, ApiError } from '@/lib/portalApi';
 import { useCustomerAuthStore } from '@/lib/customerAuthStore';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency, contractTypeLabel, formatDate, getStatusColor, cn } from '@/lib/utils';
+import { formatCurrency, contractTypeLabel, formatDate, cn } from '@/lib/utils';
 import { StatTile } from '@/components/StatTile';
 import { Card, CardContent } from '@/components/ui/card';
 import type { PortalContract, PortalUpcoming } from '@/lib/portalTypes';
 import { amountOwed, progressPercent } from '@/lib/portalTypes';
+import { StatusBadge } from '@/components/StatusBadge';
 
 export default function PortalDashboardPage() {
   const customer = useCustomerAuthStore((s) => s.customer);
@@ -121,7 +122,7 @@ export default function PortalDashboardPage() {
                   </div>
                   <div className="shrink-0 text-right">
                     <p className="text-sm font-semibold text-gray-900">{formatCurrency(inst.amountDueMinor - inst.amountPaidMinor)}</p>
-                    <span className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded-full', getStatusColor(inst.status))}>{inst.status}</span>
+                    <StatusBadge size='sm' status={inst.status} />
                   </div>
                 </div>
               ))}

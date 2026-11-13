@@ -8,7 +8,8 @@ import { ReportLetterhead } from '@/components/ReportLetterhead';
 import { StatTile } from '@/components/StatTile';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { formatCurrency, getStatusColor } from '@/lib/utils';
+import { formatCurrency } from '@/lib/utils';
+import { StatusBadge } from '@/components/StatusBadge';
 
 interface Row { status: string; count: number; totalMinor: number }
 
@@ -48,7 +49,7 @@ export default function ContractStatusSummaryReportPage() {
                 <TableBody>
                   {rows.map((r) => (
                     <TableRow key={r.status}>
-                      <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(r.status)}`}>{r.status}</span></TableCell>
+                      <TableCell><StatusBadge status={r.status} /></TableCell>
                       <TableCell>{r.count}</TableCell>
                       <TableCell>{formatCurrency(r.totalMinor)}</TableCell>
                     </TableRow>

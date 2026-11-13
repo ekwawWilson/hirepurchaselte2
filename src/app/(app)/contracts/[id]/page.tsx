@@ -10,7 +10,7 @@ import { RescheduleDialog } from '@/components/RescheduleDialog';
 import { RecordRefundDialog } from '@/components/RecordRefundDialog';
 import { ContractFollowUps } from '@/components/ContractFollowUps';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency, formatDate, formatDateTime, getStatusColor, contractTypeLabel } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateTime, contractTypeLabel } from '@/lib/utils';
 import { MOBILE_MONEY_NETWORKS, MOBILE_MONEY_NETWORK_LABELS } from '@/lib/constants/contracts';
 import { networkForPhone } from '@/lib/constants/customers';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,8 @@ import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
 } from '@/components/ui/alert-dialog';
 import { isMoneyOut, isInstalmentSale, INSTALMENT_SALE_TYPES } from '@/lib/constants/contracts';
+import { StatusBadge } from '@/components/StatusBadge';
+import { PaidProgress } from '@/components/PaidProgress';
 
 interface Instalment { id: string; instalmentNo: number; dueDate: string; amountDueMinor: number; principalPortionMinor: number; interestPortionMinor: number; amountPaidMinor: number; status: string; daysPastDue?: number }
 interface Payment { id: string; entryType: string; amountMinor: number; channel: string; status: string; receiptNumber: string | null; notes: string | null; reversesPaymentId: string | null; reversedById: string | null; createdAt: string }
@@ -565,7 +567,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       <div className="min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{contract.contractNumber}</h1>
-          <span className={`text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${getStatusColor(contract.status)}`}>{contract.status.replace(/_/g, ' ')}</span>
+          <StatusBadge status={contract.status} className="px-3 py-1 text-sm" />
         </div>
         <p className="text-sm text-gray-500 mt-0.5">
           {contract.customer.firstName} {contract.customer.lastName} &middot; {contract.customer.phone ?? contract.customer.phone2 ?? contract.customer.phone3}
@@ -693,6 +695,9 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                 </p>
               )}
           </SummaryFigure>
+          {(contract.totalPayableMinor ?? 0) > 0 && (
+            <Card className="p-4 sm:col-span-3"><PaidProgress paidMinor={contract.totalPaidMinor} totalMinor={contract.totalPayableMinor ?? 0} /></Card>
+          )}
         </div>
       )}
 
@@ -843,9 +848,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
             {contract.hubtelPreapproval ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(contract.hubtelPreapproval.status)}`}>
-                    {contract.hubtelPreapproval.status}
-                  </span>
+                  <StatusBadge status={contract.hubtelPreapproval.status} />
                   <span className="text-sm text-gray-600">{contract.hubtelPreapproval.customerMsisdn} &middot; {contract.hubtelPreapproval.network}</span>
                   {contract.hubtelPreapproval.status === 'PENDING' && contract.hubtelPreapproval.verificationType && (
                     <span className="text-xs text-gray-400">
@@ -1068,7 +1071,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                   <TableCell>{formatCurrency(i.amountDueMinor)}</TableCell>
                   <TableCell>{formatCurrency(i.amountPaidMinor)}</TableCell>
                   <TableCell>
-                    <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${getStatusColor(i.status)}`}>{i.status}</span>
+                    <StatusBadge status={i.status} />
                     {i.status === 'OVERDUE' && (
                       <span className="ml-1.5 text-[11px] text-red-600">{i.daysPastDue}d past due</span>
                     )}

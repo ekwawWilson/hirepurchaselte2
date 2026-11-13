@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency, formatDate, contractTypeLabel, getStatusColor } from '@/lib/utils';
+import { formatCurrency, formatDate, contractTypeLabel } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,6 +17,7 @@ import { PhoneVerifyField } from '@/components/PhoneVerifyField';
 import { CustomerPhotoField } from '@/components/CustomerPhotoField';
 import { Textarea } from '@/components/ui/textarea';
 import { OneTimePasswordDialog } from '@/components/OneTimePasswordDialog';
+import { StatusBadge } from '@/components/StatusBadge';
 
 interface Customer {
   id: string; membershipId: string; firstName: string; lastName: string;
@@ -252,7 +253,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     <TableCell><Link href={`/contracts/${c.id}`} className="font-mono text-xs text-blue-700 hover:underline">{c.contractNumber}</Link></TableCell>
                     <TableCell>{c.product?.name ?? '—'}</TableCell>
                     <TableCell>{contractTypeLabel(c.contractType)}</TableCell>
-                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(c.status)}`}>{c.status}</span></TableCell>
+                    <TableCell><StatusBadge status={c.status} /></TableCell>
                     <TableCell>
                       {c.contractType === 'SAVE_TO_OWN'
                         ? `Saved: ${formatCurrency(c.totalPaidMinor)}`

@@ -9,8 +9,9 @@ import { ReportDateFilter, today } from '@/components/ReportDateFilter';
 import { StatTile } from '@/components/StatTile';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { formatCurrency, formatDateTime, getStatusColor } from '@/lib/utils';
+import { formatCurrency, formatDateTime } from '@/lib/utils';
 import { isMoneyOut } from '@/lib/constants/contracts';
+import { StatusBadge } from '@/components/StatusBadge';
 
 interface PaymentRow {
   id: string; entryType: string; amountMinor: number; channel: string; status: string;
@@ -87,7 +88,7 @@ export default function PaymentsRegisterReportPage() {
                       <TableCell className={isMoneyOut(p.entryType) && !p.reversesPaymentId ? 'text-red-600' : undefined}>
                         {isMoneyOut(p.entryType) && !p.reversesPaymentId ? '-' : ''}{formatCurrency(p.amountMinor)}
                       </TableCell>
-                      <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(p.status)}`}>{p.status}</span></TableCell>
+                      <TableCell><StatusBadge status={p.status} /></TableCell>
                       <TableCell className="font-mono text-xs">{p.receiptNumber ?? '—'}</TableCell>
                       <TableCell>{p.createdBy ? `${p.createdBy.firstName} ${p.createdBy.lastName}` : '—'}</TableCell>
                     </TableRow>

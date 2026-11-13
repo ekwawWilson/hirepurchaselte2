@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Plus, Search, Users as UsersIcon } from 'lucide-react';
+import { ChevronRight, Plus, Search, Users as UsersIcon } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
@@ -254,6 +254,24 @@ export default function CustomersPage() {
               )}
             </div>
           ) : (
+            <>
+            <ul className="divide-y divide-gray-100 sm:hidden">
+              {customers.map((c) => (
+                <li key={c.id}>
+                  <Link href={`/customers/${c.id}`} className="flex items-center gap-3 px-4 py-3 active:bg-gray-50">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                      {c.firstName.charAt(0)}{c.lastName.charAt(0)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-gray-900">{c.firstName} {c.lastName}</p>
+                      <p className="truncate text-xs text-gray-500">{c.phone ?? c.phone2 ?? c.phone3 ?? 'No phone'} &middot; <span className="font-mono">{c.membershipId}</span></p>
+                    </div>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            <div className="hidden sm:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -267,7 +285,7 @@ export default function CustomersPage() {
               <TableBody>
                 {customers.map((c) => (
                   <TableRow key={c.id}>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap">
                       <Link href={`/customers/${c.id}`} className="font-mono text-xs text-blue-700 hover:underline">{c.membershipId}</Link>
                     </TableCell>
                     <TableCell className="font-medium text-gray-900">
@@ -280,6 +298,8 @@ export default function CustomersPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
+            </>
           )}
         </CardContent>
       </Card>

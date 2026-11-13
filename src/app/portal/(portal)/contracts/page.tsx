@@ -5,11 +5,12 @@ import Link from 'next/link';
 import { ChevronRight, FileText } from 'lucide-react';
 import { portalApi, ApiError } from '@/lib/portalApi';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency, contractTypeLabel, formatDate, getStatusColor, cn } from '@/lib/utils';
+import { formatCurrency, contractTypeLabel, formatDate, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+
 import type { PortalContract } from '@/lib/portalTypes';
 import { amountOwed, progressPercent } from '@/lib/portalTypes';
+import { StatusBadge } from '@/components/StatusBadge';
 
 export default function PortalContractsPage() {
   const { toast } = useToast();
@@ -60,7 +61,7 @@ export default function PortalContractsPage() {
                       <p className="text-sm font-semibold text-gray-900 truncate">
                         {c.product?.name ?? contractTypeLabel(c.contractType)}
                       </p>
-                      <Badge className={getStatusColor(c.status)}>{c.status.replace(/_/g, ' ')}</Badge>
+                      <StatusBadge status={c.status} />
                     </div>
                     <p className="text-xs text-gray-500 mt-1 font-mono">{c.contractNumber}</p>
                     <p className="text-xs text-gray-400 mt-0.5">

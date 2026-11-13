@@ -5,7 +5,7 @@ import { Plus, Search, Warehouse as WarehouseIcon } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
 import { useToast } from '@/hooks/useToast';
-import { getStatusColor } from '@/lib/utils';
+
 import { unitTitle } from '@/lib/unitLabel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { DeviceFinancingBadge } from '@/components/DeviceFinancing';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AccessDenied } from '@/components/AccessDenied';
+import { StatusBadge } from '@/components/StatusBadge';
 
 interface Category { id: string; name: string }
 interface Product { id: string; name: string; sku: string; categoryId: string | null; category: Category | null; isActive?: boolean; deviceFinancingBrand?: string | null }
@@ -411,7 +412,7 @@ export default function InventoryPage() {
                     </TableCell>
                     <TableCell className="font-mono text-xs">{i.serialNumber}</TableCell>
                     {isAllBranch && <TableCell className="text-gray-600">{i.branch?.name ?? '—'}</TableCell>}
-                    <TableCell><span className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-full ${getStatusColor(i.status)}`}>{i.status}</span></TableCell>
+                    <TableCell><StatusBadge status={i.status} /></TableCell>
                     {!isAgent && <TableCell className="text-gray-600">{i.assignedAgent ? `${i.assignedAgent.firstName} ${i.assignedAgent.lastName}` : <span className="text-gray-400">In the shop</span>}</TableCell>}
                     <TableCell className="whitespace-nowrap space-x-3">
                       <button className="text-xs text-blue-700 hover:underline" onClick={() => openHistory(i)}>History</button>

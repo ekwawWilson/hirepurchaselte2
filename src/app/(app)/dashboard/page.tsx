@@ -5,9 +5,11 @@ import Link from 'next/link';
 import { AlertCircle, ArrowRight, Banknote, ChevronRight, FileText, KeyRound, Plus, Warehouse } from 'lucide-react';
 import { api, ApiError } from '@/lib/apiClient';
 import { useAuthStore } from '@/lib/authStore';
-import { formatCurrency, formatDate, contractTypeLabel, getStatusColor, cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { formatCurrency, formatDate, contractTypeLabel, cn } from '@/lib/utils';
+
 import { NeedsAttention } from '@/components/NeedsAttention';
+import { TodaysPaymentsBanner } from '@/components/notifications/TodaysPaymentsBanner';
+import { StatusBadge } from '@/components/StatusBadge';
 
 interface DashboardSummary {
   todayCashMinor: number;
@@ -141,6 +143,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-5 sm:space-y-6">
+      <TodaysPaymentsBanner />
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-sm text-gray-500 mt-0.5">Hire purchase management overview</p>
@@ -213,7 +216,7 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          <div className="rounded-2xl border border-white/60 bg-white/90 shadow-[0_20px_45px_-22px_rgba(15,23,42,0.35)] overflow-hidden">
+          <div className="rounded-2xl border border-gray-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_4px_16px_-8px_rgba(15,23,42,0.08)] overflow-hidden">
             {recent === null ? (
               <div className="flex h-32 items-center justify-center">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
@@ -236,7 +239,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="text-sm font-semibold text-gray-900">{formatCurrency(c.totalPaidMinor)}</p>
-                      <Badge className={getStatusColor(c.status)}>{c.status.replace(/_/g, ' ')}</Badge>
+                      <StatusBadge status={c.status} />
                     </div>
                     <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
                   </Link>
@@ -298,6 +301,7 @@ function AgentDashboard({ contracts }: { contracts: RecentContract[] | null }) {
 
   return (
     <div className="space-y-5 sm:space-y-6">
+      <TodaysPaymentsBanner />
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-sm text-gray-500 mt-0.5">Your own contracts</p>
@@ -330,7 +334,7 @@ function AgentDashboard({ contracts }: { contracts: RecentContract[] | null }) {
           </Link>
         </div>
 
-        <div className="rounded-2xl border border-white/60 bg-white/90 shadow-[0_20px_45px_-22px_rgba(15,23,42,0.35)] overflow-hidden">
+        <div className="rounded-2xl border border-gray-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_4px_16px_-8px_rgba(15,23,42,0.08)] overflow-hidden">
           {contracts.length === 0 ? (
             <div className="py-12 text-center">
               <FileText className="h-8 w-8 text-gray-300 mx-auto mb-2" />
@@ -349,7 +353,7 @@ function AgentDashboard({ contracts }: { contracts: RecentContract[] | null }) {
                   </div>
                   <div className="shrink-0 text-right">
                     <p className="text-sm font-semibold text-gray-900">{formatCurrency(c.totalPaidMinor)}</p>
-                    <Badge className={getStatusColor(c.status)}>{c.status.replace(/_/g, ' ')}</Badge>
+                    <StatusBadge status={c.status} />
                   </div>
                   <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />
                 </Link>
