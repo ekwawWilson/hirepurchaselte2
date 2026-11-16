@@ -27,6 +27,7 @@ interface Health {
   lastSweepAt: string | null;
 }
 interface Issues {
+  byHand: Array<Device & { manualState: string; manualUntil: string | null; manualReason: string | null; manualAt: string | null; manualBy: { firstName: string; lastName: string } | null }>;
   paidStillLocked: Device[]; depositHeld: Array<Device & { owedMinor: number | null }>; lockNotConfirmed: Device[]; unenforceable: Device[];
   failing: Device[]; stale: Device[]; sweepLate: boolean; lastSweepAt: string | null;
   soldNotEnrolled: Array<{ id: string; contractNumber: string; status: string; customer: { firstName: string; lastName: string }; device: { enrollmentStatus: string; lastError: string | null } | null }>;
@@ -181,7 +182,7 @@ function AttentionTab({ onError }: { onError: OnError }) {
   const [issues, setIssues] = useState<Issues | null>(null);
   useEffect(() => { api.get<Issues>('/paytrigger/issues').then(setIssues).catch((e) => onError(e, 'Could not load issues')); }, [onError]);
   if (!issues) return <Spinner />;
-  const total = issues.paidStillLocked.length + issues.depositHeld.length + issues.soldNotEnrolled.length + issues.lockNotConfirmed.length
+  const total = issues.byHand.length + issues.paidStillLocked.length + issues.depositHeld.length + issues.soldNotEnrolled.length + issues.lockNotConfirmed.length
     + issues.unenforceable.length + issues.failing.length + issues.stale.length + (issues.sweepLate ? 1 : 0);
   if (total === 0) {
     return <Card><CardContent className="text-center py-12"><Lock className="h-8 w-8 text-gray-300 mx-auto mb-2" /><p className="text-gray-500">Nothing needs attention</p></CardContent></Card>;
@@ -193,6 +194,11 @@ function AttentionTab({ onError }: { onError: OnError }) {
           The daily PayTrigger sweep has not run since {issues.lastSweepAt ? formatDateTime(issues.lastSweepAt) : 'it was set up'}. Phones still lock on their own dates, but paid-off phones are not released.
         </div>
       )}
+      <IssueGroup title="Locked or opened by hand" hint="Set by staff on the phone's page. A phone locked by hand stays locked, even when the customer pays, until someone returns it to the normal rules." count={issues.byHand.length}>
+        {issues.byHand.map((d) => (
+          <DeviceRow key={d.id} d={d} extra={<> &middot; {d.manualState === 'LOCKED' ? 'locked' : `opened until ${formatDateTime(d.manualUntil)}`} by {d.manualBy ? `${d.manualBy.firstName} ${d.manualBy.lastName}` : 'staff'}{d.manualAt && <> on {formatDateTime(d.manualAt)}</>}{d.manualReason && <>: {d.manualReason}</>}</>} />
+        ))}
+      </IssueGroup>
       <IssueGroup title="Paid, still locked" hint="Paid up, but the phone has not been online to hear it. Call the customer: ask them to turn on data, or give them an offline PIN from the phone's page." count={issues.paidStillLocked.length}>
         {issues.paidStillLocked.map((d) => <DeviceRow key={d.id} d={d} extra={<> &middot; since {formatDateTime(d.awaitingPinSince)}</>} />)}
       </IssueGroup>

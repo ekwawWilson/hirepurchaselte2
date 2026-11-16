@@ -34,7 +34,18 @@ export interface SweepSummary {
   reminders: number;
 }
 
+let sweepRunning = false;
+
 export async function runPayTriggerSweep(): Promise<SweepSummary> {
+  sweepRunning = true;
+  try {
+    return await sweep();
+  } finally {
+    sweepRunning = false;
+  }
+}
+
+async function sweep(): Promise<SweepSummary> {
   const summary: SweepSummary = { linked: 0, reconciled: 0, sent: 0, skipped: 0, errors: 0, released: 0, statusReads: 0, breakerTripped: false, reEnrolled: 0, reminders: 0 };
   const settings = await getPayTriggerSettings();
   const now = Date.now();
@@ -140,6 +151,80 @@ export async function runPayTriggerSweep(): Promise<SweepSummary> {
     data: { lastSweepAt: new Date(), lastSweepSummary: summary as unknown as Prisma.InputJsonValue },
   });
   clearPayTriggerSettingsCache();
+  return summary;
+}
+
+/** Status reads are spent sparingly: a check reads at most this often (PayTrigger allows 100 batch reads a day). */
+const CATCH_UP_READ_SPACING_MS = 60 * 60_000;
+let lastCatchUpReadAt = 0;
+
+export interface CatchUpSummary { reconciled: number; sent: number; errors: number; statusReads: number; skipped: boolean }
+
+/**
+ * Every few minutes between the morning sweeps: each phone on a sale is
+ * brought into line with its contract. A payment's unlock and PayTrigger's
+ * retries are queued in memory, so a restart (a deploy) loses them; this sends
+ * them again within minutes instead of the next morning. A phone whose
+ * decision is unchanged is not sent anything, one PayTrigger refused for its
+ * daily limit waits the 24 hours it asks for, and one waiting for its own
+ * retry is left to it. It also reads, at most hourly, a sold phone still
+ * waiting for its first switch-on (in case PayTrigger's signal was missed),
+ * and a phone whose lock date has just passed, so what staff see is current.
+ */
+export async function catchUpPhoneLocks(now: Date = new Date(), only?: { deviceIds: string[] }): Promise<CatchUpSummary> {
+  const summary: CatchUpSummary = { reconciled: 0, sent: 0, errors: 0, statusReads: 0, skipped: false };
+  if (sweepRunning) return { ...summary, skipped: true };
+  const settings = await getPayTriggerSettings();
+  const linked = await prisma.payTriggerDevice.findMany({ where: { contractId: { not: null }, enrollmentStatus: { in: ENFORCED_STATES }, ...(only && { id: { in: only.deviceIds } }) } });
+  const waiting = new Set((await prisma.payTriggerCommand.findMany({
+    where: {
+      deviceId: { in: linked.map((d) => d.id) },
+      OR: [
+        { status: 'DEFERRED', updatedAt: { gt: new Date(now.getTime() - DAY) } },
+        { status: 'PENDING', nextAttemptAt: { gt: now } },
+        { status: 'PROCESSING', updatedAt: { gt: new Date(now.getTime() - 5 * 60_000) } },
+      ],
+    },
+    select: { deviceId: true },
+  })).map((c) => c.deviceId));
+
+  const breaker: Breaker = { limit: Math.max(5, Math.ceil(linked.length * settings.extendBreakerPercent / 100)), used: 0, tripped: false };
+  for (const device of linked) {
+    if (waiting.has(device.id)) continue;
+    try {
+      const outcome = await reconcileContract(device.contractId!, { reasons: ['SWEEP'], breaker });
+      summary.reconciled += 1;
+      if (outcome.outcome === 'SENT' || outcome.outcome === 'SIMULATED') summary.sent += 1;
+      if (outcome.outcome === 'FAILED') summary.errors += 1;
+    } catch (e) {
+      summary.errors += 1;
+      console.error(`[paytrigger] check could not reconcile contract ${device.contractId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+
+  if (now.getTime() - lastCatchUpReadAt >= CATCH_UP_READ_SPACING_MS) {
+    const hourAgo = new Date(now.getTime() - CATCH_UP_READ_SPACING_MS);
+    const toRead = await prisma.payTriggerDevice.findMany({
+      where: {
+        enrollmentStatus: { in: ENFORCED_STATES },
+        ...(only && { id: { in: only.deviceIds } }),
+        OR: [
+          // Sold, but its first switch-on has not been heard of.
+          { enrollmentStatus: 'QUEUED', contractId: { not: null }, OR: [{ lastStatusReadAt: null }, { lastStatusReadAt: { lt: hourAgo } }] },
+          // Its lock date has just passed and it has not reported since.
+          { enrollmentStatus: 'ACTIVE', providerExpiresAt: { gte: new Date(now.getTime() - 3 * HOUR), lte: now }, committedState: { not: 'LOCKED' } },
+        ],
+      },
+      take: 100,
+    });
+    const due = toRead.filter((d) => !d.lastStatusReadAt || (d.providerExpiresAt && d.lastStatusReadAt < d.providerExpiresAt) || d.lastStatusReadAt < hourAgo);
+    if (due.length > 0) {
+      lastCatchUpReadAt = now.getTime();
+      const { read, errors } = await readLockStates(due);
+      summary.statusReads = read;
+      summary.errors += errors.length;
+    }
+  }
   return summary;
 }
 

@@ -12,9 +12,10 @@ import { createContract, approveContract, cancelContract } from '@/lib/services/
 import { postPayment, reversePayment } from '@/lib/services/paymentService';
 import { fileRemittance, confirmRemittance } from '@/lib/services/agentLedgerService';
 import { signBody, signContent, jsonList } from '@/lib/paytrigger/client';
-import { notifyPayTrigger, payTriggerIdle, payTriggerHookStats, registryAdd } from '@/lib/paytrigger/notify';
+import { notifyPayTrigger, payTriggerIdle, payTriggerHookStats, registryAdd, registryRemove } from '@/lib/paytrigger/notify';
 import { reconcileContract } from '@/lib/paytrigger/reconcile';
-import { enrolPhones, issueOfflinePin, releaseDevice, setProductBrand, setManualLock } from '@/lib/paytrigger/admin';
+import { enrolPhones, issueOfflinePin, releaseDevice, setProductBrand, setManualLock, payTriggerIssues } from '@/lib/paytrigger/admin';
+import { catchUpPhoneLocks } from '@/lib/paytrigger/sweep';
 import { clearPayTriggerSettingsCache } from '@/lib/paytrigger/settings';
 import { POST as webhookPOST } from '@/app/api/paytrigger/webhook/route';
 import { GET as inventoryGET } from '@/app/api/inventory/route';
@@ -330,6 +331,91 @@ describe('Device Financing with PayTrigger', () => {
       const logged = await prisma.payTriggerActionLog.findMany({ where: { deviceId: d.id, action: { startsWith: 'MANUAL_' } } });
       expect(logged.map((l) => l.action).sort()).toEqual(['MANUAL_CLEAR', 'MANUAL_LOCK', 'MANUAL_OPEN']);
       expect(await prisma.auditLog.count({ where: { entityId: d.id, action: { startsWith: 'PAYTRIGGER_MANUAL_' } } })).toBe(3);
+    });
+  });
+
+  describe('the check between morning sweeps', () => {
+    /** A switched-on phone, deposit paid, its first instalment ten days overdue: locked. */
+    async function lockedPhone(tag: string) {
+      const item = await phone();
+      let contractId = '';
+      await withPayTrigger({}, async () => {
+        await enrolPhones([item.id], adminId);
+        const contract = await sell(item.id);
+        contractId = contract.id;
+        await postPayment({ contractId: contract.id, amountMinor: 12000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminId });
+        await payTriggerIdle();
+        await activate(item, tag);
+        await prisma.instalment.updateMany({ where: { contractId: contract.id, instalmentNo: 1 }, data: { dueDate: new Date(Date.now() - 10 * DAY), status: 'OVERDUE' } });
+        await reconcileContract(contract.id, { reasons: ['CONTRACT_CHANGED'] });
+      });
+      return { item, contractId, device: await device(item.id) };
+    }
+
+    it('sends an unlock lost to a restart within minutes, not the next morning', async () => {
+      const { contractId, device: before } = await lockedPhone('TAG-LOST');
+      expect(before.providerExpiresAt!.getTime()).toBeLessThan(Date.now() + 120_000);
+      await withPayTrigger({}, async () => {
+        // The server restarts as the payment comes in: the in-memory hook never runs.
+        registryRemove(contractId);
+        await postPayment({ contractId, amountMinor: 12000, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH', createdById: adminId });
+        await payTriggerIdle();
+        expect((await device(before.inventoryItemId)).providerExpiresAt!.getTime()).toBeLessThan(Date.now() + 120_000);
+        const summary = await catchUpPhoneLocks(new Date(), { deviceIds: [before.id] });
+        expect(summary).toMatchObject({ reconciled: 1, sent: 1 });
+      });
+      expect((await device(before.inventoryItemId)).providerExpiresAt!.getTime()).toBeGreaterThan(Date.now() + DAY);
+      // Nothing changed since: the next check sends nothing.
+      await withPayTrigger({}, async () => {
+        expect(await catchUpPhoneLocks(new Date(), { deviceIds: [before.id] })).toMatchObject({ sent: 0 });
+      });
+    });
+
+    it('waits the 24 hours PayTrigger asks for after a daily limit, and leaves a phone to its own retry', async () => {
+      const { contractId, device: d } = await lockedPhone('TAG-LIMIT');
+      registryRemove(contractId); // the payment's own unlock is lost
+      await postPayment({ contractId, amountMinor: 12000, entryType: 'INSTALMENT_PAYMENT', channel: 'CASH', createdById: adminId });
+      await payTriggerIdle();
+      const deferred = await prisma.payTriggerCommand.create({ data: { deviceId: d.id, type: 'EXTEND', idempotencyKey: `limit-${runId}-${++counter}`, payload: {}, status: 'DEFERRED', attempts: 1 } });
+      await withPayTrigger({}, async () => {
+        expect(await catchUpPhoneLocks(new Date(), { deviceIds: [d.id] })).toMatchObject({ reconciled: 0, sent: 0 });
+      });
+      await prisma.payTriggerCommand.update({ where: { id: deferred.id }, data: { status: 'PENDING', nextAttemptAt: new Date(Date.now() + 60_000) } });
+      await withPayTrigger({}, async () => {
+        expect(await catchUpPhoneLocks(new Date(), { deviceIds: [d.id] })).toMatchObject({ reconciled: 0 });
+      });
+      await prisma.payTriggerCommand.update({ where: { id: deferred.id }, data: { status: 'DEFERRED', updatedAt: new Date(Date.now() - 25 * 3_600_000) } });
+      await withPayTrigger({}, async () => {
+        expect(await catchUpPhoneLocks(new Date(), { deviceIds: [d.id] })).toMatchObject({ reconciled: 1, sent: 1 });
+      });
+    });
+
+    it('reads a sold phone whose switch-on signal was missed, at most hourly, and opens it', async () => {
+      const item = await phone();
+      const calls = await withPayTrigger({ live: true, respond: (call) => call.path.endsWith('/batchFindLockState')
+        ? { code: 200, message: 'Success', data: [{ imei: item.serialNumber, deviceTag: 'TAG-MISSED', lockState: 3000, mobileStatus: 1000 }] } : undefined }, async () => {
+        await enrolPhones([item.id], adminId);
+        const contract = await sell(item.id);
+        await postPayment({ contractId: contract.id, amountMinor: 12000, entryType: 'DEPOSIT', channel: 'CASH', createdById: adminId });
+        await payTriggerIdle();
+        const d = await device(item.id);
+        expect(d.enrollmentStatus).toBe('QUEUED');
+        const later = new Date(Date.now() + 2 * 3_600_000);
+        expect(await catchUpPhoneLocks(later, { deviceIds: [d.id] })).toMatchObject({ statusReads: 1 });
+        // Read once this hour: a second check minutes later does not read again.
+        expect(await catchUpPhoneLocks(new Date(later.getTime() + 5 * 60_000), { deviceIds: [d.id] })).toMatchObject({ statusReads: 0 });
+      });
+      expect(await device(item.id)).toMatchObject({ enrollmentStatus: 'ACTIVE', deviceTag: 'TAG-MISSED' });
+      expect(calls.some((c) => c.path.endsWith('/updateRepayInfo'))).toBe(true);
+    });
+
+    it('lists phones locked or opened by hand under needs attention', async () => {
+      const { device: d } = await lockedPhone('TAG-LISTED');
+      await withPayTrigger({}, async () => {
+        await setManualLock(d.id, { state: 'LOCKED', reason: 'Customer reported it stolen' }, adminId);
+      });
+      const { byHand } = await payTriggerIssues();
+      expect(byHand.find((x) => x.id === d.id)).toMatchObject({ manualState: 'LOCKED', manualReason: 'Customer reported it stolen', manualBy: { firstName: expect.any(String) } });
     });
   });
 

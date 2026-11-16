@@ -26,7 +26,7 @@ export async function registerScheduledJobs() {
   const { alertLongHeldAgentCash } = await import('@/lib/services/agentLedgerService');
   const { expireStaleSubmissions } = await import('@/lib/services/contractService');
   const { raiseAlert } = await import('@/lib/services/alertService');
-  const { runPayTriggerSweep, describeSweep } = await import('@/lib/paytrigger/sweep');
+  const { runPayTriggerSweep, describeSweep, catchUpPhoneLocks } = await import('@/lib/paytrigger/sweep');
   const { loadPayTriggerRegistry } = await import('@/lib/paytrigger/notify');
 
   /**
@@ -105,6 +105,9 @@ export async function registerScheduledJobs() {
     await job('retryFulfilmentCallbacks', 'tell Hubtel the outcome of USSD payments', retryFulfilmentCallbacks,
       (result) => (result.sent + result.gaveUp > 0 ? `USSD fulfilment callbacks: sent ${result.sent}, gave up on ${result.gaveUp}` : null));
     await job('pruneExpiredUssdSessions', 'clear expired USSD sessions', pruneExpiredUssdSessions);
+    // Phone locks between morning sweeps: an unlock lost to a restart is sent again within minutes.
+    await job('catchUpPhoneLocks', 'bring phone locks up to date', catchUpPhoneLocks,
+      (r) => (r.sent + r.errors + r.statusReads > 0 ? `PayTrigger check: ${r.sent} sent, ${r.statusReads} status reads, ${r.errors} errors` : null));
   });
 
   // Which contracts have a PayTrigger phone, so a payment hook knows at once

@@ -455,8 +455,15 @@ export async function payTriggerIssues() {
       .filter((r) => !r.device || !ENFORCED_STATES.includes(r.device.enrollmentStatus));
   });
 
+  // Locked or opened by staff by hand: a lock stays until someone returns the phone to the normal rules.
+  const byHandDevices = enforced.filter((d) => d.manualState && (!d.manualUntil || d.manualUntil.getTime() > now));
+  const handStaff = await prisma.user.findMany({ where: { id: { in: byHandDevices.map((d) => d.manualById).filter((id): id is string => !!id) } }, select: { id: true, firstName: true, lastName: true } });
+  const byHand = byHandDevices
+    .sort((a, b) => (a.manualAt?.getTime() ?? 0) - (b.manualAt?.getTime() ?? 0))
+    .map((d) => ({ ...withContract(d), manualBy: handStaff.find((u) => u.id === d.manualById) ?? null }));
+
   const sweepLate = !settings.lastSweepAt || settings.lastSweepAt.getTime() < now - 26 * HOUR;
-  return { paidStillLocked, depositHeld, lockNotConfirmed, unenforceable, failing, stale, soldNotEnrolled, sweepLate, lastSweepAt: settings.lastSweepAt };
+  return { byHand, paidStillLocked, depositHeld, lockNotConfirmed, unenforceable, failing, stale, soldNotEnrolled, sweepLate, lastSweepAt: settings.lastSweepAt };
 }
 
 /** The switches, the licence count and the device counts: is PayTrigger working? */
