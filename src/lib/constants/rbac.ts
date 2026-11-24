@@ -8,7 +8,7 @@ export const PERMISSIONS = [
   'customer.create', 'customer.view', 'customer.update',
   'contract.create', 'contract.view', 'contract.cancel', 'contract.writeoff', 'contract.reschedule',
   'contract.approve', 'contract.price.override',
-  'payment.cash.record', 'payment.reverse', 'payment.view',
+  'payment.cash.record', 'payment.cash.take', 'payment.reverse', 'payment.view',
   'pricechart.view', 'pricechart.edit',
   'inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view',
   'report.view.branch', 'report.view.all', 'report.export',
@@ -32,7 +32,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'contract.writeoff': 'Write off contracts',
   'contract.reschedule': 'Reschedule contracts',
   'contract.approve': 'Approve agent-submitted contracts',
-  'payment.cash.record': 'Record cash / USSD payments',
+  'payment.cash.record': 'Take payments: mobile money prompts, direct debit, unmatched mobile money',
+  'payment.cash.take': 'Record cash taken from a customer',
   'payment.reverse': 'Reverse payments',
   'payment.view': 'View payments',
   'pricechart.view': 'View price chart',
@@ -63,7 +64,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
 export const PERMISSION_GROUPS: Array<{ label: string; permissions: Permission[] }> = [
   { label: 'Customers', permissions: ['customer.create', 'customer.view', 'customer.update'] },
   { label: 'Contracts', permissions: ['contract.create', 'contract.view', 'contract.cancel', 'contract.writeoff', 'contract.reschedule', 'contract.approve', 'contract.price.override'] },
-  { label: 'Payments', permissions: ['payment.cash.record', 'payment.reverse', 'payment.view'] },
+  { label: 'Payments', permissions: ['payment.cash.record', 'payment.cash.take', 'payment.reverse', 'payment.view'] },
   { label: 'Price Chart', permissions: ['pricechart.view', 'pricechart.edit'] },
   { label: 'Inventory', permissions: ['inventory.receive', 'inventory.issue', 'inventory.transfer', 'inventory.adjust', 'inventory.view'] },
   { label: 'Reports', permissions: ['report.view.branch', 'report.view.all', 'report.export'] },
@@ -133,9 +134,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
   AGENT: [
     'customer.create', 'customer.view',
     'contract.create', 'contract.view',
-    // Cash the agent takes from a customer is recorded by the agent there and
-    // then, with a receipt — on their own contracts only (the payment routes'
-    // assertOwnRecordAccess) — and is theirs to remit (agentLedgerService.ts).
+    // Mobile money prompts on their own contracts. Never cash: only an
+    // administrator records cash (payment.cash.take), after an agent once
+    // recorded cash no one had paid.
     'payment.cash.record',
     'pricechart.view', 'inventory.view',
     'agent.ledger.view', 'agent.ledger.remit',

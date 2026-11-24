@@ -258,12 +258,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         contractId: id, amountMinor, entryType, notes: paymentNotes.trim() || undefined, collectedByAgent,
         transactionRef: cashRef, ...(confirmDuplicate && { confirmDuplicate: true }),
       });
-      toast({
-        title: 'Payment recorded',
-        description: user?.role === 'AGENT'
-          ? `${formatCurrency(amountMinor)} — the customer's receipt is in Payments below. Pay the cash in at the office; it is listed on My Deposits.`
-          : formatCurrency(amountMinor),
-      });
+      toast({ title: 'Payment recorded', description: formatCurrency(amountMinor) });
       setAmount('');
       setPaymentNotes('');
       setCollectedByAgent(false);
@@ -522,6 +517,8 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   }
 
   const canPay = hasPermission('payment.cash.record');
+  // Cash is recorded by an administrator only (the payment routes).
+  const canTakeCash = hasPermission('payment.cash.take');
   // Mirrors the routes: setting a mandate up, taking it off or revoking it is
   // contract.reschedule; seeing an approval through (the OTP, a status check)
   // is also open to whoever can create a contract, since they are the one at
@@ -583,7 +580,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       </div>
 
       {contract.contractType === 'DEVICE_FINANCING' && canPay && (
-        <TemporaryUnlockCard key={contract.totalPaidMinor} contractId={contract.id} canTakeCash={user?.role !== 'AGENT'} onDone={load} />
+        <TemporaryUnlockCard key={contract.totalPaidMinor} contractId={contract.id} canTakeCash={canTakeCash} onDone={load} />
       )}
 
       {!preApproval && (
@@ -701,7 +698,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </div>
       )}
 
-      {canPay && !terminal && !preApproval && contract.contractType === 'DEVICE_LOAN' && (
+      {canTakeCash && !terminal && !preApproval && contract.contractType === 'DEVICE_LOAN' && (
         <Card>
           <CardHeader><CardTitle>Record a payment</CardTitle></CardHeader>
           <CardContent className="flex flex-wrap gap-3">
@@ -724,7 +721,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
-      {canPay && !terminal && !preApproval && contract.contractType !== 'DEVICE_LOAN' && (
+      {canTakeCash && !terminal && !preApproval && contract.contractType !== 'DEVICE_LOAN' && (
         <Card>
           <CardHeader><CardTitle>Record a cash payment</CardTitle></CardHeader>
           <CardContent>

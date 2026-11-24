@@ -130,7 +130,7 @@ describe('Agents: ledger, commission and controls', () => {
     it('a deposit paid at the counter puts no cash on the agent, and the office then owes them their commission', async () => {
       const { user, token } = await makeAgent();
       const contract = await agentContract(user.id);
-      const res = await cashPOST(makeRequest('POST', '/api/payments/cash', { token: cashier, body: { contractId: contract.id, amountMinor: 12000, entryType: 'DEPOSIT' } }));
+      const res = await cashPOST(makeRequest('POST', '/api/payments/cash', { token: superadmin, body: { contractId: contract.id, amountMinor: 12000, entryType: 'DEPOSIT' } }));
       expect(res.status).toBe(201);
       expect((await res.json()).payment.collectedByAgentId).toBeNull();
       const entry = await ledgerOf(contract.id);
@@ -156,7 +156,7 @@ describe('Agents: ledger, commission and controls', () => {
       expect(await ledgerOf(contract.id)).toMatchObject({ depositAmountMinor: 0, commissionAmountMinor: 500, status: 'DUE_TO_AGENT' });
     });
 
-    it('an agent records the cash they collect, on their own contracts only, with a receipt — and owes it', async () => {
+    it('an agent cannot record cash; an administrator records cash the agent collected, with a receipt — and the agent owes it', async () => {
       const mine = await makeAgent();
       const other = await makeAgent();
       const contract = await agentContract(mine.user.id);
@@ -164,18 +164,25 @@ describe('Agents: ledger, commission and controls', () => {
       const record = (tok: string, contractId: string, body: Record<string, unknown> = {}) =>
         cashPOST(makeRequest('POST', '/api/payments/cash', { token: tok, body: { contractId, amountMinor: 12000, entryType: 'DEPOSIT', ...body } }));
 
+      // Only an administrator records cash: an agent once recorded cash no one had paid.
       expect((await record(mine.token, theirs.id)).status).toBe(403);
-      const res = await record(mine.token, contract.id, { collectedByAgent: false }); // an agent recording it took it, whatever they say
+      const refused = await record(mine.token, contract.id);
+      expect(refused.status).toBe(403);
+      expect((await refused.json()).error).toMatch(/Only an administrator can record cash/);
+      expect((await record(cashier, contract.id, { collectedByAgent: true })).status).toBe(403);
+      expect((await record(manager, contract.id, { collectedByAgent: true })).status).toBe(403);
+
+      const res = await record(superadmin, contract.id, { collectedByAgent: true });
       expect(res.status).toBe(201);
       const { payment } = await res.json();
-      expect(payment).toMatchObject({ collectedByAgentId: mine.user.id, createdById: mine.user.id, channel: 'CASH' });
+      expect(payment).toMatchObject({ collectedByAgentId: mine.user.id, channel: 'CASH' });
       expect(payment.receiptNumber).toMatch(/\w/);
       expect(await ledgerOf(contract.id)).toMatchObject({ depositAmountMinor: 12000, amountOwedMinor: 11500, status: 'OWED' });
 
       // Cash can only be put on an agent if the contract is an agent's.
       const counterCustomer = await prisma.customer.create({ data: { membershipId: `GAP-${unique()}`, firstName: 'Counter', lastName: 'Only', phone: await freshPhone(), branchId, createdById: cashierId } });
       const saver = await createContract({ contractType: 'SAVE_TO_OWN', customerId: counterCustomer.id, branchId, createdById: cashierId });
-      expect((await cashPOST(makeRequest('POST', '/api/payments/cash', { token: cashier, body: { contractId: saver.id, amountMinor: 1000, collectedByAgent: true } }))).status).toBe(400);
+      expect((await cashPOST(makeRequest('POST', '/api/payments/cash', { token: superadmin, body: { contractId: saver.id, amountMinor: 1000, collectedByAgent: true } }))).status).toBe(400);
 
       // The review queue stays back-office work.
       const txn = await prisma.hubtelTransaction.create({ data: { clientReference: `GAP-NR-${unique()}`, contractId: contract.id, msisdn: '0240000000', amountMinor: 100, status: 'NEEDS_REVIEW' } });

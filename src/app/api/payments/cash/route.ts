@@ -13,8 +13,9 @@ import { assertPaymentsAcceptedToday, PaymentsClosedError } from '@/lib/services
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if ('error' in auth) return auth.error;
-  const perm = requirePermission(auth.user, 'payment.cash.record');
-  if (!perm.authorized) return perm.error;
+  // Cash is recorded by an administrator only (payment.cash.take): an agent
+  // once recorded cash no customer had paid.
+  if (!requirePermission(auth.user, 'payment.cash.take').authorized) return NextResponse.json({ error: 'Only an administrator can record cash. Ask the customer to pay by mobile money, or bring the cash to the office.' }, { status: 403 });
 
   const { contractId, amountMinor, entryType, notes, transactionRef, collectedByAgent, confirmDuplicate } = (await req.json()) as Record<string, unknown>;
 

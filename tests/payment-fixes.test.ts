@@ -33,11 +33,13 @@ describe('Payments', () => {
   let branchId: string;
   let adminId: string;
   let cashier: string;
+  let admin: string;
 
   beforeAll(async () => {
     branchId = (await prisma.branch.findFirstOrThrow({ where: { code: 'MAIN' } })).id;
     adminId = (await prisma.user.findFirstOrThrow({ where: { email: 'admin@example.test' } })).id;
     cashier = (await (await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email: 'cashier@example.test', password: 'Passw0rd!123' } }))).json()).token;
+    admin = (await (await loginPOST(makeRequest('POST', '/api/auth/login', { body: { email: 'admin@example.test', password: 'Passw0rd!123' } }))).json()).token;
   });
 
   async function customer(names: { firstName?: string; lastName?: string } = {}) {
@@ -152,7 +154,7 @@ describe('Payments', () => {
   describe('recording cash once', () => {
     it('the same amount again moments later is asked about; a retry of the same entry is recognised', async () => {
       const c = await awaitingDeposit();
-      const record = (body: Record<string, unknown>) => cashPOST(makeRequest('POST', '/api/payments/cash', { token: cashier, body: { contractId: c.id, amountMinor: 5000, ...body } }));
+      const record = (body: Record<string, unknown>) => cashPOST(makeRequest('POST', '/api/payments/cash', { token: admin, body: { contractId: c.id, amountMinor: 5000, ...body } }));
       const ref = `PF-CASH-${unique()}`;
       expect((await record({ transactionRef: ref })).status).toBe(201);
       // The same submission sent again — a lost connection, a second click.

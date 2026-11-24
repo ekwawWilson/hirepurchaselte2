@@ -99,7 +99,7 @@ describe('Contract type activation', () => {
 
     await setTypes({ saveToOwnEnabled: false, deviceLoanEnabled: false });
     const payment = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 2500, entryType: 'INSTALMENT_PAYMENT' },
+      token: admin, body: { contractId: contract.id, amountMinor: 2500, entryType: 'INSTALMENT_PAYMENT' },
     }));
     expect(payment.status).toBe(201);
   });

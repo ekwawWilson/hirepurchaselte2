@@ -24,14 +24,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   return NextResponse.json({ offer: await getTemporaryUnlockOffer(found.contract.id) });
 }
 
-/**
- * Office staff taking cash for a tier. Not for agents: cash an agent holds
- * keeps the phone locked until it is remitted, so it could not open the phone.
- */
+/** An administrator taking cash for a tier. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const found = await contractFor(req, params);
   if (found.error) return found.error;
-  if (found.user.roleName === 'AGENT') return NextResponse.json({ error: 'A temporary unlock for cash is taken at the office' }, { status: 403 });
+  // Cash is recorded by an administrator only (payment.cash.take).
+  if (!requirePermission(found.user, 'payment.cash.take').authorized) return NextResponse.json({ error: 'Only an administrator can take cash for a temporary unlock' }, { status: 403 });
   const { percent } = (await req.json().catch(() => ({}))) as { percent?: number };
   if (typeof percent !== 'number' || !Number.isInteger(percent)) return NextResponse.json({ error: 'Choose a tier' }, { status: 400 });
 

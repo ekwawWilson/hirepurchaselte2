@@ -79,10 +79,10 @@ describe('Reports', () => {
     const c2 = await setupContract('Cash2');
 
     const p1 = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: c1.id, amountMinor: 15000, entryType: 'INSTALMENT_PAYMENT' },
+      token: admin, body: { contractId: c1.id, amountMinor: 15000, entryType: 'INSTALMENT_PAYMENT' },
     }));
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: c2.id, amountMinor: 22000, entryType: 'INSTALMENT_PAYMENT' },
+      token: admin, body: { contractId: c2.id, amountMinor: 22000, entryType: 'INSTALMENT_PAYMENT' },
     }));
     const paymentId1 = (await p1.json()).payment.id;
 
@@ -129,7 +129,7 @@ describe('Reports', () => {
   it('audit trail captures contract creation and payment recording with the acting user', async () => {
     const contract = await setupContract('Audit');
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 5000, entryType: 'INSTALMENT_PAYMENT' },
+      token: admin, body: { contractId: contract.id, amountMinor: 5000, entryType: 'INSTALMENT_PAYMENT' },
     }));
 
     const res = await auditTrailGET(makeRequest('GET', '/api/reports/audit-trail', { token: admin }));

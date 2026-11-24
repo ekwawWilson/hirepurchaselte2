@@ -174,14 +174,15 @@ describe('Temporary unlock', () => {
       expect((await handleUssdInput({ sessionId, msisdn: s.phone, input: '2', isNewSession: false })).message).toMatch(/Enter amount to pay:/);
     });
 
-    it('with cash at the office, but not through an agent', async () => {
+    it('with cash taken by an administrator, not an agent or a cashier', async () => {
       const s = await lockedSale();
       const params = makeParams({ id: s.contract.id });
       const cashier = await login('cashier@example.test');
       expect((await (await staffGET(makeRequest('GET', `/api/contracts/${s.contract.id}/temporary-unlock`, { token: cashier }), params)).json()).offer.available).toBe(true);
       expect((await staffPOST(makeRequest('POST', `/api/contracts/${s.contract.id}/temporary-unlock`, { token: await login('agent@example.test'), body: { percent: 25 } }), params)).status).toBe(403);
+      expect((await staffPOST(makeRequest('POST', `/api/contracts/${s.contract.id}/temporary-unlock`, { token: cashier, body: { percent: 25 } }), params)).status).toBe(403);
 
-      const res = await staffPOST(makeRequest('POST', `/api/contracts/${s.contract.id}/temporary-unlock`, { token: cashier, body: { percent: 50 } }), params);
+      const res = await staffPOST(makeRequest('POST', `/api/contracts/${s.contract.id}/temporary-unlock`, { token: await login('admin@example.test'), body: { percent: 50 } }), params);
       expect(res.status).toBe(201);
       await payTriggerIdle();
       expect((await res.json()).payment).toMatchObject({ amountMinor: 6000, channel: 'CASH' });

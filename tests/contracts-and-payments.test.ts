@@ -118,7 +118,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(contract.balanceMinor).toBeNull();
 
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 200000, entryType: 'INSTALMENT_PAYMENT', notes: 'Counter cash deposit' },
+      token: admin, body: { contractId: contract.id, amountMinor: 200000, entryType: 'INSTALMENT_PAYMENT', notes: 'Counter cash deposit' },
     }));
     let detail = await getContract(contract.id, cashier);
     expect(detail.totalPaidMinor).toBe(200000);
@@ -128,7 +128,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
     // A further, larger deposit — still nothing to "complete" against.
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 400000, entryType: 'INSTALMENT_PAYMENT' },
+      token: admin, body: { contractId: contract.id, amountMinor: 400000, entryType: 'INSTALMENT_PAYMENT' },
     }));
     detail = await getContract(contract.id, cashier);
     expect(detail.totalPaidMinor).toBe(600000);
@@ -150,7 +150,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     const contract = (await created.json()).contract;
 
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 100000, entryType: 'INSTALMENT_PAYMENT' },
+      token: admin, body: { contractId: contract.id, amountMinor: 100000, entryType: 'INSTALMENT_PAYMENT' },
     }));
 
     // Can't withdraw more than has actually been saved.
@@ -260,14 +260,14 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(await getItemStatus(itemId)).toBe('RESERVED');
 
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 30000, entryType: 'DEPOSIT' },
+      token: admin, body: { contractId: contract.id, amountMinor: 30000, entryType: 'DEPOSIT' },
     }));
     let detail = await getContract(contract.id, cashier);
     expect(detail.status).toBe('PENDING_DEPOSIT');
 
     // The same amount again moments later is asked about first — the cashier confirms it is a second part.
     const second = () => paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 30000, entryType: 'DEPOSIT', confirmDuplicate: true },
+      token: admin, body: { contractId: contract.id, amountMinor: 30000, entryType: 'DEPOSIT', confirmDuplicate: true },
     }));
     expect((await second()).status).toBe(201);
     detail = await getContract(contract.id, cashier);
@@ -283,19 +283,19 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     const created = await makeDepositInstalment(cashier, custId, itemId);
     const contract = (await created.json()).contract;
     await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 60000, entryType: 'DEPOSIT' },
+      token: admin, body: { contractId: contract.id, amountMinor: 60000, entryType: 'DEPOSIT' },
     }));
 
     const ref = `TEST-IDEMPOTENT-${runId}`;
     const first = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 40000, entryType: 'INSTALMENT_PAYMENT', transactionRef: ref },
+      token: admin, body: { contractId: contract.id, amountMinor: 40000, entryType: 'INSTALMENT_PAYMENT', transactionRef: ref },
     }));
     expect(first.status).toBe(201);
     const firstBody = await first.json();
     const paidAfterFirst = (await getContract(contract.id, cashier)).totalPaidMinor;
 
     const replay = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 40000, entryType: 'INSTALMENT_PAYMENT', transactionRef: ref },
+      token: admin, body: { contractId: contract.id, amountMinor: 40000, entryType: 'INSTALMENT_PAYMENT', transactionRef: ref },
     }));
     expect(replay.status).toBe(201);
     expect((await replay.json()).idempotentReplay).toBe(true);
@@ -376,7 +376,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
     // The generic cash-payment route refuses this contract type outright.
     const genericAttempt = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 100000, entryType: 'INSTALMENT_PAYMENT' },
+      token: admin, body: { contractId: contract.id, amountMinor: 100000, entryType: 'INSTALMENT_PAYMENT' },
     }));
     expect(genericAttempt.status).toBe(400);
     expect((await genericAttempt.json()).error).toMatch(/postDeviceLoanPayment/);
@@ -396,13 +396,13 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
     // Exact-match validation: neither an under- nor over-payment of interest is accepted.
     const wrongInterest = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
-      token: cashier, body: { contractId: contract.id, amountMinor: dailyInterestMinor + 1, option: 'INTEREST' },
+      token: admin, body: { contractId: contract.id, amountMinor: dailyInterestMinor + 1, option: 'INTEREST' },
     }));
     expect(wrongInterest.status).toBe(400);
     expect((await wrongInterest.json()).error).toMatch(/exactly the accrued interest/i);
 
     const payInterest = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
-      token: cashier, body: { contractId: contract.id, amountMinor: dailyInterestMinor, option: 'INTEREST' },
+      token: admin, body: { contractId: contract.id, amountMinor: dailyInterestMinor, option: 'INTEREST' },
     }));
     expect(payInterest.status).toBe(201);
     const interestPayment = (await payInterest.json()).payment;
@@ -415,14 +415,14 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
 
     // Exact-match validation on the principal side too.
     const wrongPrincipal = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 99999, option: 'PRINCIPAL' },
+      token: admin, body: { contractId: contract.id, amountMinor: 99999, option: 'PRINCIPAL' },
     }));
     expect(wrongPrincipal.status).toBe(400);
     expect((await wrongPrincipal.json()).error).toMatch(/exactly the full loan amount/i);
 
     // Paying the full loan amount clears the principal only.
     const payPrincipal = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 100000, option: 'PRINCIPAL' },
+      token: admin, body: { contractId: contract.id, amountMinor: 100000, option: 'PRINCIPAL' },
     }));
     expect(payPrincipal.status).toBe(201);
     expect((await payPrincipal.json()).payment.entryType).toBe('LOAN_PRINCIPAL_PAYMENT');
@@ -453,7 +453,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     });
 
     const payPrincipal = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 50000, option: 'PRINCIPAL' },
+      token: admin, body: { contractId: contract.id, amountMinor: 50000, option: 'PRINCIPAL' },
     }));
     expect(payPrincipal.status).toBe(201);
 
@@ -463,7 +463,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(detail.status).toBe('ACTIVE'); // not COMPLETED — interest still unpaid
 
     const payInterest = await deviceLoanPaymentsPOST(makeRequest('POST', '/api/payments/device-loan', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 500, option: 'INTEREST' },
+      token: admin, body: { contractId: contract.id, amountMinor: 500, option: 'INTEREST' },
     }));
     expect(payInterest.status).toBe(201);
     expect((await getContract(contract.id, cashier)).status).toBe('COMPLETED');
@@ -477,7 +477,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(contract.status).toBe('PENDING_DEPOSIT'); // every DEPOSIT_INSTALMENT starts here
 
     const pay = (amountMinor: number) => paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor, entryType: 'INSTALMENT_PAYMENT' },
+      token: admin, body: { contractId: contract.id, amountMinor, entryType: 'INSTALMENT_PAYMENT' },
     }));
     expect((await pay(50)).status).toBe(400);              // below the GHS 1 minimum
     const tooMuch = await pay(250000);
@@ -491,7 +491,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     const late = await makeDepositInstalment(cashier, await makeCustomer('LateMoMo'), await receiveItem('LATE'), { totalPayableMinor: 240000, depositAmountMinor: 100 });
     const lateId = (await late.json()).contract.id;
     await pay(0).catch(() => undefined);
-    await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', { token: cashier, body: { contractId: lateId, amountMinor: 230000 } }));
+    await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', { token: admin, body: { contractId: lateId, amountMinor: 230000 } }));
     await postPayment({ contractId: lateId, amountMinor: 20000, entryType: 'INSTALMENT_PAYMENT', channel: 'USSD' });
     const withCredit = await getContract(lateId, cashier);
     expect(withCredit).toMatchObject({ status: 'COMPLETED', totalPaidMinor: 250000, creditMinor: 10000 });
@@ -504,7 +504,7 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
     expect(await getContract(lateId, cashier)).toMatchObject({ totalPaidMinor: 240000, creditMinor: 0, status: 'COMPLETED' });
   });
 
-  it('RBAC: SALES cannot record cash payments (403), CASHIER can', async () => {
+  it('RBAC: only an administrator records cash; sales, cashiers and branch managers cannot (403)', async () => {
     // SAVE_TO_OWN needs no product/price chart entry at all — the simplest
     // vehicle for a test that's only about the permission check.
     const custId = await makeCustomer('RbacCheck');
@@ -517,9 +517,16 @@ describe('Contracts + payments: full lifecycle across all three types', () => {
       token: sales, body: { contractId: contract.id, amountMinor: 100, entryType: 'INSTALMENT_PAYMENT' },
     }));
     expect(forbidden.status).toBe(403);
+    for (const email of ['cashier@example.test', 'branchmanager@example.test']) {
+      const refused = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
+        token: await login(email), body: { contractId: contract.id, amountMinor: 100, entryType: 'INSTALMENT_PAYMENT' },
+      }));
+      expect(refused.status).toBe(403);
+      expect((await refused.json()).error).toMatch(/Only an administrator can record cash/);
+    }
 
     const allowed = await paymentsCashPOST(makeRequest('POST', '/api/payments/cash', {
-      token: cashier, body: { contractId: contract.id, amountMinor: 100, entryType: 'INSTALMENT_PAYMENT' },
+      token: admin, body: { contractId: contract.id, amountMinor: 100, entryType: 'INSTALMENT_PAYMENT' },
     }));
     expect(allowed.status).toBe(201);
   });
