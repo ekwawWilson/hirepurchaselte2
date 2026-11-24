@@ -10,7 +10,9 @@ import { APP_NAME, APP_THEME_COLOR } from '../constants/branding';
  */
 export async function buildWebManifest(app: 'staff' | 'portal'): Promise<MetadataRoute.Manifest> {
   const { companyName, version } = await getAppIconSource();
-  const isDefault = companyName === APP_NAME;
+  // The product's own name and the company's can be the same (both "FlezePay"):
+  // then the staff app is just that name, not "FlezePay · FlezePay".
+  const sameName = companyName === APP_NAME;
   const icon = (file: string) => `/app-icon/${file}?v=${version}`;
 
   const icons: MetadataRoute.Manifest['icons'] = [
@@ -25,7 +27,8 @@ export async function buildWebManifest(app: 'staff' | 'portal'): Promise<Metadat
       // installed portal is its own app and never opens staff pages.
       id: '/portal',
       name: `${companyName} Customer Portal`,
-      short_name: isDefault ? 'My Account' : companyName,
+      // What the phone shows under the icon: the customer knows the company, not "My Account".
+      short_name: companyName,
       description: 'Check your contracts and balance, and pay by mobile money',
       start_url: '/portal/dashboard',
       scope: '/portal/',
@@ -42,8 +45,8 @@ export async function buildWebManifest(app: 'staff' | 'portal'): Promise<Metadat
     // start_url for identity, which is more fragile across an
     // uninstall/reinstall cycle.
     id: '/',
-    name: isDefault ? APP_NAME : `${companyName} · ${APP_NAME}`,
-    short_name: isDefault ? APP_NAME : companyName,
+    name: sameName ? APP_NAME : `${companyName} · ${APP_NAME}`,
+    short_name: companyName,
     description: 'Hire-purchase management system',
     start_url: '/',
     scope: '/',
