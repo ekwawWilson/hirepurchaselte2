@@ -71,7 +71,7 @@ export default function PortalLoginPage() {
   const current = SLIDES[slide];
 
   return (
-    <div className="min-h-screen flex bg-[#f5f0eb]">
+    <div className="min-h-screen flex bg-[#f4f6f9]">
       {/* Left panel */}
       <div className="hidden lg:flex lg:w-1/2 xl:w-3/5 relative bg-slate-900 overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/30 via-slate-900 to-slate-900" />
@@ -80,7 +80,7 @@ export default function PortalLoginPage() {
         <div className="absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-brand-accent/20 blur-3xl" />
         <div className="relative flex flex-col justify-between h-full p-12 text-white z-10">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-primary flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <Wallet className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-sm tracking-wide">{companyName.toUpperCase()}</span>
@@ -106,14 +106,14 @@ export default function PortalLoginPage() {
       </div>
 
       {/* Right form panel */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-14">
+      <div className="flex-1 flex flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-14">
         <div className="flex items-center gap-2.5 mb-8">
           <CompanyLogo
             logoUrl={logoUrl}
             companyName={companyName}
             imgClassName="w-9 h-9 object-cover shadow-sm"
             fallback={
-              <div className="w-9 h-9 bg-primary flex items-center justify-center shadow-sm">
+              <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-sm">
                 <Wallet className="w-5 h-5 text-white" />
               </div>
             }
@@ -125,7 +125,7 @@ export default function PortalLoginPage() {
         </div>
 
         <div className="w-full max-w-[400px]">
-          <div className="bg-white border border-gray-200 shadow-sm p-8">
+          <div className="rounded-2xl bg-white border border-gray-200 shadow-[0_18px_48px_-28px_rgba(15,23,42,0.35)] p-5 sm:p-8">
             <div className="mb-7">
               <h2 className="text-2xl font-bold text-gray-900">Welcome</h2>
               <p className="text-sm text-gray-400 mt-1">Sign in with your phone number</p>
@@ -152,7 +152,7 @@ export default function PortalLoginPage() {
                   required
                   disabled={isLoading}
                   placeholder="024 000 0000"
-                  className="w-full h-11 px-3.5 border border-gray-200 bg-gray-50 text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition disabled:opacity-50"
+                  className="w-full h-11 rounded-xl px-3.5 border border-gray-200 bg-gray-50 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/15 transition disabled:opacity-50"
                 />
               </div>
 
@@ -169,7 +169,7 @@ export default function PortalLoginPage() {
                     required
                     disabled={isLoading}
                     placeholder="Your password"
-                    className="w-full h-11 px-3.5 pr-11 border border-gray-200 bg-gray-50 text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition disabled:opacity-50"
+                    className="w-full h-11 rounded-xl px-3.5 pr-11 border border-gray-200 bg-gray-50 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/15 transition disabled:opacity-50"
                   />
                   <button
                     type="button"
@@ -185,7 +185,7 @@ export default function PortalLoginPage() {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-11 bg-primary hover:bg-primary/90 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2 transition-colors mt-2"
+                className="w-full h-11 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2 transition-colors mt-2"
               >
                 {isLoading ? (
                   <>

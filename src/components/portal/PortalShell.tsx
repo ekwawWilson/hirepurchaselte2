@@ -42,32 +42,32 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div data-print-shell className="min-h-screen flex bg-[#f5f0eb]">
+    <div data-print-shell className="min-h-screen flex bg-[#f7f9fc]">
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-60 shrink-0 flex-col bg-slate-900 print:hidden">
-        <div className="h-14 flex items-center gap-2.5 px-4 border-b border-slate-800 shrink-0">
+      <aside className="hidden lg:flex w-[264px] shrink-0 flex-col bg-white border-r border-slate-200/80 print:hidden">
+        <div className="h-[68px] flex items-center gap-3 px-5 border-b border-slate-100 shrink-0">
           <CompanyLogo
             logoUrl={logoUrl}
             companyName={companyName}
-            imgClassName="w-7 h-7 rounded-lg object-cover shrink-0"
+            imgClassName="w-9 h-9 rounded-xl object-cover shrink-0"
             fallback={
-              <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shrink-0 shadow-sm shadow-blue-900/20">
                 <span className="text-white text-[11px] font-extrabold tracking-tighter">{companyInitials(companyName)}</span>
               </div>
             }
           />
           <div className="leading-none min-w-0">
-            <p className="font-heading text-[14px] font-extrabold text-white tracking-tight truncate">{companyName}</p>
-            <p className="text-[9px] text-slate-500 font-medium uppercase tracking-widest mt-0.5">Customer Portal</p>
+            <p className="font-heading text-[14px] font-extrabold text-slate-900 tracking-tight truncate">{companyName}</p>
+            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-widest mt-1">Customer Portal</p>
           </div>
         </div>
 
-        <div className="px-4 py-4 border-b border-slate-800">
-          <p className="text-sm font-semibold text-white truncate">{customer?.firstName} {customer?.lastName}</p>
-          <p className="text-[11px] text-slate-500 font-mono mt-0.5 truncate">{customer?.membershipId}</p>
+        <div className="px-5 py-4 border-b border-slate-100">
+          <p className="text-sm font-semibold text-slate-800 truncate">{customer?.firstName} {customer?.lastName}</p>
+          <p className="text-[11px] text-slate-400 font-mono mt-1 truncate">{customer?.membershipId}</p>
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
           {NAV.map((item) => {
             const active = isActive(pathname, item.href);
             return (
@@ -75,23 +75,23 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors',
-                  active ? 'bg-primary text-white' : 'text-slate-400 hover:text-white hover:bg-white/8',
+                  'flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold transition-all',
+                  active ? 'bg-blue-50 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50',
                 )}
               >
-                <item.icon className={cn('h-4 w-4 shrink-0', active ? 'text-white' : 'text-slate-500')} />
+                <item.icon className={cn('h-[18px] w-[18px] shrink-0', active ? 'text-primary' : 'text-slate-400')} />
                 <span className="flex-1 truncate">{item.name}</span>
               </Link>
             );
           })}
         </nav>
 
-        <div className="p-2.5 border-t border-slate-800">
+        <div className="p-3 border-t border-slate-100">
           <button
             onClick={signOut}
-            className="w-full flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-400 hover:text-white hover:bg-white/8 transition-colors"
+            className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-colors"
           >
-            <LogOut className="h-4 w-4 shrink-0 text-slate-500" />
+            <LogOut className="h-[18px] w-[18px] shrink-0 text-slate-400" />
             Sign out
           </button>
         </div>
@@ -99,7 +99,7 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile top bar */}
       <div data-print-flow className="flex-1 flex flex-col min-w-0">
-        <header className="lg:hidden print:hidden h-14 flex items-center justify-between gap-3 px-4 bg-white border-b border-gray-200">
+        <header className="lg:hidden print:hidden h-[60px] flex items-center justify-between gap-3 px-4 bg-white border-b border-slate-200/80">
           <div className="flex items-center gap-2.5 min-w-0">
             <CompanyLogo
               logoUrl={logoUrl}

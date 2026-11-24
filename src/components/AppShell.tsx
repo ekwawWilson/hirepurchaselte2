@@ -65,12 +65,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div data-print-shell className="flex h-screen overflow-hidden bg-[#f4f6f9]">
       <div className="contents print:hidden"><AppSidebar /></div>
 
-      <div data-print-flow className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div data-print-flow className="flex flex-col flex-1 min-w-0 overflow-hidden bg-[#f7f9fc]">
         <div className="contents print:hidden"><AppTopBar /></div>
 
         {/* pb-16 clears the fixed mobile tab bar; lg:pb-0 since desktop has no bottom bar */}
-        <main data-print-flow className="flex-1 overflow-y-auto surface-grid pb-16 lg:pb-0">
-          <div className="page-shell mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+        <main data-print-flow className="flex-1 overflow-y-auto pb-16 lg:pb-0">
+          <div className="page-shell mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-9 py-5 sm:py-7 lg:py-8">
             {children}
           </div>
         </main>

@@ -14,20 +14,20 @@ function BrandStrip() {
   const { companyName, logoUrl } = useOrgSettingsStore((s) => s.settings);
 
   return (
-    <div className="h-14 flex items-center gap-2.5 px-4 border-b border-slate-800 shrink-0">
+    <div className="h-[68px] flex items-center gap-3 px-5 border-b border-slate-100 shrink-0">
       <CompanyLogo
         logoUrl={logoUrl}
         companyName={companyName}
-        imgClassName="w-7 h-7 rounded-lg object-cover shrink-0"
+        imgClassName="w-9 h-9 rounded-xl object-cover shrink-0"
         fallback={
-          <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shrink-0 shadow-sm shadow-blue-900/20">
             <span className="text-white text-[11px] font-extrabold tracking-tighter">{companyInitials(companyName)}</span>
           </div>
         }
       />
       <div className="leading-none min-w-0">
-        <p className="font-heading text-[14px] font-extrabold text-white tracking-tight truncate">{companyName}</p>
-        <p className="text-[9px] text-slate-500 font-medium uppercase tracking-widest mt-0.5">Hire Purchase</p>
+        <p className="font-heading text-[14px] font-extrabold text-slate-900 tracking-tight truncate">{companyName}</p>
+        <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-widest mt-1">Hire Purchase</p>
       </div>
     </div>
   );
@@ -39,11 +39,11 @@ function NavLink({ item, pathname }: { item: NavItem; pathname: string | null })
     <Link
       href={item.href}
       className={cn(
-        "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
-        active ? "bg-primary text-white" : "text-slate-400 hover:text-white hover:bg-white/8"
+        "flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold transition-all",
+        active ? "bg-blue-50 text-primary shadow-sm shadow-blue-950/[0.03]" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
       )}
     >
-      <item.icon className={cn("h-4 w-4 shrink-0", active ? "text-white" : "text-slate-500")} />
+      <item.icon className={cn("h-[18px] w-[18px] shrink-0", active ? "text-primary" : "text-slate-400")} />
       <span className="flex-1 truncate">{item.name}</span>
     </Link>
   );
@@ -80,12 +80,12 @@ function SidebarNav({ pathname }: { pathname: string | null }) {
   }
 
   return (
-    <nav className="flex-1 overflow-y-auto sidebar-scroll py-3 px-2.5 space-y-0.5">
+    <nav className="flex-1 overflow-y-auto sidebar-scroll py-3 px-3 space-y-0.5">
       {visibleGroups.map((group) => {
         if (group.items.length === 1) {
           return (
             <div key={group.label}>
-              <p className="px-2.5 pt-5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              <p className="px-3 pt-5 pb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
                 {group.label}
               </p>
               <NavLink item={group.items[0]} pathname={pathname} />
@@ -100,17 +100,17 @@ function SidebarNav({ pathname }: { pathname: string | null }) {
               type="button"
               onClick={() => toggle(group.label)}
               aria-expanded={isOpen}
-              className="w-full flex items-center justify-between px-2.5 pt-5 pb-1 group"
+              className="w-full flex items-center justify-between px-3 pt-5 pb-2 group"
             >
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 group-hover:text-slate-400">
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 group-hover:text-slate-600">
                 {group.label}
               </span>
               {isOpen
-                ? <ChevronDown className="h-3 w-3 text-slate-600" />
-                : <ChevronRight className="h-3 w-3 text-slate-600" />}
+                ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+                : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
             </button>
             {isOpen && (
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 {group.items.map((item) => <NavLink key={item.href} item={item} pathname={pathname} />)}
               </div>
             )}
@@ -126,11 +126,11 @@ export default function AppSidebar() {
   const pathname = usePathname();
 
   return (
-    <div className="hidden lg:flex h-full w-60 shrink-0 flex-col bg-slate-900 border-r border-slate-800">
+    <div className="hidden lg:flex h-full w-[264px] shrink-0 flex-col bg-white border-r border-slate-200/80">
       <BrandStrip />
       <SidebarNav pathname={pathname} />
-      <div className="border-t border-slate-800 px-5 py-3 shrink-0">
-        <p className="text-xs text-slate-600 text-center truncate">{APP_NAME}</p>
+      <div className="border-t border-slate-100 px-5 py-4 shrink-0">
+        <p className="text-[11px] text-slate-400 text-center truncate">{APP_NAME}</p>
       </div>
     </div>
   );

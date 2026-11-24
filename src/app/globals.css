@@ -87,6 +87,7 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  scroll-padding-bottom: 5rem;
 }
 
 body {
@@ -107,6 +108,22 @@ h1, h2, h3, h4, h5, h6 {
 ::selection {
   background: rgba(11, 91, 203, 0.18);
   color: hsl(var(--foreground));
+}
+
+/* Keep keyboard navigation visible across bespoke controls and page-level
+   links, including screens that do not use the shared UI primitives. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Page content fade-in */

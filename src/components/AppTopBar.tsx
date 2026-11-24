@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { LogOut, ChevronDown, KeyRound } from "lucide-react";
 import { useAuthStore } from "@/lib/authStore";
@@ -9,6 +9,7 @@ import { useOrgSettingsStore } from "@/lib/orgSettingsStore";
 import { cn, companyInitials } from "@/lib/utils";
 import { CompanyLogo } from "@/components/CompanyLogo";
 import { TodaysPaymentsBell } from "@/components/notifications/TodaysPaymentsBell";
+import { navGroups } from "@/lib/navigation";
 
 function UserMenu() {
   const router = useRouter();
@@ -84,12 +85,14 @@ function UserMenu() {
 }
 
 export default function AppTopBar() {
+  const pathname = usePathname();
   const { companyName, logoUrl } = useOrgSettingsStore((s) => s.settings);
+  const currentPage = navGroups.flatMap((group) => group.items).find((item) => pathname === item.href || pathname?.startsWith(`${item.href}/`));
 
   return (
-    <header className="h-14 shrink-0 bg-white border-b border-gray-200 flex items-center justify-between px-4 lg:px-6 z-30 sticky top-0">
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2.5 min-w-0">
+    <header className="h-[68px] shrink-0 bg-white/95 backdrop-blur border-b border-slate-200/80 flex items-center justify-between px-4 lg:px-8 z-30 sticky top-0">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="lg:hidden flex items-center gap-2.5 min-w-0">
           <CompanyLogo
             logoUrl={logoUrl}
             companyName={companyName}
@@ -105,9 +108,13 @@ export default function AppTopBar() {
             <span className="text-[10px] text-gray-400 font-medium tracking-wide uppercase hidden sm:block">Hire Purchase System</span>
           </div>
         </div>
+        <div className="hidden lg:block min-w-0">
+          <p className="text-[11px] font-semibold text-slate-400">Workspace <span className="mx-1.5 text-slate-300">/</span> {currentPage?.name ?? 'Hire Purchase'}</p>
+          <p className="font-heading text-[15px] font-bold text-slate-900 truncate mt-0.5">{currentPage?.name ?? 'Workspace'}</p>
+        </div>
       </div>
 
-      <div className="flex items-center gap-1.5 sm:gap-2">
+      <div className="flex items-center gap-2 sm:gap-3">
         <TodaysPaymentsBell />
         <UserMenu />
       </div>
