@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useSession } from '../lib/session';
@@ -66,12 +65,7 @@ export default function SignIn() {
 
           {error ? <Text style={inputStyles.error}>{error}</Text> : null}
           <Button title="Sign in" onPress={submit} loading={busy} style={{ marginTop: 20 }} />
-          <Link href="/reset-password" asChild>
-            <Pressable style={styles.forgot} hitSlop={8} accessibilityRole="link">
-              <Text style={styles.forgotText}>Forgot password?</Text>
-            </Pressable>
-          </Link>
-          <Text style={styles.hint}>No password yet? Staff give you one when you buy. Ask at the shop or call us.</Text>
+          <Text style={styles.hint}>Sign in with your phone number as both your username and your password. Forgotten it? Ask at the shop or call us.</Text>
           <SupportFooter />
           <Text style={styles.version}>{APP_CONFIG.appName} {APP_CONFIG.version}</Text>
         </ScrollView>
@@ -87,8 +81,6 @@ const styles = StyleSheet.create({
   logo: { width: '100%', height: 96 },
   title: { fontSize: 22, fontWeight: '800', color: colors.text, marginTop: 22, textAlign: 'center' },
   subtitle: { fontSize: 14, color: colors.textMuted, marginTop: 4, marginBottom: 8, textAlign: 'center' },
-  forgot: { alignSelf: 'center', marginTop: 16, minHeight: 32, justifyContent: 'center' },
-  forgotText: { color: colors.primary, fontWeight: '600', fontSize: 15 },
   hint: { textAlign: 'center', color: colors.textMuted, fontSize: 13, marginTop: 8 },
   version: { textAlign: 'center', color: colors.textMuted, fontSize: 11 },
 });

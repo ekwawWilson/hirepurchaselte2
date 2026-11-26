@@ -199,8 +199,8 @@ export default function PortalLoginPage() {
             </form>
 
             <p className="mt-6 text-xs text-gray-400 leading-relaxed">
-              First time here, or forgotten your password? Ask at the shop for a one-time password —
-              you will be asked to choose your own straight away.
+              Sign in with your phone number as both your username and your password.
+              Forgotten your password? Ask at the shop and it will be set back to your phone number.
             </p>
           </div>
         </div>

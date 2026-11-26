@@ -32,11 +32,11 @@ export async function findCustomerByPhone(phone: string) {
 }
 
 /**
- * Sets a customer's starting password to their own phone number, as written
- * on their record (0241234567) — at registration, or when staff reset it.
- * It opens nothing but choosing their own password (mustChangePassword, held
- * by the server), and their own number is refused as that new password.
- * Setting it signs out anyone already in on the old one.
+ * Sets a customer's password to their own phone number, as written on their
+ * record (0241234567) — at registration, or when staff reset a forgotten one.
+ * It opens the customer app straight away: they sign in with their number as
+ * both username and password, and may choose their own password later if
+ * they wish. Setting it signs out anyone already in on the old one.
  */
 export async function issuePortalPassword(customerId: string): Promise<string> {
   const customer = await prisma.customer.findUniqueOrThrow({ where: { id: customerId }, select: { phone: true, phone2: true, phone3: true } });
@@ -44,16 +44,12 @@ export async function issuePortalPassword(customerId: string): Promise<string> {
   if (!password) throw new PortalError('This customer has no phone number to sign in with');
   await prisma.customer.update({
     where: { id: customerId },
-    data: { passwordHash: await hashPassword(password), mustChangePassword: true, passwordChangedAt: new Date() },
+    data: { passwordHash: await hashPassword(password), mustChangePassword: false, passwordChangedAt: new Date() },
   });
   return password;
 }
 
-/**
- * Sign-in. A customer who has never been issued a password cannot sign in.
- * One whose starting password (their phone number) has not yet been replaced
- * can do nothing but replace it.
- */
+/** Sign-in. A customer who has never been issued a password cannot sign in. */
 export async function authenticateCustomer(phone: string, password: string) {
   const customer = await findCustomerByPhone(phone);
   if (!customer?.passwordHash) return null;
@@ -71,7 +67,7 @@ export function isOwnPhoneNumber(customer: { phone: string | null; phone2: strin
   return phoneVariants(candidate).some((v) => own.has(v));
 }
 
-/** Why a customer may not choose this password, or null. Shared by changing it and resetting it. */
+/** Why a customer may not choose this password, or null. */
 export function newPasswordProblem(customer: { phone: string | null; phone2: string | null; phone3: string | null }, newPassword: string): string | null {
   if (newPassword.length < MIN_PORTAL_PASSWORD_LENGTH) return `Your new password must be at least ${MIN_PORTAL_PASSWORD_LENGTH} characters`;
   if (isOwnPhoneNumber(customer, newPassword)) return 'Choose a password that is not your phone number';

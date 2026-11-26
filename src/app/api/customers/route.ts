@@ -103,8 +103,8 @@ export async function POST(req: NextRequest) {
     userId: user.id, action: 'CUSTOMER_CREATE', entityType: 'Customer', entityId: customer.id,
     newValues: { ...customer, photoUrl: '[photo]' },
   });
-  // The customer's way into the portal: a one-time password, shown to the
-  // person registering them this once and stored only as a hash.
+  // The customer's way into the portal: their phone number as the password,
+  // shown to the person registering them and stored only as a hash.
   const portalPassword = await issuePortalPassword(customer.id);
   await textPortalPassword(customer.id, portalPassword);
   return NextResponse.json({ customer, portalPassword }, { status: 201 });

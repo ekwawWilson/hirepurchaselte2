@@ -60,10 +60,6 @@ export const api = {
 
   login: (phone: string, password: string) =>
     request<{ token: string; customer: Customer }>('POST', '/portal/auth/login', { phone, password }, { auth: false }),
-  requestReset: (phone: string) =>
-    request<{ message: string }>('POST', '/portal/auth/password-reset/request', { phone }, { auth: false }),
-  resetPassword: (phone: string, code: string, newPassword: string) =>
-    request<{ message: string }>('POST', '/portal/auth/password-reset/reset', { phone, code, newPassword }, { auth: false }),
 
   me: async () => (await request<{ customer: Customer }>('GET', '/portal/me')).customer,
   /** Returns a fresh token: changing the password signs out every other session. */

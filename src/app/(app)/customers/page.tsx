@@ -307,7 +307,7 @@ export default function CustomersPage() {
       <OneTimePasswordDialog password={issued?.password ?? null} title="Customer portal password" onClose={() => setIssued(null)}>
         <p>
           <strong>{issued?.name}</strong> signs in to the customer app or portal with their phone number ({issued?.phone}) as
-          both the number and the password. They must choose their own password the first time they sign in.
+          both the number and the password. They can choose their own password later in the app if they wish.
         </p>
       </OneTimePasswordDialog>
     </div>

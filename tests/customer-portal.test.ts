@@ -49,7 +49,7 @@ describe('Customer portal', () => {
     return { status: res.status, body: await res.json() };
   }
 
-  it('a phone number is never a password: no sign-in until staff issue a one-time password', async () => {
+  it('no sign-in until a password is issued; then the phone number is the password, straight in', async () => {
     const { customer, phone } = await makeCustomer();
 
     // Never issued a password: the number itself opens nothing.
@@ -64,37 +64,34 @@ describe('Customer portal', () => {
 
     const ok = await signIn(phone, password);
     expect(ok.status).toBe(200);
-    expect(ok.body.customer.mustChangePassword).toBe(true);
+    expect(ok.body.customer.mustChangePassword).toBe(false);
     expect(ok.body.token).toBeTruthy();
+    expect((await portalContractsGET(makeRequest('GET', '/api/portal/contracts', { token: ok.body.token }))).status).toBe(200);
 
     // The same number written the way Hubtel sends it also works.
     expect((await signIn(`233${phone.slice(1)}`, password)).status).toBe(200);
   });
 
-  it('the one-time password opens nothing but the change of password, which then replaces it', async () => {
+  it('a customer may choose their own password later, which then replaces the phone number', async () => {
     const { customer, phone } = await makeCustomer();
     const oneTime = await issuePortalPassword(customer.id);
     const token = (await signIn(phone, oneTime)).body.token as string;
 
-    // Enforced by the server, not just by the screen that asks.
-    const early = await portalContractsGET(makeRequest('GET', '/api/portal/contracts', { token }));
-    expect(early.status).toBe(403);
-    expect((await early.json()).code).toBe('PASSWORD_CHANGE_REQUIRED');
-    expect((await portalMeGET(makeRequest('GET', '/api/portal/me', { token }))).status).toBe(200);
+    expect((await portalContractsGET(makeRequest('GET', '/api/portal/contracts', { token }))).status).toBe(200);
 
     const change = (newPassword: string) => portalPasswordPOST(makeRequest('POST', '/api/portal/me/password', {
       token, body: { currentPassword: oneTime, newPassword },
     }));
     expect((await change(phone)).status).toBe(400);   // not the phone number
     expect((await change('abc')).status).toBe(400);   // not too short
-    expect((await change(oneTime)).status).toBe(400); // not the one-time password again
+    expect((await change(oneTime)).status).toBe(400); // not the current password again
     const changed = await change('my-own-passphrase');
     expect(changed.status).toBe(200);
     // The session that made the change carries on, with a fresh token.
     const carriedOn = (await changed.json()).token as string;
     expect((await portalContractsGET(makeRequest('GET', '/api/portal/contracts', { token: carriedOn }))).status).toBe(200);
 
-    expect((await signIn(phone, oneTime)).status).toBe(401); // the one-time password no longer works
+    expect((await signIn(phone, oneTime)).status).toBe(401); // the phone number no longer works
     const now = await signIn(phone, 'my-own-passphrase');
     expect(now.status).toBe(200);
     expect(now.body.customer.mustChangePassword).toBe(false);

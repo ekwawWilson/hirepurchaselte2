@@ -227,7 +227,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       <OneTimePasswordDialog password={portalPassword} title="Customer portal password" onClose={() => { setPortalPassword(null); void load(); }}>
         <p>
           <strong>{customer.firstName} {customer.lastName}</strong>&apos;s password is back to their phone number. Any password they had
-          before no longer works, and they must choose a new one when they next sign in.
+          before no longer works. They sign in with their phone number as both the number and the password.
         </p>
       </OneTimePasswordDialog>
 

@@ -46,56 +46,26 @@ describe('Customer app API', () => {
     await issuePortalPassword(c.id);
     return c;
   }
-  const request = async (phone: string) => (await requestPOST(makeRequest('POST', '/api/portal/auth/password-reset/request', { body: { phone } }))).json();
-  const reset = (body: Record<string, string>) => resetPOST(makeRequest('POST', '/api/portal/auth/password-reset/reset', { body }));
-  const lastCode = () => /^(\d{6}) /.exec(sent[sent.length - 1].body)![1];
-
-  describe('resetting a forgotten password', () => {
-    it('texts a code to a registered number, and says the same for one nobody has', async () => {
+  describe('signing in', () => {
+    it('a new customer signs in with their phone number as username and password, straight in', async () => {
       const c = await customer();
-      const before = sent.length;
-      const known = await request(c.phone!);
-      const unknown = await request(await freshPhone('024'));
-      expect(known).toEqual(unknown);
-      expect(sent.length).toBe(before + 1);
-      expect(sent[sent.length - 1]).toMatchObject({ recipient: c.phone, body: expect.stringMatching(/^\d{6} is your .+ password reset code/) });
-      // Staff reading the SMS history never see the code.
-      const kept = await prisma.smsMessage.findFirstOrThrow({ where: { relatedCustomerId: c.id, templateKey: 'customer.password_reset' } });
-      expect(kept.body).toMatch(/^\*{6} is your/);
-    });
-
-    it('sets a new password with the code, once; a wrong code is refused without saying why', async () => {
-      const c = await customer();
-      await request(c.phone!);
-      const code = lastCode();
-      const wrong = String((Number(code) + 1) % 1_000_000).padStart(6, '0');
-      const refused = await reset({ phone: c.phone!, code: wrong, newPassword: 'brand-new-pass' });
-      expect(refused.status).toBe(400);
-      expect((await refused.json()).error).toMatch(/not correct or has expired/);
-
-      expect((await reset({ phone: c.phone!, code, newPassword: c.phone! })).status).toBe(400); // not the phone number
-      const ok = await reset({ phone: c.phone!, code, newPassword: 'brand-new-pass' });
-      expect(ok.status).toBe(200);
-      expect((await reset({ phone: c.phone!, code, newPassword: 'another-pass' })).status).toBe(400); // used once
-
-      const login = await portalLoginPOST(makeRequest('POST', '/api/portal/auth/login', { body: { phone: c.phone, password: 'brand-new-pass' } }));
+      const login = await portalLoginPOST(makeRequest('POST', '/api/portal/auth/login', { body: { phone: c.phone, password: c.phone } }));
       expect(login.status).toBe(200);
       expect((await login.json()).customer.mustChangePassword).toBe(false);
     });
 
-    it('a code stops working after five wrong tries, and at most three are sent an hour', async () => {
+    it('no reset code is texted: both reset steps say to ask at the shop, and send nothing', async () => {
       const c = await customer();
-      await request(c.phone!);
-      const code = lastCode();
-      const reset5 = await prisma.customerPasswordReset.findFirstOrThrow({ where: { customerId: c.id, usedAt: null } });
-      await prisma.customerPasswordReset.update({ where: { id: reset5.id }, data: { attempts: 5 } });
-      expect((await reset({ phone: c.phone!, code, newPassword: 'brand-new-pass' })).status).toBe(400);
-
       const before = sent.length;
-      await request(c.phone!);
-      await request(c.phone!);
-      await request(c.phone!);
-      expect(sent.length).toBe(before + 2); // three in the hour, counting the first
+      for (const res of [
+        await requestPOST(),
+        await resetPOST(),
+      ]) {
+        expect(res.status).toBe(410);
+        expect((await res.json()).error).toMatch(/ask at the shop/i);
+      }
+      expect(sent.length).toBe(before);
+      expect(await prisma.customerPasswordReset.count({ where: { customerId: c.id } })).toBe(0);
     });
   });
 

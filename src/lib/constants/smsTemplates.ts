@@ -86,6 +86,6 @@ export const SMS_TEMPLATES = [
     key: 'customer.portal_password',
     name: 'Customer sign-in password',
     isActive: false,
-    bodyTemplate: 'Hi {{customerName}}, your {{companyName}} sign-in password is {{password}}. Use it with this number in the app or portal, then choose your own.',
+    bodyTemplate: 'Hi {{customerName}}, sign in to the {{companyName}} app or portal with this phone number as your username and {{password}} as your password.',
   },
 ] as const;

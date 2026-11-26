@@ -216,14 +216,14 @@ describe('Registration checks', () => {
     expect((await register({ phone: `233${phone.slice(1)}` })).status).toBe(409);
   });
 
-  it('gives each new customer their phone number as a starting password, to be replaced, never stored in the clear', async () => {
+  it('gives each new customer their phone number as their password, never stored in the clear', async () => {
     const phone = await freshPhone();
     const res = await register({ phone });
     expect(res.body.portalPassword).toBe(phone);
     expect(res.body.customer).not.toHaveProperty('passwordHash');
     const stored = await prisma.customer.findUniqueOrThrow({ where: { id: res.body.customer.id } });
     expect(stored.passwordHash).not.toContain(res.body.portalPassword);
-    expect(stored.mustChangePassword).toBe(true);
+    expect(stored.mustChangePassword).toBe(false);
 
     const signIn = await portalLoginPOST(makeRequest('POST', '/api/portal/auth/login', { body: { phone, password: res.body.portalPassword } }));
     expect(signIn.status).toBe(200);
